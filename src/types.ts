@@ -1,4 +1,5 @@
-export type IpRuleAction = "allow" | "block" | "challenge";
+export type IpRuleAction = "allow" | "pass" | "block" | "challenge";
+export type DefaultNetworkAction = "inherit" | Exclude<IpRuleAction, "pass">;
 export type FlowStatus = "pending" | "completed" | "failed" | "expired";
 export type StepStatus = "pending" | "completed" | "failed" | "expired";
 export type SiteAccessMode = "challenge" | "bypass";
@@ -87,6 +88,8 @@ export interface SiteRecord {
 	challenge_policy_json: string;
 	default_access_mode: SiteAccessMode;
 	event_retention_days: number;
+	default_ip_action: DefaultNetworkAction;
+	default_country_action: DefaultNetworkAction;
 	created_at: number;
 	updated_at: number;
 }
@@ -164,6 +167,16 @@ export interface IpRuleRecord {
 	id: string;
 	site_id: string;
 	network_cidr: string;
+	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface CountryRuleRecord {
+	id: string;
+	site_id: string;
+	country_code: string;
 	action: IpRuleAction;
 	reason: string;
 	created_at: number;

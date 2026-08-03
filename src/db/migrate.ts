@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS sites (
   challenge_policy_json TEXT NOT NULL,
   default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge',
   event_retention_days INTEGER NOT NULL DEFAULT 7,
+  default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
+  default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -94,6 +96,16 @@ CREATE TABLE IF NOT EXISTS ip_rules (
   reason TEXT NOT NULL,
   created_at BIGINT NOT NULL,
   expires_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS country_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  country_code VARCHAR(2) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(site_id, country_code)
 );
 CREATE TABLE IF NOT EXISTS request_events (
   id VARCHAR(64) PRIMARY KEY,
@@ -183,14 +195,18 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_status_created ON request_events (site_id, status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_method_created ON request_events (site_id, method, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_created ON access_sessions (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_last_seen ON access_sessions (site_id, last_seen_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_revoked ON access_sessions (site_id, revoked_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_expires ON access_sessions (site_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_state ON access_sessions (site_id, revoked_at, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_ip ON access_sessions (site_id, last_ip)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_country_created ON access_sessions (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_created ON ip_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_action_created ON ip_rules (site_id, action, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_created ON country_rules (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_action ON country_rules (site_id, action, country_code)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_tls_settings_mode ON site_tls_settings (mode, force_https)",
@@ -214,6 +230,8 @@ async function ensureSiteColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE sites ADD COLUMN default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge'",
 		"ALTER TABLE sites ADD COLUMN event_retention_days INTEGER NULL",
+		"ALTER TABLE sites ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE sites ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 	];
 	for (const statement of statements) {
 		try {

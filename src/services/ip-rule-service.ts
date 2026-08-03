@@ -1,20 +1,128 @@
 import { repository } from "../db/repository.ts";
-import type { IpRuleAction, IpRuleRecord } from "../types.ts";
-import { cidrContains, parseCidr } from "../utils/ip.ts";
+import type { CountryRuleRecord, DefaultNetworkAction, IpRuleAction, IpRuleRecord, SiteRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
+import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
+import { geoIpAvailable, lookupCountryCode } from "./geoip-service.ts";
 
-export interface IpDecision {
-	action: IpRuleAction | null;
-	rule: IpRuleRecord | null;
+interface CachedIpRule {
+	rule: IpRuleRecord;
+	cidr: ParsedCidr;
 }
 
-export async function evaluateIp(siteId: string, ip: string): Promise<IpDecision> {
+interface CachedNetworkRules {
+	ipRules: CachedIpRule[];
+	countryRules: Map<string, CountryRuleRecord>;
+}
+
+const ruleCache = new Map<string, Promise<CachedNetworkRules>>();
+
+async function rulesForSite(siteId: string): Promise<CachedNetworkRules> {
+	let cached = ruleCache.get(siteId);
+	if (!cached) {
+		cached = Promise.all([repository.rules(siteId), repository.countryRules(siteId)])
+			.then(([ipRules, countryRules]) => ({
+				ipRules: ipRules
+					.map((rule) => ({ rule, cidr: parseCidr(rule.network_cidr) }))
+					.filter((item): item is CachedIpRule => item.cidr !== null)
+					.sort((left, right) => right.cidr.prefix - left.cidr.prefix || right.rule.created_at - left.rule.created_at),
+				countryRules: new Map(countryRules.map((rule) => [rule.country_code, rule])),
+			}))
+			.catch((error) => {
+				ruleCache.delete(siteId);
+				throw error;
+			});
+		ruleCache.set(siteId, cached);
+	}
+	return await cached;
+}
+
+export function invalidateNetworkPolicy(siteId: string): void {
+	ruleCache.delete(siteId);
+}
+
+export type NetworkDecisionSource = "ip-rule" | "country-rule" | "country-default" | "ip-default" | "route";
+
+export interface NetworkDecision {
+	action: IpRuleAction | null;
+	source: NetworkDecisionSource;
+	ipRule: IpRuleRecord | null;
+	countryRule: CountryRuleRecord | null;
+	countryCode: string | null;
+	reason: string | null;
+}
+
+function active<T extends { expires_at: number | null }>(record: T, now: number): boolean {
+	return record.expires_at === null || record.expires_at > now;
+}
+
+function configuredAction(action: DefaultNetworkAction | null | undefined): IpRuleAction | null {
+	return action && action !== "inherit" ? action : null;
+}
+
+export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkDecision> {
 	const now = Date.now();
-	const matches = (await repository.rules(siteId))
-		.filter((r) => (r.expires_at === null || r.expires_at > now) && cidrContains(r.network_cidr, ip))
-		.map((r) => ({ r, p: parseCidr(r.network_cidr)?.prefix ?? -1 }))
-		.sort((a, b) => b.p - a.p || b.r.created_at - a.r.created_at);
-	return matches[0] ? { action: matches[0].r.action, rule: matches[0].r } : { action: null, rule: null };
+	const rules = await rulesForSite(site.id);
+	const ipRule = ip === "unknown" ? null : (rules.ipRules.find((item) => active(item.rule, now) && cidrContains(item.cidr, ip))?.rule ?? null);
+
+	if (ipRule) {
+		return {
+			action: ipRule.action,
+			source: "ip-rule",
+			ipRule,
+			countryRule: null,
+			countryCode: null,
+			reason: ipRule.reason || `Matched IP rule ${ipRule.network_cidr}`,
+		};
+	}
+
+	const countryCode = geoIpAvailable() && ip !== "unknown" ? (lookupCountryCode(ip) ?? "ZZ") : null;
+	if (countryCode) {
+		const candidateCountryRule = rules.countryRules.get(countryCode) ?? null;
+		const countryRule = candidateCountryRule && active(candidateCountryRule, now) ? candidateCountryRule : null;
+		if (countryRule) {
+			return {
+				action: countryRule.action,
+				source: "country-rule",
+				ipRule: null,
+				countryRule,
+				countryCode,
+				reason: countryRule.reason || `Matched country rule ${countryCode}`,
+			};
+		}
+
+		const countryDefault = configuredAction(site.default_country_action);
+		if (countryDefault) {
+			return {
+				action: countryDefault,
+				source: "country-default",
+				ipRule: null,
+				countryRule: null,
+				countryCode,
+				reason: `Default country action for ${countryCode}`,
+			};
+		}
+	}
+
+	const ipDefault = configuredAction(site.default_ip_action);
+	if (ipDefault) {
+		return {
+			action: ipDefault,
+			source: "ip-default",
+			ipRule: null,
+			countryRule: null,
+			countryCode,
+			reason: "Default IP action",
+		};
+	}
+
+	return {
+		action: null,
+		source: "route",
+		ipRule: null,
+		countryRule: null,
+		countryCode,
+		reason: null,
+	};
 }
 
 export async function addIpRule(siteId: string, networkCidr: string, action: IpRuleAction, reason: string, expiresAt: number | null): Promise<IpRuleRecord> {
@@ -29,5 +137,34 @@ export async function addIpRule(siteId: string, networkCidr: string, action: IpR
 		expires_at: expiresAt,
 	};
 	await repository.insertRule(record);
+	invalidateNetworkPolicy(siteId);
+	return record;
+}
+
+export async function addCountryRule(
+	siteId: string,
+	countryCodeInput: string,
+	action: IpRuleAction,
+	reason: string,
+	expiresAt: number | null,
+): Promise<CountryRuleRecord> {
+	const countryCode = countryCodeInput.trim().toUpperCase();
+	if (!/^[A-Z]{2}$/u.test(countryCode)) throw new Error("Country code must contain two letters");
+	const existing = await repository.countryRuleByCode(siteId, countryCode);
+	if (existing && active(existing, Date.now())) {
+		throw new Error(`An active rule for ${countryCode} already exists`);
+	}
+	if (existing) await repository.deleteCountryRuleForSite(existing.id, siteId);
+	const record: CountryRuleRecord = {
+		id: randomId("country-rule"),
+		site_id: siteId,
+		country_code: countryCode,
+		action,
+		reason,
+		created_at: Date.now(),
+		expires_at: expiresAt,
+	};
+	await repository.insertCountryRule(record);
+	invalidateNetworkPolicy(siteId);
 	return record;
 }

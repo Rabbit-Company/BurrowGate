@@ -19,6 +19,7 @@ let defaultEventRetentionDays = 7;
 let selectedSiteId = null;
 let editingSiteId = null;
 let routePolicies = [];
+let countryRules = [];
 let editingRoutePolicyId = null;
 let currentTls = null;
 let overviewRequestId = 0;
@@ -205,9 +206,26 @@ function decisionClass(decision) {
 	return "ok";
 }
 
+function networkActionLabel(action) {
+	return (
+		{
+			pass: "allow / route policy",
+			allow: "allow / bypass",
+			block: "block",
+			challenge: "challenge",
+		}[action] ?? String(action ?? "-")
+	);
+}
+
+function countryBadge(codeInput) {
+	const code = String(codeInput || "ZZ").toUpperCase();
+	const name = countryDisplayName(code);
+	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
+}
+
 async function loadTraffic() {
 	const state = tableState.traffic;
-	setTableLoading("events", 7);
+	setTableLoading("events", 8);
 	updateSortIndicators("panel-traffic", state);
 	try {
 		const result = await api(
@@ -220,6 +238,7 @@ async function loadTraffic() {
 				decision: byId("eventDecision").value,
 				method: byId("eventMethod").value,
 				status: byId("eventStatus").value,
+				country: byId("eventCountry").value,
 				range: byId("eventRange").value,
 			})}`,
 		);
@@ -229,12 +248,13 @@ async function loadTraffic() {
 		}
 		byId("events").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="7" class="empty-cell">No traffic matches these filters.</td></tr>'
+				? '<tr><td colspan="8" class="empty-cell">No traffic matches these filters.</td></tr>'
 				: result.items
 						.map(
 							(event) => `<tr>
           <td>${formatDate(event.created_at)}</td>
-          <td><code>${escapeHtml(event.ip)}</code></td>
+          <td><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code></td>
+          <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
@@ -245,7 +265,7 @@ async function loadTraffic() {
 						.join("");
 		updatePagination("events", result, loadTraffic);
 	} catch (error) {
-		setTableError("events", 7, error);
+		setTableError("events", 8, error);
 	}
 }
 
@@ -257,7 +277,7 @@ function sessionState(session) {
 
 async function loadSessions() {
 	const state = tableState.sessions;
-	setTableLoading("sessions", 8);
+	setTableLoading("sessions", 9);
 	updateSortIndicators("panel-sessions", state);
 	try {
 		const result = await api(
@@ -268,6 +288,7 @@ async function loadSessions() {
 				sortDirection: state.sortDirection,
 				search: byId("sessionSearch").value.trim(),
 				state: byId("sessionState").value,
+				country: byId("sessionCountry").value,
 			})}`,
 		);
 		if (result.page > result.totalPages) {
@@ -276,14 +297,15 @@ async function loadSessions() {
 		}
 		byId("sessions").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="8" class="empty-cell">No sessions match these filters.</td></tr>'
+				? '<tr><td colspan="9" class="empty-cell">No sessions match these filters.</td></tr>'
 				: result.items
 						.map((session) => {
 							const currentState = sessionState(session);
 							return `<tr class="session-row ${currentState}">
           <td><span class="badge ${currentState === "active" ? "ok" : currentState === "expired" ? "warn" : "bad"}">${currentState}</span></td>
           <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code></td>
-          <td><code>${escapeHtml(session.last_ip)}</code></td>
+          <td><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
+          <td>${countryBadge(session.country_code)}</td>
           <td>${formatDate(session.created_at)}</td>
           <td>${formatDate(session.last_seen_at)}</td>
           <td>${formatDate(session.expires_at)}</td>
@@ -294,7 +316,7 @@ async function loadSessions() {
 						.join("");
 		updatePagination("sessions", result, loadSessions);
 	} catch (error) {
-		setTableError("sessions", 8, error);
+		setTableError("sessions", 9, error);
 	}
 }
 
@@ -304,20 +326,32 @@ function ruleState(rule) {
 
 async function loadRules() {
 	const state = tableState.rules;
+	if (!selectedSiteId) {
+		byId("rules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding IP rules.</td></tr>';
+		byId("countryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding country rules.</td></tr>';
+		byId("saveNetworkDefaults").disabled = true;
+		return;
+	}
+	byId("saveNetworkDefaults").disabled = false;
 	setTableLoading("rules", 7);
+	setTableLoading("countryRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
-		const result = await api(
-			`/rules?${queryString({
-				page: state.page,
-				pageSize: state.pageSize,
-				sortBy: state.sortBy,
-				sortDirection: state.sortDirection,
-				search: byId("ruleSearch").value.trim(),
-				action: byId("ruleAction").value,
-				state: byId("ruleState").value,
-			})}`,
-		);
+		const [result, networkPolicy] = await Promise.all([
+			api(
+				`/rules?${queryString({
+					page: state.page,
+					pageSize: state.pageSize,
+					sortBy: state.sortBy,
+					sortDirection: state.sortDirection,
+					search: byId("ruleSearch").value.trim(),
+					action: byId("ruleAction").value,
+					state: byId("ruleState").value,
+				})}`,
+			),
+			api("/network-policy"),
+		]);
+		applyNetworkPolicy(networkPolicy);
 		if (result.page > result.totalPages) {
 			state.page = result.totalPages;
 			return await loadRules();
@@ -331,7 +365,7 @@ async function loadRules() {
 							return `<tr class="rule-row ${currentState}">
           <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
           <td><code>${escapeHtml(rule.network_cidr)}</code></td>
-          <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(rule.action)}</span></td>
+          <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
           <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
           <td>${formatDate(rule.created_at)}</td>
           <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
@@ -342,7 +376,71 @@ async function loadRules() {
 		updatePagination("rules", result, loadRules);
 	} catch (error) {
 		setTableError("rules", 7, error);
+		setTableError("countryRules", 7, error);
 	}
+}
+
+function applyNetworkPolicy(policy) {
+	byId("defaultIpAction").value = policy.defaultIpAction ?? "inherit";
+	byId("defaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
+	countryRules = policy.countryRules ?? [];
+	const warning = byId("geoPolicyWarning");
+	if (!policy.geoip?.enabled) {
+		warning.textContent = "GeoIP is disabled. Country rules are stored but not enforced until GeoIP is enabled.";
+		warning.classList.remove("hidden");
+	} else if (!policy.geoip.available) {
+		warning.textContent = policy.geoip.error || "The GeoIP database is unavailable. Country policy fails open until it becomes available.";
+		warning.classList.remove("hidden");
+	} else {
+		warning.classList.add("hidden");
+	}
+	renderCountryRules();
+}
+
+function renderCountryRules() {
+	const body = byId("countryRules");
+	if (!selectedSiteId) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">Select a site before adding country rules.</td></tr>';
+		return;
+	}
+	if (countryRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">No country rules are configured.</td></tr>';
+		return;
+	}
+	body.innerHTML = countryRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			const code = String(rule.country_code || "ZZ").toUpperCase();
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td>${countryBadge(code)} <span>${escapeHtml(countryDisplayName(code))}</span></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${formatDate(rule.created_at)}</td>
+      <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+      <td><button class="button danger compact" data-country-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
+async function saveNetworkDefaults() {
+	const result = await api("/network-policy", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			defaultIpAction: byId("defaultIpAction").value,
+			defaultCountryAction: byId("defaultCountryAction").value,
+		}),
+	});
+	const site = selectedSite();
+	if (site) {
+		site.defaultIpAction = result.defaultIpAction;
+		site.defaultCountryAction = result.defaultCountryAction;
+		renderSites();
+	}
+	showToast("Default network actions saved.");
+	await Promise.all([loadOverview(), loadMetrics()]);
 }
 
 function defaultChallengePolicy() {
@@ -385,7 +483,7 @@ function renderSites() {
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span></div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
@@ -473,6 +571,7 @@ function resetSiteScopedPages() {
 	tableState.rules.page = 1;
 	latestMetrics = null;
 	routePolicies = [];
+	countryRules = [];
 	resetRoutePolicyForm();
 }
 
@@ -1163,6 +1262,26 @@ function countryDisplayName(code, fallback = "") {
 	}
 }
 
+function populateCountrySelects() {
+	if (!geoMapGeometry) return;
+	const countries = [...geoMapGeometry.paths.entries()]
+		.map(([code, path]) => ({ code, name: path.dataset.name || countryDisplayName(code) }))
+		.sort((left, right) => left.name.localeCompare(right.name));
+	countries.push({ code: "ZZ", name: "Unknown / unmapped" });
+	const configurations = [
+		["eventCountry", "All countries"],
+		["sessionCountry", "All countries"],
+		["countryRuleCountry", "Select country"],
+	];
+	for (const [id, emptyLabel] of configurations) {
+		const select = byId(id);
+		if (!select) continue;
+		const current = select.value;
+		select.innerHTML = `<option value="">${emptyLabel}</option>${countries.map((country) => `<option value="${country.code}">${escapeHtml(country.name)} (${country.code})</option>`).join("")}`;
+		if ([...select.options].some((option) => option.value === current)) select.value = current;
+	}
+}
+
 function geoLevel(value, maximum) {
 	if (value <= 0 || maximum <= 0) return 0;
 	return Math.max(1, Math.min(5, Math.ceil((Math.log1p(value) / Math.log1p(maximum)) * 5)));
@@ -1275,6 +1394,7 @@ async function loadGeoMapGeometry() {
 	}
 	svg.replaceChildren(fragment);
 	geoMapGeometry = { paths };
+	populateCountrySelects();
 }
 
 async function loadGeoMetrics() {
@@ -1348,7 +1468,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
-	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventRange"]) {
+	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventCountry", "eventRange"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
 			void loadTraffic();
@@ -1365,10 +1485,11 @@ function bindFilters() {
 		void loadSessions();
 	});
 	byId("sessionSearch").addEventListener("input", sessionSearch);
-	byId("sessionState").addEventListener("change", () => {
-		tableState.sessions.page = 1;
-		void loadSessions();
-	});
+	for (const id of ["sessionState", "sessionCountry"])
+		byId(id).addEventListener("change", () => {
+			tableState.sessions.page = 1;
+			void loadSessions();
+		});
 	byId("sessionPageSize").addEventListener("change", () => {
 		tableState.sessions.page = 1;
 		tableState.sessions.pageSize = Number(byId("sessionPageSize").value);
@@ -1436,6 +1557,21 @@ async function handleBodyClick(event) {
 			await Promise.all([loadSessions(), loadOverview(), loadMetrics()]);
 		} catch (error) {
 			sessionButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const countryRuleButton = event.target.closest("button[data-country-rule-id]");
+	if (countryRuleButton) {
+		if (!confirm("Delete this country rule?")) return;
+		countryRuleButton.disabled = true;
+		try {
+			await api(`/country-rules/${encodeURIComponent(countryRuleButton.dataset.countryRuleId)}`, { method: "DELETE" });
+			showToast("Country rule deleted.");
+			await Promise.all([loadRules(), loadOverview(), loadMetrics()]);
+		} catch (error) {
+			countryRuleButton.disabled = false;
 			showToast(error.message, "bad");
 		}
 		return;
@@ -1532,6 +1668,30 @@ function bindActions() {
 				markUpdated("Rules updated");
 			}),
 	);
+	byId("saveNetworkDefaults").addEventListener("click", (event) => void runWithButton(event.currentTarget, saveNetworkDefaults));
+	byId("countryRuleForm").addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const form = event.currentTarget;
+		const submit = form.querySelector('button[type="submit"]');
+		submit.disabled = true;
+		const data = Object.fromEntries(new FormData(form));
+		const expiration = String(data.expiresAt ?? "").trim();
+		data.expiresAt = expiration ? new Date(expiration).getTime() : null;
+		try {
+			await api("/country-rules", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(data),
+			});
+			form.reset();
+			showToast("Country rule added.");
+			await Promise.all([loadRules(), loadOverview(), loadMetrics()]);
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			submit.disabled = false;
+		}
+	});
 	byId("metricRange").addEventListener("change", async () => {
 		await Promise.all([loadOverview(), loadMetrics(), loadGeoMetrics()]);
 		markUpdated("Dashboard updated");

@@ -56,6 +56,10 @@ export function startGeoIpRetry(): void {
 	(timer as unknown as { unref?: () => void }).unref?.();
 }
 
+export function geoIpAvailable(): boolean {
+	return reader !== null;
+}
+
 export function lookupCountryCode(ip: string): string | null {
 	if (!reader || !maxmind.validate(ip)) return null;
 	try {

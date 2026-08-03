@@ -9,16 +9,16 @@ import {
 	secureCookieForRequest,
 } from "../config.ts";
 import { repository, type SortDirection } from "../db/repository.ts";
-import { addIpRule } from "../services/ip-rule-service.ts";
+import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
 import { adminSessionTokens, createAdminSession, getAdminSession } from "../services/session-service.ts";
-import { createSite, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
+import { createSite, parseDefaultNetworkAction, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
 import { createRoutePolicy, deleteRoutePolicy, routePolicyView, updateRoutePolicy, type RoutePolicyInput } from "../services/route-policy-service.ts";
 import { invalidateRouteRateLimiter } from "../services/rate-limit-service.ts";
 import { issueLetsEncryptCertificate } from "../services/acme-service.ts";
 import { recordCertificateEvent, saveCertificate, tlsView, updateTlsSettings } from "../services/certificate-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
-import type { IpRuleAction, SiteRecord } from "../types.ts";
+import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { sha256Hex, timingSafeEqualText } from "../utils/crypto.ts";
@@ -326,14 +326,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse({
 				...base,
 				primary: {
-					title: "IP rules created",
-					subtitle: "Allow, block, and force-challenge rules added per interval",
+					title: "Network rules created",
+					subtitle: "IP and country rules added per interval",
 					type: "line",
 					timeSeries: true,
 					valueFormat: "number",
-					emptyMessage: "No IP rules were created in this range.",
+					emptyMessage: "No network rules were created in this range.",
 					datasets: [
-						{ key: "allow", label: "Allow" },
+						{ key: "pass", label: "Allow and follow route" },
+						{ key: "allow", label: "Allow and bypass" },
 						{ key: "block", label: "Block" },
 						{ key: "challenge", label: "Challenge" },
 					],
@@ -345,7 +346,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 					type: "bar",
 					timeSeries: false,
 					valueFormat: "number",
-					emptyMessage: "No IP rules are configured.",
+					emptyMessage: "No network rules are configured.",
 					datasets: [
 						{ key: "active", label: "Active" },
 						{ key: "expired", label: "Expired" },
@@ -467,6 +468,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const decision = stringParam(url, "decision");
 		const method = stringParam(url, "method");
 		const statusGroup = enumParam(url, "status", ["1xx", "2xx", "3xx", "4xx", "5xx"] as const);
+		const countryCode = stringParam(url, "country")?.toUpperCase();
 		return jsonResponse(
 			await repository.pagedEvents({
 				...(selection.site ? { siteId: selection.site.id } : {}),
@@ -476,8 +478,9 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(decision ? { decision } : {}),
 				...(method ? { method } : {}),
 				...(statusGroup ? { statusGroup } : {}),
+				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
 				...(since ? { since } : {}),
-				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
+				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "country_code", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
 				sortDirection: sortDirection(url),
 			}),
 		);
@@ -491,6 +494,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const search = stringParam(url, "search");
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);
+		const countryCode = stringParam(url, "country")?.toUpperCase();
 		return jsonResponse(
 			await repository.pagedSessions({
 				...(selection.site ? { siteId: selection.site.id } : {}),
@@ -498,10 +502,75 @@ export function registerAdminRoutes(app: Web<any>): void {
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				...(search ? { search } : {}),
 				...(state ? { state } : {}),
-				sortBy: enumParam(url, "sortBy", ["last_seen_at", "created_at", "expires_at", "request_count", "last_ip"] as const, "last_seen_at")!,
+				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
+				sortBy: enumParam(url, "sortBy", ["last_seen_at", "created_at", "expires_at", "request_count", "last_ip", "country_code"] as const, "last_seen_at")!,
 				sortDirection: sortDirection(url),
 			}),
 		);
+	});
+
+	app.get("/_burrowgate/api/admin/network-policy", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		return jsonResponse({
+			defaultIpAction: selection.site.default_ip_action ?? "inherit",
+			defaultCountryAction: selection.site.default_country_action ?? "inherit",
+			countryRules: await repository.countryRules(selection.site.id),
+			geoip: geoIpStatus(),
+		});
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/network-policy", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		try {
+			const body = (await ctx.req.json()) as { defaultIpAction?: DefaultNetworkAction; defaultCountryAction?: DefaultNetworkAction };
+			const defaultIpAction = parseDefaultNetworkAction(body.defaultIpAction, selection.site.default_ip_action ?? "inherit");
+			const defaultCountryAction = parseDefaultNetworkAction(body.defaultCountryAction, selection.site.default_country_action ?? "inherit");
+			await repository.updateSiteNetworkDefaults(selection.site.id, defaultIpAction, defaultCountryAction, Date.now());
+			invalidateNetworkPolicy(selection.site.id);
+			return jsonResponse({ defaultIpAction, defaultCountryAction });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/country-rules", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const body = (await ctx.req.json()) as { countryCode?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.countryCode || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid country rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			return jsonResponse(await addCountryRule(selection.site.id, body.countryCode, body.action!, body.reason ?? "", expiresAt), 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/country-rules/:id", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		await repository.deleteCountryRuleForSite(ctx.params.id!, selection.site.id);
+		invalidateNetworkPolicy(selection.site.id);
+		return jsonResponse({ deleted: true });
 	});
 
 	app.get("/_burrowgate/api/admin/rules", async (ctx) => {
@@ -512,7 +581,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
 		const search = stringParam(url, "search");
-		const action = enumParam(url, "action", ["allow", "block", "challenge"] as const);
+		const action = enumParam(url, "action", ["allow", "pass", "block", "challenge"] as const);
 		const state = enumParam(url, "state", ["active", "expired"] as const);
 		return jsonResponse(
 			await repository.pagedRules({
@@ -535,7 +604,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
 		const body = (await ctx.req.json()) as { networkCidr?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
-		if (!body.networkCidr || !["allow", "block", "challenge"].includes(body.action ?? "")) {
+		if (!body.networkCidr || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid rule" }, 400);
 		}
 		const parsedExpiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
@@ -556,6 +625,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
 		await repository.deleteRuleForSite(ctx.params.id!, selection.site.id);
+		invalidateNetworkPolicy(selection.site.id);
 		return jsonResponse({ deleted: true });
 	});
 

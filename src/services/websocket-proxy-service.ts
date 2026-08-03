@@ -287,7 +287,13 @@ export async function handleWebSocketUpgrade(
 
 	const ip = await clientIpForUpgrade(request, server);
 	const url = incomingUrl;
-	const eventBase = {
+	const eventBase: {
+		siteId: string;
+		ip: string;
+		method: string;
+		path: string;
+		countryCode?: string | null;
+	} = {
 		siteId: site.id,
 		ip,
 		method: request.method,
@@ -311,10 +317,11 @@ export async function handleWebSocketUpgrade(
 		}
 	}
 
-	const ipRule = ip === "unknown" ? { action: null, rule: null } : await evaluateIp(site.id, ip);
+	const ipRule = await evaluateIp(site, ip);
+	eventBase.countryCode = ipRule.countryCode;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "Access blocked by BurrowGate", reason: ipRule.rule?.reason }, 403);
+		return jsonResponse({ error: "Access blocked by BurrowGate", reason: ipRule.reason }, 403);
 	}
 
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);

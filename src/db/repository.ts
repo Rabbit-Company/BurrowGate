@@ -8,6 +8,7 @@ import type {
 	CertificateEventRecord,
 	CertificateRecord,
 	ChallengeFlowRecord,
+	CountryRuleRecord,
 	ChallengeStepRecord,
 	IpRuleRecord,
 	RequestEventRecord,
@@ -34,9 +35,10 @@ export interface EventQuery {
 	decision?: string;
 	method?: string;
 	statusGroup?: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
+	countryCode?: string;
 	since?: number;
 	until?: number;
-	sortBy: "created_at" | "ip" | "method" | "path" | "status" | "decision" | "latency_ms";
+	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "latency_ms";
 	sortDirection: SortDirection;
 }
 
@@ -46,7 +48,8 @@ export interface SessionQuery {
 	pageSize: number;
 	search?: string;
 	state?: "active" | "expired" | "revoked";
-	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip";
+	countryCode?: string;
+	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip" | "country_code";
 	sortDirection: SortDirection;
 }
 
@@ -139,11 +142,11 @@ export const repository = {
 		return (await db`SELECT * FROM sites ORDER BY enabled DESC, name ASC`) as SiteRecord[];
 	},
 	async insertSite(site: SiteRecord): Promise<void> {
-		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,created_at,updated_at)
-      VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.created_at},${site.updated_at})`;
+		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,created_at,updated_at)
+      VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.created_at},${site.updated_at})`;
 	},
 	async updateSite(site: SiteRecord): Promise<void> {
-		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, updated_at=${site.updated_at} WHERE id=${site.id}`;
 	},
 	async routePolicies(siteId: string): Promise<RoutePolicyRecord[]> {
 		return (await db`SELECT * FROM route_policies WHERE site_id=${siteId} ORDER BY priority DESC, created_at ASC`) as RoutePolicyRecord[];
@@ -184,8 +187,9 @@ export const repository = {
 		const now = Date.now();
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(id) LIKE ${pattern} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern} OR LOWER(user_agent_hash) LIKE ${pattern})`
+			? db`AND (LOWER(id) LIKE ${pattern} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern} OR LOWER(user_agent_hash) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
 			: db``;
+		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const stateFilter =
 			query.state === "active"
 				? db`AND revoked_at IS NULL AND expires_at > ${now}`
@@ -198,11 +202,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM access_sessions
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${stateFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM access_sessions
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${stateFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as AccessSessionRecord[];
@@ -279,6 +283,22 @@ export const repository = {
 	async deleteRuleForSite(id: string, siteId: string): Promise<void> {
 		await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
 	},
+	async countryRules(siteId: string): Promise<CountryRuleRecord[]> {
+		return (await db`SELECT * FROM country_rules WHERE site_id=${siteId} ORDER BY country_code ASC`) as CountryRuleRecord[];
+	},
+	async countryRuleByCode(siteId: string, countryCode: string): Promise<CountryRuleRecord | null> {
+		const rows = (await db`SELECT * FROM country_rules WHERE site_id=${siteId} AND country_code=${countryCode} LIMIT 1`) as CountryRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertCountryRule(rule: CountryRuleRecord): Promise<void> {
+		await db`INSERT INTO country_rules (id,site_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteCountryRuleForSite(id: string, siteId: string): Promise<void> {
+		await db`DELETE FROM country_rules WHERE id=${id} AND site_id=${siteId}`;
+	},
+	async updateSiteNetworkDefaults(siteId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
+		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
+	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
 		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.created_at})`;
 	},
@@ -286,9 +306,10 @@ export const repository = {
 		const pattern = searchPattern(query.search);
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern})`
+			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
+		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
 		const statusFilter =
 			query.statusGroup === "1xx"
@@ -308,11 +329,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as RequestEventRecord[];
@@ -468,14 +489,18 @@ export const repository = {
 		until: number,
 		bucketMs: number,
 	): Promise<{
-		series: Array<{ bucket: number; allow: number; block: number; challenge: number }>;
+		series: Array<{ bucket: number; pass: number; allow: number; block: number; challenge: number }>;
 		states: Array<{ label: string; active: number; expired: number }>;
 	}> {
 		const bucket = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT ${bucket} * ${bucketMs} AS bucket, action, COUNT(*) AS count
-      FROM ip_rules
-      WHERE site_id=${siteId} AND created_at >= ${since} AND created_at <= ${until}
+      FROM (
+        SELECT created_at, action FROM ip_rules WHERE site_id=${siteId}
+        UNION ALL
+        SELECT created_at, action FROM country_rules WHERE site_id=${siteId}
+      ) AS network_rules
+      WHERE created_at >= ${since} AND created_at <= ${until}
       GROUP BY ${bucket}, action
       ORDER BY bucket ASC
     `) as Array<{ bucket: number | string; action: string; count: number | string }>;
@@ -484,12 +509,16 @@ export const repository = {
       SELECT action,
         SUM(CASE WHEN expires_at IS NULL OR expires_at > ${now} THEN 1 ELSE 0 END) AS active,
         SUM(CASE WHEN expires_at IS NOT NULL AND expires_at <= ${now} THEN 1 ELSE 0 END) AS expired
-      FROM ip_rules
-      WHERE site_id=${siteId}
+      FROM (
+        SELECT action, expires_at FROM ip_rules WHERE site_id=${siteId}
+        UNION ALL
+        SELECT action, expires_at FROM country_rules WHERE site_id=${siteId}
+      ) AS network_rules
       GROUP BY action
     `) as Array<{ action: string; active: number | string; expired: number | string }>;
 		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
 			bucket: value,
+			pass: 0,
 			allow: 0,
 			block: 0,
 			challenge: 0,
@@ -497,14 +526,19 @@ export const repository = {
 		const byBucket = new Map(points.map((point) => [point.bucket, point]));
 		for (const row of rows) {
 			const point = byBucket.get(toNumber(row.bucket));
-			if (!point || !["allow", "block", "challenge"].includes(row.action)) continue;
-			point[row.action as "allow" | "block" | "challenge"] = toNumber(row.count);
+			if (!point || !["pass", "allow", "block", "challenge"].includes(row.action)) continue;
+			point[row.action as "pass" | "allow" | "block" | "challenge"] = toNumber(row.count);
 		}
 		const states = new Map(stateRows.map((row) => [row.action, row]));
 		return {
 			series: points,
-			states: ["allow", "block", "challenge"].map((action) => ({
-				label: action[0]!.toUpperCase() + action.slice(1),
+			states: [
+				{ action: "pass", label: "Follow route" },
+				{ action: "allow", label: "Bypass" },
+				{ action: "block", label: "Block" },
+				{ action: "challenge", label: "Challenge" },
+			].map(({ action, label }) => ({
+				label,
 				active: toNumber(states.get(action)?.active),
 				expired: toNumber(states.get(action)?.expired),
 			})),
@@ -690,14 +724,18 @@ export const repository = {
 		const [challenges] = (await db`SELECT COUNT(*) AS count FROM challenge_flows WHERE created_at > ${since} ${flowSiteFilter}`) as Array<{
 			count: number | string;
 		}>;
-		const [rules] = (await db`SELECT COUNT(*) AS count FROM ip_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
+		const [ipRules] = (await db`SELECT COUNT(*) AS count FROM ip_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
 			count: number | string;
 		}>;
+		const [countryRules] =
+			(await db`SELECT COUNT(*) AS count FROM country_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
+				count: number | string;
+			}>;
 		const requests = toNumber(eventStats?.requests);
 		const errors = toNumber(eventStats?.errors);
 		return {
 			activeSessions: toNumber(sessions?.count),
-			activeRules: toNumber(rules?.count),
+			activeRules: toNumber(ipRules?.count) + toNumber(countryRules?.count),
 			blocked24h: toNumber(eventStats?.blocked),
 			requests24h: requests,
 			challenges24h: toNumber(challenges?.count),

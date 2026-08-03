@@ -11,6 +11,7 @@ export async function recordEvent(input: {
 	status: number;
 	decision: string;
 	latencyMs: number;
+	countryCode?: string | null;
 }): Promise<void> {
 	try {
 		await repository.insertEvent({
@@ -23,7 +24,7 @@ export async function recordEvent(input: {
 			status: input.status,
 			decision: input.decision,
 			latency_ms: input.latencyMs,
-			country_code: countryCodeForStorage(input.ip),
+			country_code: input.countryCode === undefined ? countryCodeForStorage(input.ip) : input.countryCode,
 			created_at: Date.now(),
 		});
 	} catch (error) {

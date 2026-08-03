@@ -11,8 +11,10 @@ BurrowGate loads one `GeoLite2-Country.mmdb` reader and reuses it for every look
 This design keeps the request path fast and memory usage predictable:
 
 - one small country-level MMDB reader per BurrowGate process
+- a constant-time in-memory availability check in the request path
 - a configurable bounded lookup cache
 - one nullable two-character column per event and session
+- one GeoIP result reused by network policy and event logging
 - indexed SQL aggregation for dashboard maps
 - a Brotli or gzip compressed static SVG downloaded once and cached by the browser
 - SVG paths created once and recolored in place when metrics change
@@ -87,3 +89,13 @@ The map is rendered as an inline interactive SVG. The bundled geometry comes fro
 ## Accuracy and licensing
 
 IP geolocation is approximate and should not be used to identify a household or precise physical address. Follow MaxMind's GeoLite license, attribution, and database update requirements.
+
+## Dashboard tables and filters
+
+Traffic and session tables show the two-letter country code. Hovering the code or IP address displays the full country name. Both tables can be filtered and sorted by country.
+
+## Country access rules
+
+The Network rules tab can allow, block, or challenge a country. A site can also use a default country action to create a country allowlist or blocklist. See [NETWORK_POLICIES.md](NETWORK_POLICIES.md).
+
+Country rules are held in the per-site network-policy cache. Request processing uses the country code already returned by the shared local GeoIP reader and does not perform an additional database query.

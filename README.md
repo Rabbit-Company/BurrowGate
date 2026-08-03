@@ -1,6 +1,6 @@
 # BurrowGate
 
-BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It protects websites and APIs from bots and automated scrapers with route policies, rate limits, IP rules, browser challenges, TLS termination, and traffic monitoring.
+BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It protects websites and APIs from bots and automated scrapers with route policies, rate limits, network rules, browser challenges, TLS termination, and traffic monitoring.
 
 ## Features
 
@@ -15,11 +15,13 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Pluggable challenge providers and ordered challenge chains
 - SHA-256 browser proof of work
 - Opaque and revocable visitor sessions
-- IPv4, IPv6, and CIDR allow, block, and challenge rules
+- IPv4, IPv6, CIDR, and country pass, bypass, block, and challenge rules
+- Site-wide default IP and country actions for allowlists and blocklists
 - Signed origin verification headers
 - Paginated traffic, session, route, rule, and site monitoring
 - Per-site traffic retention
 - Country-level GeoIP analytics with an interactive SVG world map
+- Country codes, country filters, and country tooltips in traffic and session tables
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
 
@@ -130,13 +132,14 @@ Each site contains:
 - an HTTP or HTTPS origin URL
 - an enabled state
 - a default access mode
+- default IP and country actions
 - a visitor session lifetime
 - a traffic retention period
 - a challenge policy
 - a signing secret for origin verification headers
 - TLS and force-HTTPS settings
 
-The selected site is stored in the dashboard URL. Traffic, sessions, IP rules, route policies, and actions are scoped to that site.
+The selected site is stored in the dashboard URL. Traffic, sessions, network rules, route policies, and actions are scoped to that site.
 
 Environment-based site seeding is disabled by default. It can be enabled for automated deployments:
 
@@ -167,6 +170,24 @@ docker compose --profile geoip up -d --build
 ```
 
 See [`docs/GEOIP.md`](docs/GEOIP.md).
+
+Third-party map and data attribution is documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## Network Policies
+
+Each site can define a default IP action, a default country action, explicit IP or CIDR rules, and explicit country rules. This supports blocklists, deny-by-default allowlists, and trusted clients that bypass browser verification.
+
+Policy precedence is:
+
+1. Longest matching IP or CIDR rule
+2. Explicit country rule
+3. Default country action
+4. Default IP action
+5. Route policy
+
+Country policy fails open when the GeoIP database is unavailable. IP rules and the default IP action continue to apply.
+
+See [`docs/NETWORK_POLICIES.md`](docs/NETWORK_POLICIES.md).
 
 ## Route Policies
 

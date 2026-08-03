@@ -1,9 +1,9 @@
 {
 	"name": "burrowgate",
-	"version": "0.10.0",
+	"version": "0.11.0",
 	"private": true,
 	"type": "module",
-	"description": "Self-hosted reverse proxy with route policies, challenges, rate limiting, TLS, and traffic monitoring.",
+	"description": "Self-hosted reverse proxy with route policies, GeoIP network controls, challenges, rate limiting, TLS, and traffic monitoring.",
 	"scripts": {
 		"dev": "bun --watch src/index.ts",
 		"start": "bun src/index.ts",

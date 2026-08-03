@@ -31,6 +31,8 @@ const site: SiteRecord = {
 	session_ttl_seconds: 3_600,
 	default_access_mode: "challenge",
 	event_retention_days: 7,
+	default_ip_action: "inherit",
+	default_country_action: "inherit",
 	challenge_policy_json: "[]",
 	created_at: Date.now(),
 	updated_at: Date.now(),

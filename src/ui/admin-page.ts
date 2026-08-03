@@ -35,7 +35,7 @@ export function adminPage(): string {
   <article class="card pad stat"><span id="latencyStatLabel" class="muted">Average latency (24h)</span><strong id="averageLatency24h">-</strong></article>
   <article class="card pad stat"><span id="challengesStatLabel" class="muted">Challenges (24h)</span><strong id="challenges24h">-</strong></article>
   <article class="card pad stat"><span class="muted">Active sessions</span><strong id="activeSessions">-</strong></article>
-  <article class="card pad stat"><span class="muted">Active IP rules</span><strong id="activeRules">-</strong></article>
+  <article class="card pad stat"><span class="muted">Active network rules</span><strong id="activeRules">-</strong></article>
 </section>
 
 <section class="grid charts-grid">
@@ -66,7 +66,7 @@ export function adminPage(): string {
 <nav class="tabs" aria-label="Dashboard sections">
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
   <button class="tab" data-tab="sessions" type="button">Sessions</button>
-  <button class="tab" data-tab="rules" type="button">IP rules</button>
+  <button class="tab" data-tab="rules" type="button">Network rules</button>
   <button class="tab" data-tab="routes" type="button">Routes</button>
   <button class="tab" data-tab="sites" type="button">Sites</button>
 </nav>
@@ -79,10 +79,11 @@ export function adminPage(): string {
       <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
+      <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Range</span><select id="eventRange" class="select"><option value="1">1 hour</option><option value="6">6 hours</option><option value="24" selected>24 hours</option><option value="168">7 days</option><option value="all">All retained</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="7" class="empty-cell">Loading...</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>
@@ -93,30 +94,44 @@ export function adminPage(): string {
     <div class="toolbar compact-toolbar">
       <label class="search-field"><span>Search</span><input id="sessionSearch" class="input" placeholder="Session ID or IP..."></label>
       <label><span>State</span><select id="sessionState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label>
+      <label><span>Country</span><select id="sessionCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="sessionPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Session</th><th>${sortButton("Last IP", "last_ip")}</th><th>${sortButton("Created", "created_at")}</th><th>${sortButton("Last seen", "last_seen_at")}</th><th>${sortButton("Expires", "expires_at")}</th><th>${sortButton("Requests", "request_count")}</th><th></th></tr></thead><tbody id="sessions"><tr><td colspan="8" class="empty-cell">Open the tab to load sessions.</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Session</th><th>${sortButton("Last IP", "last_ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Created", "created_at")}</th><th>${sortButton("Last seen", "last_seen_at")}</th><th>${sortButton("Expires", "expires_at")}</th><th>${sortButton("Requests", "request_count")}</th><th></th></tr></thead><tbody id="sessions"><tr><td colspan="9" class="empty-cell">Open the tab to load sessions.</td></tr></tbody></table></div>
     ${pagination("sessions")}
   </article>
 </section>
 
 <section id="panel-rules" class="tab-panel hidden">
+  <article class="card network-defaults-card">
+    <div class="pad section-heading"><div><h2>Default network actions</h2><p class="muted">Explicit IP rules override country rules. Country rules override these defaults.</p></div><button id="saveNetworkDefaults" class="button" type="button">Save</button></div>
+    <div class="network-defaults-grid pad-topless">
+      <label><span>Default IP action</span><select id="defaultIpAction" class="select"><option value="inherit">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="block">Block all IPs</option><option value="challenge">Require challenge</option></select><small class="muted">Set to Block all IPs and add Allow and follow route policy rules to create an IP whitelist.</small></label>
+      <label><span>Default country action</span><select id="defaultCountryAction" class="select"><option value="inherit">Use IP default</option><option value="allow">Allow and bypass verification</option><option value="block">Block all countries</option><option value="challenge">Require challenge</option></select><small class="muted">Set to Block all countries and add Allow and follow route policy rules to create a country whitelist.</small></label>
+    </div>
+    <p id="geoPolicyWarning" class="notice muted hidden"></p>
+  </article>
+
   <article class="card rule-create-card">
-    <div class="pad"><h2>Add an IP rule</h2><form id="ruleForm" class="rule-form"><label><span>IP address or CIDR</span><input class="input" name="networkCidr" placeholder="203.0.113.4 or 203.0.113.0/24" required></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="allow">Allow</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
+    <div class="pad"><h2>Add an IP rule</h2><form id="ruleForm" class="rule-form"><label><span>IP address or CIDR</span><input class="input" name="networkCidr" placeholder="203.0.113.4 or 203.0.113.0/24" required></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="pass">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
   </article>
   <article class="card rules-list-card">
-    <div class="pad section-heading"><div><h2>IP rules</h2><p class="muted">Rules are evaluated by longest matching CIDR first.</p></div><button id="refreshRules" class="button secondary">Refresh</button></div>
+    <div class="pad section-heading"><div><h2>IP rules</h2><p class="muted">The longest matching CIDR wins. Explicit IP rules have the highest network-policy priority.</p></div><button id="refreshRules" class="button secondary">Refresh</button></div>
     <div class="toolbar compact-toolbar">
       <label class="search-field"><span>Search</span><input id="ruleSearch" class="input" placeholder="Network or reason..."></label>
-      <label><span>Action</span><select id="ruleAction" class="select"><option value="">All</option><option value="allow">Allow</option><option value="block">Block</option><option value="challenge">Challenge</option></select></label>
+      <label><span>Action</span><select id="ruleAction" class="select"><option value="">All</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass</option><option value="block">Block</option><option value="challenge">Challenge</option></select></label>
       <label><span>State</span><select id="ruleState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option></select></label>
       <label><span>Rows</span><select id="rulePageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
     <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>${sortButton("Network", "network_cidr")}</th><th>${sortButton("Action", "action")}</th><th>Reason</th><th>${sortButton("Created", "created_at")}</th><th>${sortButton("Expires", "expires_at")}</th><th></th></tr></thead><tbody id="rules"><tr><td colspan="7" class="empty-cell">Open the tab to load rules.</td></tr></tbody></table></div>
     ${pagination("rules")}
   </article>
-</section>
 
+  <article class="card country-rule-card">
+    <div class="pad"><h2>Add a country rule</h2><form id="countryRuleForm" class="country-rule-form"><label><span>Country</span><select id="countryRuleCountry" class="select country-select" name="countryCode" required><option value="">Select country</option></select></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="pass">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Country</th><th>Action</th><th>Reason</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody id="countryRules"><tr><td colspan="7" class="empty-cell">Open the tab to load country rules.</td></tr></tbody></table></div>
+  </article>
+</section>
 
 <section id="panel-routes" class="tab-panel hidden">
   <div class="route-policy-layout">

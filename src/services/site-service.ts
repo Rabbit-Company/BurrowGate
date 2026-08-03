@@ -1,7 +1,7 @@
 import { challengeRegistry } from "../challenges/index.ts";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { ChallengePolicyStep, SiteAccessMode, SiteRecord } from "../types.ts";
+import type { ChallengePolicyStep, DefaultNetworkAction, SiteAccessMode, SiteRecord } from "../types.ts";
 import { randomId, randomToken } from "../utils/crypto.ts";
 import { normalizeHost } from "../utils/http.ts";
 import { assertTlsHostnameAvailable, certificateCoversHostname, siteHostname } from "./certificate-service.ts";
@@ -16,6 +16,8 @@ export interface SiteInput {
 	originSigningSecret?: unknown;
 	defaultAccessMode?: unknown;
 	eventRetentionDays?: unknown;
+	defaultIpAction?: unknown;
+	defaultCountryAction?: unknown;
 }
 
 export interface SiteView {
@@ -28,6 +30,8 @@ export interface SiteView {
 	challengePolicy: ChallengePolicyStep[];
 	defaultAccessMode: SiteAccessMode;
 	eventRetentionDays: number;
+	defaultIpAction: DefaultNetworkAction;
+	defaultCountryAction: DefaultNetworkAction;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -81,6 +85,13 @@ function defaultAccessMode(value: unknown, fallback: SiteAccessMode): SiteAccess
 	const mode = String(value).trim().toLowerCase();
 	if (mode === "challenge" || mode === "bypass") return mode;
 	throw new Error("Default access mode must be challenge or bypass");
+}
+
+export function parseDefaultNetworkAction(value: unknown, fallback: DefaultNetworkAction): DefaultNetworkAction {
+	if (value === undefined) return fallback;
+	const action = String(value).trim().toLowerCase();
+	if (action === "inherit" || action === "allow" || action === "block" || action === "challenge") return action;
+	throw new Error("Default network action must be inherit, allow, block, or challenge");
 }
 
 function sessionTtl(value: unknown, fallback: number): number {
@@ -152,6 +163,8 @@ export function siteView(site: SiteRecord): SiteView {
 		challengePolicy: policyFromRecord(site),
 		defaultAccessMode: site.default_access_mode ?? "challenge",
 		eventRetentionDays: Number(site.event_retention_days ?? config.eventRetentionDays),
+		defaultIpAction: site.default_ip_action ?? "inherit",
+		defaultCountryAction: site.default_country_action ?? "inherit",
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -176,6 +189,8 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		),
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, config.defaultSite.accessMode),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, config.eventRetentionDays),
+		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, "inherit"),
+		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, "inherit"),
 		created_at: now,
 		updated_at: now,
 	};
@@ -202,6 +217,8 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		challenge_policy_json: JSON.stringify(parseChallengePolicy(input.challengePolicy, existingPolicy)),
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, existing.default_access_mode ?? "challenge"),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, existing.event_retention_days ?? config.eventRetentionDays),
+		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing.default_ip_action ?? "inherit"),
+		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing.default_country_action ?? "inherit"),
 		updated_at: Date.now(),
 	};
 	const tlsSettings = await repository.ensureTlsSettings(id);

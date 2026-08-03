@@ -40,12 +40,14 @@ Queries are not part of route matching.
 - `bypass`: do not require browser JavaScript or a BurrowGate visitor session.
 - `block`: return HTTP 403 without contacting the origin.
 
-IP rules are applied as follows:
+Network policy is evaluated before route access:
 
-- IP `block` always blocks.
-- Route `block` always blocks.
-- IP `challenge` forces a challenge on challenge or bypass routes.
-- IP `allow` bypasses a challenge, but does not bypass route rate limiting.
+- A matching IP, CIDR, or country `block` rejects the request.
+- A route `block` remains blocked regardless of an `allow` network rule.
+- A network `challenge` forces a challenge on challenge or bypass routes.
+- A network `allow` bypasses browser verification, but does not bypass route rate limiting.
+
+See [`NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for defaults, precedence, and whitelist examples.
 
 ## JSON API example
 
