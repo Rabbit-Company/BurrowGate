@@ -49,6 +49,8 @@ export interface SessionQuery {
 	search?: string;
 	state?: "active" | "expired" | "revoked";
 	countryCode?: string;
+	since?: number;
+	until?: number;
 	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip" | "country_code";
 	sortDirection: SortDirection;
 }
@@ -73,10 +75,11 @@ export interface TrafficMetricPoint {
 }
 
 export function fillTrafficMetricSeries(rows: TrafficMetricPoint[], startBucket: number, endTime: number, bucketMs: number): TrafficMetricPoint[] {
+	const firstBucket = Math.floor(startBucket / bucketMs) * bucketMs;
 	const endBucket = Math.floor(endTime / bucketMs) * bucketMs;
 	const byBucket = new Map(rows.map((row) => [row.bucket, row]));
 	const completed: TrafficMetricPoint[] = [];
-	for (let bucket = startBucket; bucket <= endBucket; bucket += bucketMs) {
+	for (let bucket = firstBucket; bucket <= endBucket; bucket += bucketMs) {
 		completed.push(
 			byBucket.get(bucket) ?? {
 				bucket,
@@ -98,9 +101,10 @@ function metricBucketExpression(column: "created_at" | "expires_at" | "revoked_a
 }
 
 function emptyMetricPoints<T extends { bucket: number }>(startBucket: number, endTime: number, bucketMs: number, factory: (bucket: number) => T): T[] {
+	const firstBucket = Math.floor(startBucket / bucketMs) * bucketMs;
 	const endBucket = Math.floor(endTime / bucketMs) * bucketMs;
 	const points: T[] = [];
-	for (let bucket = startBucket; bucket <= endBucket; bucket += bucketMs) points.push(factory(bucket));
+	for (let bucket = firstBucket; bucket <= endBucket; bucket += bucketMs) points.push(factory(bucket));
 	return points;
 }
 
@@ -198,15 +202,19 @@ export const repository = {
 					: query.state === "revoked"
 						? db`AND revoked_at IS NOT NULL`
 						: db``;
+		const rangeFilter =
+			query.since !== undefined && query.until !== undefined
+				? db`AND created_at <= ${query.until} AND (expires_at >= ${query.since} OR last_seen_at >= ${query.since} OR (revoked_at IS NOT NULL AND revoked_at >= ${query.since}))`
+				: db``;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM access_sessions
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM access_sessions
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as AccessSessionRecord[];
@@ -693,10 +701,8 @@ export const repository = {
 			disabledSites: siteRows.filter((site) => site.enabled !== 1).length,
 		};
 	},
-	async overview(siteId?: string, rangeHours = 24): Promise<Record<string, number>> {
+	async overview(siteId: string | undefined, since: number, until: number): Promise<Record<string, number>> {
 		const now = Date.now();
-		const normalizedRangeHours = [1, 6, 24, 168].includes(rangeHours) ? rangeHours : 24;
-		const since = now - normalizedRangeHours * 3_600_000;
 		const sessionSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
 		const eventSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
 		const ruleSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
@@ -713,7 +719,7 @@ export const repository = {
         COUNT(DISTINCT ip) AS unique_ips,
         COALESCE(AVG(latency_ms),0) AS average_latency
       FROM request_events
-      WHERE created_at > ${since} ${eventSiteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${eventSiteFilter}
     `) as Array<{
 			requests: number | string;
 			blocked: number | string;
@@ -721,9 +727,10 @@ export const repository = {
 			unique_ips: number | string;
 			average_latency: number | string;
 		}>;
-		const [challenges] = (await db`SELECT COUNT(*) AS count FROM challenge_flows WHERE created_at > ${since} ${flowSiteFilter}`) as Array<{
-			count: number | string;
-		}>;
+		const [challenges] =
+			(await db`SELECT COUNT(*) AS count FROM challenge_flows WHERE created_at >= ${since} AND created_at <= ${until} ${flowSiteFilter}`) as Array<{
+				count: number | string;
+			}>;
 		const [ipRules] = (await db`SELECT COUNT(*) AS count FROM ip_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
 			count: number | string;
 		}>;
@@ -743,7 +750,9 @@ export const repository = {
 			uniqueIps24h: toNumber(eventStats?.unique_ips),
 			averageLatency24h: Math.round(toNumber(eventStats?.average_latency)),
 			errorRate24h: requests > 0 ? Math.round((errors / requests) * 10_000) / 100 : 0,
-			rangeHours: normalizedRangeHours,
+			rangeFrom: since,
+			rangeTo: until,
+			rangeDurationMs: Math.max(0, until - since),
 		};
 	},
 	async geoMetrics(

@@ -55,6 +55,30 @@ function sortDirection(url: URL): SortDirection {
 	return url.searchParams.get("sortDirection") === "asc" ? "asc" : "desc";
 }
 
+const DEFAULT_DATE_RANGE_MS = 24 * 3_600_000;
+const MIN_DATE_RANGE_MS = 60_000;
+const MAX_DATE_RANGE_MS = 366 * 24 * 3_600_000;
+const METRIC_BUCKETS_MS = [
+	60_000, 300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 172_800_000, 345_600_000, 604_800_000,
+] as const;
+
+function requestedDateRange(url: URL): { since: number; until: number; durationMs: number } {
+	const now = Date.now();
+	const rawUntil = Number(url.searchParams.get("to"));
+	const rawSince = Number(url.searchParams.get("from"));
+	let until = Number.isFinite(rawUntil) && rawUntil > 0 ? Math.min(rawUntil, now + 300_000) : now;
+	let since = Number.isFinite(rawSince) && rawSince >= 0 ? rawSince : until - DEFAULT_DATE_RANGE_MS;
+	if (until - since < MIN_DATE_RANGE_MS) since = until - MIN_DATE_RANGE_MS;
+	if (until - since > MAX_DATE_RANGE_MS) since = until - MAX_DATE_RANGE_MS;
+	if (since < 0) since = 0;
+	return { since, until, durationMs: until - since };
+}
+
+function metricBucketSize(durationMs: number): number {
+	const minimum = Math.max(60_000, Math.ceil(durationMs / 120));
+	return METRIC_BUCKETS_MS.find((candidate) => candidate >= minimum) ?? 604_800_000;
+}
+
 async function firstSite(): Promise<SiteRecord | null> {
 	return (await repository.allSites())[0] ?? null;
 }
@@ -243,12 +267,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url);
 		if (selection.error) return selection.error;
-		const hours = enumParam(url, "range", ["1", "6", "24", "168"] as const, "24") ?? "24";
-		const rangeHours = Number(hours);
-		const now = Date.now();
-		const metrics = await repository.geoMetrics(selection.site?.id, now - rangeHours * 3_600_000, now);
+		const range = requestedDateRange(url);
+		const metrics = await repository.geoMetrics(selection.site?.id, range.since, range.until);
 		return jsonResponse({
-			rangeHours,
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
 			site: selection.site ? siteView(selection.site) : null,
 			status: geoIpStatus(),
 			requests: metrics.requests,
@@ -262,10 +286,9 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url);
 		if (selection.error) return selection.error;
-		const hours = enumParam(url, "range", ["1", "6", "24", "168"] as const, "24") ?? "24";
-		const rangeHours = Number(hours);
+		const range = requestedDateRange(url);
 		return jsonResponse({
-			...(await repository.overview(selection.site?.id, rangeHours)),
+			...(await repository.overview(selection.site?.id, range.since, range.until)),
 			retentionDays: selection.site?.event_retention_days ?? config.eventRetentionDays,
 			defaultPageSize: config.adminPageSize,
 			site: selection.site ? siteView(selection.site) : null,
@@ -279,18 +302,24 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const section = enumParam(url, "section", ["traffic", "sessions", "rules", "routes", "sites"] as const, "traffic") ?? "traffic";
 		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
 		if (selection.error) return selection.error;
-		const hours = enumParam(url, "range", ["1", "6", "24", "168"] as const, "24") ?? "24";
-		const rangeHours = Number(hours);
-		const rangeMs = rangeHours * 3_600_000;
-		const bucketMs = rangeHours <= 1 ? 60_000 : rangeHours <= 6 ? 300_000 : rangeHours <= 24 ? 900_000 : 3_600_000;
-		const now = Date.now();
-		const bucketCount = Math.ceil(rangeMs / bucketMs);
-		const currentBucket = Math.floor(now / bucketMs) * bucketMs;
-		const since = currentBucket - (bucketCount - 1) * bucketMs;
-		const base = { section, rangeHours, bucketMs, bucketCount };
+		const range = requestedDateRange(url);
+		const bucketMs = metricBucketSize(range.durationMs);
+		const since = range.since;
+		const until = range.until;
+		const firstBucket = Math.floor(since / bucketMs) * bucketMs;
+		const finalBucket = Math.floor(until / bucketMs) * bucketMs;
+		const bucketCount = Math.floor((finalBucket - firstBucket) / bucketMs) + 1;
+		const base = {
+			section,
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			bucketMs,
+			bucketCount,
+		};
 
 		if (section === "sessions") {
-			const metrics = await repository.sessionMetrics(selection.site?.id, since, now, bucketMs);
+			const metrics = await repository.sessionMetrics(selection.site?.id, since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -322,7 +351,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "rules") {
-			const metrics = await repository.ruleMetrics(selection.site?.id ?? "", since, now, bucketMs);
+			const metrics = await repository.ruleMetrics(selection.site?.id ?? "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -358,7 +387,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "routes") {
-			const metrics = await repository.routeMetrics(selection.site?.id ?? "", since, now, bucketMs);
+			const metrics = await repository.routeMetrics(selection.site?.id ?? "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -395,7 +424,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "sites") {
-			const metrics = await repository.siteMetrics(since, now, bucketMs);
+			const metrics = await repository.siteMetrics(since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -425,7 +454,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			});
 		}
 
-		const metrics = await repository.trafficMetrics(selection.site?.id, since, now, bucketMs);
+		const metrics = await repository.trafficMetrics(selection.site?.id, since, until, bucketMs);
 		return jsonResponse({
 			...base,
 			primary: {
@@ -462,8 +491,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url);
 		if (selection.error) return selection.error;
-		const range = enumParam(url, "range", ["1", "6", "24", "168", "all"] as const, "24") ?? "24";
-		const since = range === "all" ? undefined : Date.now() - Number(range) * 3_600_000;
+		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
 		const method = stringParam(url, "method");
@@ -479,7 +507,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(method ? { method } : {}),
 				...(statusGroup ? { statusGroup } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
-				...(since ? { since } : {}),
+				since: range.since,
+				until: range.until,
 				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "country_code", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
 				sortDirection: sortDirection(url),
 			}),
@@ -492,6 +521,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url);
 		if (selection.error) return selection.error;
+		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
@@ -503,6 +533,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(search ? { search } : {}),
 				...(state ? { state } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
+				since: range.since,
+				until: range.until,
 				sortBy: enumParam(url, "sortBy", ["last_seen_at", "created_at", "expires_at", "request_count", "last_ip", "country_code"] as const, "last_seen_at")!,
 				sortDirection: sortDirection(url),
 			}),

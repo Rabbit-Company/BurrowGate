@@ -310,9 +310,10 @@ The dashboard includes:
 - cross-site request and latency comparison
 - interactive country map for requests and newly created sessions
 - server-side pagination, search, filters, and sorting
-- one-hour, six-hour, 24-hour, and seven-day graph ranges
+- exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions
+- drag-to-select time ranges directly on time-series graphs
 
-Missing graph intervals are returned as zero values so graphs remain stable during quiet periods. Summary cards use the selected graph range.
+BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 
 Traffic retention is configured per site from 1 to 365 days. Maintenance removes expired events automatically.
 

@@ -27,6 +27,15 @@ export function adminPage(): string {
   </div>
 </header>
 
+<section class="card date-range-card">
+  <div class="date-range-layout">
+    <div class="date-range-copy"><h2>Date range</h2><p class="muted">All charts, statistics, geographic data, traffic, and session results use this interval. Drag across a time-series graph to select a narrower range.</p></div>
+    <label><span>From</span><input id="dateFrom" class="input" type="datetime-local" step="60"></label>
+    <label><span>To</span><input id="dateTo" class="input" type="datetime-local" step="60"></label>
+    <div class="row date-range-actions"><button id="applyDateRange" class="button" type="button">Apply</button><button id="resetDateRange" class="button secondary" type="button">Last 24 hours</button></div>
+  </div>
+</section>
+
 <section class="grid stats">
   <article class="card pad stat"><span id="requestsStatLabel" class="muted">Requests (24h)</span><strong id="requests24h">-</strong></article>
   <article class="card pad stat"><span id="uniqueIpsStatLabel" class="muted">Unique IPs (24h)</span><strong id="uniqueIps24h">-</strong></article>
@@ -39,7 +48,7 @@ export function adminPage(): string {
 </section>
 
 <section class="grid charts-grid">
-  <article class="card chart-card"><div class="pad row between responsive"><div><h2 id="primaryChartTitle">Traffic volume</h2><p id="primaryChartSubtitle" class="muted">Requests, blocked requests, and origin errors</p></div><select id="metricRange" class="select select-small"><option value="1">Last hour</option><option value="6">Last 6 hours</option><option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option></select></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="trafficChart"></canvas></div><div id="trafficEmpty" class="empty-state hidden">No traffic in this range.</div></div></article>
+  <article class="card chart-card"><div class="pad"><h2 id="primaryChartTitle">Traffic volume</h2><p id="primaryChartSubtitle" class="muted">Requests, blocked requests, and origin errors</p></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="trafficChart"></canvas></div><div id="trafficEmpty" class="empty-state hidden">No traffic in this range.</div></div></article>
   <article class="card chart-card"><div class="pad"><h2 id="secondaryChartTitle">Origin latency</h2><p id="secondaryChartSubtitle" class="muted">Average proxy response time per interval</p></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="latencyChart"></canvas></div><div id="latencyEmpty" class="empty-state hidden">No latency data in this range.</div></div><div id="decisionBreakdown" class="breakdown"></div></article>
 </section>
 
@@ -80,7 +89,6 @@ export function adminPage(): string {
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
-      <label><span>Range</span><select id="eventRange" class="select"><option value="1">1 hour</option><option value="6">6 hours</option><option value="24" selected>24 hours</option><option value="168">7 days</option><option value="all">All retained</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
     <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div>

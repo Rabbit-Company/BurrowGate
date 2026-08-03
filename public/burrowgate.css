@@ -1205,7 +1205,7 @@ form.grid label {
 
 @media (min-width: 1281px) {
 	.toolbar {
-		grid-template-columns: minmax(220px, 2fr) repeat(6, minmax(105px, 1fr));
+		grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(105px, 1fr));
 	}
 	.compact-toolbar {
 		grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 0.7fr));
@@ -1233,4 +1233,66 @@ form.grid label {
 	color: #a7f3d0;
 	border-color: #065f46;
 	background: rgba(6, 95, 70, 0.2);
+}
+.date-range-card {
+	margin-bottom: 18px;
+}
+.date-range-layout {
+	display: grid;
+	grid-template-columns: minmax(280px, 1.5fr) repeat(2, minmax(210px, 0.75fr)) auto;
+	gap: 14px;
+	align-items: end;
+	padding: 18px 24px;
+}
+.date-range-copy h2 {
+	margin-bottom: 5px;
+}
+.date-range-copy p {
+	margin-bottom: 0;
+	max-width: 680px;
+}
+.date-range-layout label {
+	display: grid;
+	gap: 6px;
+	color: #94a3b8;
+	font-size: 12px;
+}
+.date-range-layout input[type="datetime-local"] {
+	min-width: 0;
+	color-scheme: dark;
+}
+.date-range-actions {
+	justify-content: flex-end;
+	flex-wrap: wrap;
+}
+.chart-canvas-container.time-selectable canvas {
+	cursor: crosshair;
+	touch-action: none;
+	user-select: none;
+}
+
+@media (max-width: 1180px) {
+	.date-range-layout {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.date-range-copy {
+		grid-column: span 2;
+	}
+}
+@media (max-width: 620px) {
+	.date-range-layout {
+		grid-template-columns: 1fr;
+		padding: 16px;
+	}
+	.date-range-copy {
+		grid-column: auto;
+	}
+	.date-range-actions {
+		justify-content: stretch;
+		align-items: stretch;
+		flex-direction: column;
+	}
+	.date-range-actions .button {
+		width: 100%;
+	}
 }

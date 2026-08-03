@@ -23,6 +23,8 @@ let countryRules = [];
 let editingRoutePolicyId = null;
 let currentTls = null;
 let overviewRequestId = 0;
+let selectedRangeFrom = 0;
+let selectedRangeTo = 0;
 const loadedTabs = new Set(["traffic"]);
 
 const byId = (id) => document.getElementById(id);
@@ -56,8 +58,65 @@ function formatDuration(milliseconds) {
 	return `${(value / 60_000).toFixed(1)} min`;
 }
 
-function compactRangeLabel(hours) {
-	return { 1: "1h", 6: "6h", 24: "24h", 168: "7d" }[Number(hours)] ?? "24h";
+function toDateTimeLocal(value) {
+	const date = new Date(Number(value));
+	const pad = (part) => String(part).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function rangeDurationLabel(durationMs) {
+	const totalMinutes = Math.max(1, Math.round(Number(durationMs) / 60_000));
+	if (totalMinutes < 60) return `${totalMinutes}m`;
+	const totalHours = totalMinutes / 60;
+	if (totalHours < 48) {
+		const hours = Math.floor(totalHours);
+		const minutes = totalMinutes % 60;
+		return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+	}
+	const days = Math.floor(totalHours / 24);
+	const hours = Math.floor(totalHours % 24);
+	return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
+}
+
+function rangeQuery() {
+	return { from: selectedRangeFrom, to: selectedRangeTo };
+}
+
+function persistDateRange() {
+	const url = new URL(location.href);
+	url.searchParams.set("from", String(selectedRangeFrom));
+	url.searchParams.set("to", String(selectedRangeTo));
+	history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function setDateRangeInputs(from, to) {
+	selectedRangeFrom = Number(from);
+	selectedRangeTo = Number(to);
+	byId("dateFrom").value = toDateTimeLocal(selectedRangeFrom);
+	byId("dateTo").value = toDateTimeLocal(selectedRangeTo);
+	const maximum = toDateTimeLocal(Date.now() + 300_000);
+	byId("dateFrom").max = maximum;
+	byId("dateTo").max = maximum;
+}
+
+function initializeDateRange() {
+	const url = new URL(location.href);
+	const now = Date.now();
+	const requestedTo = Number(url.searchParams.get("to"));
+	const requestedFrom = Number(url.searchParams.get("from"));
+	const to = Number.isFinite(requestedTo) && requestedTo > 0 ? requestedTo : now;
+	const from = Number.isFinite(requestedFrom) && requestedFrom >= 0 && requestedFrom < to ? requestedFrom : to - 24 * 3_600_000;
+	setDateRangeInputs(from, to);
+	persistDateRange();
+}
+
+function readDateRangeInputs() {
+	const from = new Date(byId("dateFrom").value).getTime();
+	const to = new Date(byId("dateTo").value).getTime();
+	if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error("Select both From and To date/time values.");
+	if (to - from < 60_000) throw new Error("The selected range must be at least one minute.");
+	if (to - from > 366 * 24 * 3_600_000) throw new Error("The selected range cannot exceed 366 days.");
+	return { from, to };
 }
 
 function truncate(value, length = 72) {
@@ -145,8 +204,8 @@ function updateSortIndicators(panelId, state) {
 
 async function loadOverview() {
 	const requestId = ++overviewRequestId;
-	const selectedRange = Number(byId("metricRange").value);
-	const rangeLabel = compactRangeLabel(selectedRange);
+	const selectedDuration = selectedRangeTo - selectedRangeFrom;
+	const rangeLabel = rangeDurationLabel(selectedDuration);
 	byId("requestsStatLabel").textContent = `Requests (${rangeLabel})`;
 	byId("uniqueIpsStatLabel").textContent = `Unique IPs (${rangeLabel})`;
 	byId("blockedStatLabel").textContent = `Blocked (${rangeLabel})`;
@@ -154,7 +213,7 @@ async function loadOverview() {
 	byId("latencyStatLabel").textContent = `Average latency (${rangeLabel})`;
 	byId("challengesStatLabel").textContent = `Challenges (${rangeLabel})`;
 
-	const overview = await api(`/overview?${queryString({ range: selectedRange })}`);
+	const overview = await api(`/overview?${queryString(rangeQuery())}`);
 	if (requestId !== overviewRequestId) return;
 
 	const formatted = {
@@ -169,7 +228,7 @@ async function loadOverview() {
 	};
 	for (const [id, value] of Object.entries(formatted)) byId(id).textContent = value;
 
-	const resolvedRangeLabel = compactRangeLabel(overview.rangeHours ?? selectedRange);
+	const resolvedRangeLabel = rangeDurationLabel(overview.rangeDurationMs ?? selectedDuration);
 	byId("requestsStatLabel").textContent = `Requests (${resolvedRangeLabel})`;
 	byId("uniqueIpsStatLabel").textContent = `Unique IPs (${resolvedRangeLabel})`;
 	byId("blockedStatLabel").textContent = `Blocked (${resolvedRangeLabel})`;
@@ -239,7 +298,7 @@ async function loadTraffic() {
 				method: byId("eventMethod").value,
 				status: byId("eventStatus").value,
 				country: byId("eventCountry").value,
-				range: byId("eventRange").value,
+				...rangeQuery(),
 			})}`,
 		);
 		if (result.page > result.totalPages) {
@@ -289,6 +348,7 @@ async function loadSessions() {
 				search: byId("sessionSearch").value.trim(),
 				state: byId("sessionState").value,
 				country: byId("sessionCountry").value,
+				...rangeQuery(),
 			})}`,
 		);
 		if (result.page > result.totalPages) {
@@ -1000,9 +1060,9 @@ function chartTheme() {
 	};
 }
 
-function metricLabel(bucket, rangeHours, detailed = false) {
+function metricLabel(bucket, rangeDurationMs, detailed = false) {
 	const date = new Date(Number(bucket));
-	if (rangeHours >= 168 || detailed) {
+	if (Number(rangeDurationMs) >= 24 * 3_600_000 || detailed) {
 		return date.toLocaleString([], {
 			month: "short",
 			day: "numeric",
@@ -1101,7 +1161,7 @@ function chartOptions(definition, formatter) {
 						const item = items[0];
 						const point = definition.data[item.dataIndex];
 						if (definition.timeSeries && point?.bucket !== undefined) {
-							return metricLabel(point.bucket, Number(latestMetrics?.rangeHours ?? 24), true);
+							return metricLabel(point.bucket, Number(latestMetrics?.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom), true);
 						}
 						return String(point?.label ?? item.label ?? "");
 					},
@@ -1120,7 +1180,7 @@ function chartOptions(definition, formatter) {
 					autoSkip: true,
 					maxRotation: 0,
 					minRotation: 0,
-					maxTicksLimit: definition.timeSeries && Number(latestMetrics?.rangeHours ?? 24) <= 1 ? 6 : 8,
+					maxTicksLimit: definition.timeSeries && Number(latestMetrics?.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom) <= 3_600_000 ? 6 : 8,
 				},
 			},
 			y: {
@@ -1154,7 +1214,7 @@ function normalizeChartDefinition(definition) {
 		if (normalized.timeSeries) {
 			const bucketMs = Number(latestMetrics?.bucketMs ?? 60_000);
 			const bucketCount = Math.max(1, Number(latestMetrics?.bucketCount ?? 1));
-			const endBucket = Math.floor(Date.now() / bucketMs) * bucketMs;
+			const endBucket = Math.floor(selectedRangeTo / bucketMs) * bucketMs;
 			normalized.data = Array.from({ length: bucketCount }, (_, index) => ({
 				bucket: endBucket - (bucketCount - index - 1) * bucketMs,
 			}));
@@ -1172,23 +1232,121 @@ function normalizeChartDefinition(definition) {
 	return normalized;
 }
 
+const dateRangeSelectionPlugin = {
+	id: "burrowgateDateRangeSelection",
+	afterDatasetsDraw(chart) {
+		const selection = chart.$dateRangeSelection;
+		if (!selection?.dragging) return;
+		const { ctx, chartArea } = chart;
+		const left = Math.max(chartArea.left, Math.min(selection.startX, selection.currentX));
+		const right = Math.min(chartArea.right, Math.max(selection.startX, selection.currentX));
+		ctx.save();
+		ctx.fillStyle = "rgba(139, 92, 246, 0.18)";
+		ctx.strokeStyle = "rgba(167, 139, 250, 0.9)";
+		ctx.lineWidth = 1;
+		ctx.fillRect(left, chartArea.top, Math.max(0, right - left), chartArea.bottom - chartArea.top);
+		ctx.strokeRect(left + 0.5, chartArea.top + 0.5, Math.max(0, right - left - 1), chartArea.bottom - chartArea.top - 1);
+		ctx.restore();
+	},
+};
+
+function attachDateRangeSelection(chart, definition) {
+	const canvas = chart.canvas;
+	canvas.$dateRangeCleanup?.();
+	canvas.parentElement?.classList.toggle("time-selectable", Boolean(definition.timeSeries));
+	if (!definition.timeSeries || definition.data.length < 2) return;
+
+	const selection = { dragging: false, startX: 0, currentX: 0, pointerId: null };
+	chart.$dateRangeSelection = selection;
+	const canvasX = (event) => {
+		const rect = canvas.getBoundingClientRect();
+		return (event.clientX - rect.left) * (chart.width / rect.width);
+	};
+	const insidePlot = (x, y) => {
+		const rect = canvas.getBoundingClientRect();
+		const scaledY = (y - rect.top) * (chart.height / rect.height);
+		return x >= chart.chartArea.left && x <= chart.chartArea.right && scaledY >= chart.chartArea.top && scaledY <= chart.chartArea.bottom;
+	};
+	const stop = () => {
+		selection.dragging = false;
+		selection.pointerId = null;
+		chart.draw();
+	};
+
+	const pointerDown = (event) => {
+		if (event.button !== 0) return;
+		const x = canvasX(event);
+		if (!insidePlot(x, event.clientY)) return;
+		selection.dragging = true;
+		selection.startX = x;
+		selection.currentX = x;
+		selection.pointerId = event.pointerId;
+		canvas.setPointerCapture?.(event.pointerId);
+		event.preventDefault();
+		chart.draw();
+	};
+	const pointerMove = (event) => {
+		if (!selection.dragging || selection.pointerId !== event.pointerId) return;
+		selection.currentX = canvasX(event);
+		event.preventDefault();
+		chart.draw();
+	};
+	const pointerUp = (event) => {
+		if (!selection.dragging || selection.pointerId !== event.pointerId) return;
+		selection.currentX = canvasX(event);
+		const distance = Math.abs(selection.currentX - selection.startX);
+		if (distance < 8) {
+			stop();
+			return;
+		}
+		const scale = chart.scales.x;
+		const left = Math.max(chart.chartArea.left, Math.min(selection.startX, selection.currentX));
+		const right = Math.min(chart.chartArea.right, Math.max(selection.startX, selection.currentX));
+		const startIndex = Math.max(0, Math.min(definition.data.length - 1, Math.floor(Number(scale.getValueForPixel(left)))));
+		const endIndex = Math.max(startIndex, Math.min(definition.data.length - 1, Math.ceil(Number(scale.getValueForPixel(right)))));
+		const bucketMs = Number(latestMetrics?.bucketMs ?? 60_000);
+		const from = Math.max(selectedRangeFrom, Number(definition.data[startIndex]?.bucket ?? selectedRangeFrom));
+		const to = Math.min(selectedRangeTo, Number(definition.data[endIndex]?.bucket ?? selectedRangeTo) + bucketMs);
+		stop();
+		if (to - from >= 60_000 && (from !== selectedRangeFrom || to !== selectedRangeTo)) {
+			void applyDateRangeValues(from, to, "Graph selection applied").catch((error) => showToast(error.message, "bad"));
+		}
+	};
+	const pointerCancel = () => stop();
+	canvas.addEventListener("pointerdown", pointerDown);
+	canvas.addEventListener("pointermove", pointerMove);
+	canvas.addEventListener("pointerup", pointerUp);
+	canvas.addEventListener("pointercancel", pointerCancel);
+	canvas.$dateRangeCleanup = () => {
+		canvas.removeEventListener("pointerdown", pointerDown);
+		canvas.removeEventListener("pointermove", pointerMove);
+		canvas.removeEventListener("pointerup", pointerUp);
+		canvas.removeEventListener("pointercancel", pointerCancel);
+	};
+}
+
 function createChart(canvasId, definition) {
 	if (!window.Chart) throw new Error("Chart.js failed to load");
 	const theme = chartTheme();
 	const formatter = metricValueFormatter(definition.valueFormat);
 	const labels = definition.data.map((point) =>
-		definition.timeSeries ? metricLabel(point.bucket, Number(latestMetrics?.rangeHours ?? 24)) : String(point.label ?? ""),
+		definition.timeSeries
+			? metricLabel(point.bucket, Number(latestMetrics?.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom))
+			: String(point.label ?? ""),
 	);
 	const datasets = definition.datasets.map((dataset, index) =>
 		definition.type === "bar"
 			? barDataset(dataset, index, definition.data, theme, definition.datasets.length)
 			: lineDataset(dataset, index, definition.data, theme),
 	);
-	return new window.Chart(byId(canvasId), {
+	const chart = new window.Chart(byId(canvasId), {
 		type: definition.type,
 		data: { labels, datasets },
 		options: chartOptions(definition, formatter),
+		plugins: [dateRangeSelectionPlugin],
 	});
+	attachDateRangeSelection(chart, definition);
+	return chart;
 }
 
 function renderBreakdown(items) {
@@ -1239,7 +1397,7 @@ async function loadMetrics() {
 	try {
 		const result = await api(
 			`/metrics?${queryString({
-				range: byId("metricRange").value,
+				...rangeQuery(),
 				section,
 			})}`,
 			{},
@@ -1310,7 +1468,7 @@ function renderGeoMap() {
 	const values = new Map(items.map((item) => [String(item.countryCode).toUpperCase(), Number(item.count)]));
 	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
-	const rangeLabel = compactRangeLabel(geoMetrics.rangeHours ?? Number(byId("metricRange").value));
+	const rangeLabel = rangeDurationLabel(geoMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
 	const unit = mode === "sessions" ? "sessions" : "requests";
 	byId("geoSubtitle").textContent = `${mode === "sessions" ? "Sessions created" : "Requests"} by country (${rangeLabel})`;
 	byId("geoTotal").textContent = `${formatNumber(total)} ${unit}`;
@@ -1399,8 +1557,20 @@ async function loadGeoMapGeometry() {
 
 async function loadGeoMetrics() {
 	await loadGeoMapGeometry();
-	geoMetrics = await api(`/geo-metrics?${queryString({ range: byId("metricRange").value })}`);
+	geoMetrics = await api(`/geo-metrics?${queryString(rangeQuery())}`);
 	renderGeoMap();
+}
+
+async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated") {
+	setDateRangeInputs(from, to);
+	persistDateRange();
+	tableState.traffic.page = 1;
+	tableState.sessions.page = 1;
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
+	if (loadedTabs.has("traffic")) tasks.push(loadTraffic());
+	if (loadedTabs.has("sessions")) tasks.push(loadSessions());
+	await Promise.all(tasks);
+	markUpdated(updateLabel);
 }
 
 function markUpdated(prefix = "Updated") {
@@ -1468,7 +1638,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
-	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventCountry", "eventRange"]) {
+	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventCountry"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
 			void loadTraffic();
@@ -1692,10 +1862,35 @@ function bindActions() {
 			submit.disabled = false;
 		}
 	});
-	byId("metricRange").addEventListener("change", async () => {
-		await Promise.all([loadOverview(), loadMetrics(), loadGeoMetrics()]);
-		markUpdated("Dashboard updated");
-	});
+	byId("applyDateRange").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					const range = readDateRangeInputs();
+					await applyDateRangeValues(range.from, range.to);
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	byId("resetDateRange").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					const to = Date.now();
+					await applyDateRangeValues(to - 24 * 3_600_000, to, "Last 24 hours applied");
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	for (const id of ["dateFrom", "dateTo"]) {
+		byId(id).addEventListener("keydown", (event) => {
+			if (event.key === "Enter") byId("applyDateRange").click();
+		});
+	}
 	byId("geoMetricMode").addEventListener("change", renderGeoMap);
 	byId("logout").addEventListener("click", async () => {
 		await api("/logout", { method: "POST" }, false);
@@ -1737,6 +1932,7 @@ function bindActions() {
 }
 
 async function start() {
+	initializeDateRange();
 	bindSortButtons();
 	bindFilters();
 	bindActions();

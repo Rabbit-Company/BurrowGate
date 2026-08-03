@@ -22,4 +22,15 @@ describe("traffic metric bucket completion", () => {
 			averageLatency: 0,
 		});
 	});
+
+	test("aligns an arbitrary start time to the containing bucket", () => {
+		const minute = 60_000;
+		const bucketStart = Date.UTC(2026, 7, 3, 6, 0, 0);
+		const selectedStart = bucketStart + 20_000;
+		const rows = [point(bucketStart, 3)];
+		const series = fillTrafficMetricSeries(rows, selectedStart, bucketStart + minute + 40_000, minute);
+
+		expect(series.map((item) => item.bucket)).toEqual([bucketStart, bucketStart + minute]);
+		expect(series.map((item) => item.requests)).toEqual([3, 0]);
+	});
 });
