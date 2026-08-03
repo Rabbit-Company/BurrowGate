@@ -43,6 +43,26 @@ export function adminPage(): string {
   <article class="card chart-card"><div class="pad"><h2 id="secondaryChartTitle">Origin latency</h2><p id="secondaryChartSubtitle" class="muted">Average proxy response time per interval</p></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="latencyChart"></canvas></div><div id="latencyEmpty" class="empty-state hidden">No latency data in this range.</div></div><div id="decisionBreakdown" class="breakdown"></div></article>
 </section>
 
+<section class="card geo-card">
+  <div class="pad row between responsive">
+    <div><h2>Geographic distribution</h2><p id="geoSubtitle" class="muted">Requests by country for the selected range</p></div>
+    <select id="geoMetricMode" class="select select-small"><option value="requests">Requests</option><option value="sessions">Sessions</option></select>
+  </div>
+  <div class="geo-layout">
+    <div class="geo-map-wrap">
+      <svg id="geoMap" class="geo-map" role="img" aria-label="World map showing requests by country"></svg>
+      <div id="geoTooltip" class="geo-tooltip hidden" role="status"></div>
+      <div id="geoMapStatus" class="geo-map-status muted">Loading GeoIP data...</div>
+    </div>
+    <aside class="geo-sidebar">
+      <div class="row between"><span class="muted">Top countries</span><strong id="geoTotal">0</strong></div>
+      <div id="geoCountryList" class="geo-country-list"><p class="muted">No geographic data is available.</p></div>
+      <div class="geo-legend"><span>Low</span><div class="geo-legend-scale"><i></i><i></i><i></i><i></i><i></i></div><span>High</span></div>
+      <p class="geo-attribution muted">GeoIP data: <a href="https://www.maxmind.com" target="_blank" rel="noreferrer">MaxMind GeoLite2</a><br>Map geometry: <a href="https://github.com/VictorCazanave/svg-maps/tree/master/packages/world" target="_blank" rel="noreferrer">@svg-maps/world / MapSVG</a>, CC BY 4.0</p>
+    </aside>
+  </div>
+</section>
+
 <nav class="tabs" aria-label="Dashboard sections">
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
   <button class="tab" data-tab="sessions" type="button">Sessions</button>

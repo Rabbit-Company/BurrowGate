@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS access_sessions (
   expires_at BIGINT NOT NULL,
   revoked_at BIGINT NULL,
   verification_summary_json TEXT NOT NULL,
-  request_count BIGINT NOT NULL DEFAULT 0
+  request_count BIGINT NOT NULL DEFAULT 0,
+  country_code VARCHAR(2) NULL
 );
 CREATE TABLE IF NOT EXISTS challenge_flows (
   id VARCHAR(64) PRIMARY KEY,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS request_events (
   status INTEGER NOT NULL,
   decision VARCHAR(64) NOT NULL,
   latency_ms INTEGER NOT NULL,
+  country_code VARCHAR(2) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -223,6 +225,20 @@ async function ensureSiteColumns(): Promise<void> {
 	await db`UPDATE sites SET event_retention_days=${config.eventRetentionDays} WHERE event_retention_days IS NULL`;
 }
 
+async function ensureGeoIpColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE request_events ADD COLUMN country_code VARCHAR(2) NULL",
+		"ALTER TABLE access_sessions ADD COLUMN country_code VARCHAR(2) NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 function duplicateIndexError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 	return message.includes("already exists") || message.includes("duplicate key name") || message.includes("duplicate index");
@@ -242,6 +258,7 @@ async function createIndexes(): Promise<void> {
 export async function migrate(): Promise<void> {
 	await db.unsafe(schema);
 	await ensureSiteColumns();
+	await ensureGeoIpColumns();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 	}

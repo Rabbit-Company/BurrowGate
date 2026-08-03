@@ -167,8 +167,8 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
-		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count)
-      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count})`;
+		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code)
+      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code})`;
 	},
 	async touchSession(id: string, ip: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET last_ip=${ip}, last_seen_at=${now}, request_count=request_count+1 WHERE id=${id}`;
@@ -280,7 +280,7 @@ export const repository = {
 		await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.created_at})`;
 	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
 		const pattern = searchPattern(query.search);
@@ -707,6 +707,54 @@ export const repository = {
 			errorRate24h: requests > 0 ? Math.round((errors / requests) * 10_000) / 100 : 0,
 			rangeHours: normalizedRangeHours,
 		};
+	},
+	async geoMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+	): Promise<{
+		requests: Array<{ countryCode: string; count: number }>;
+		sessions: Array<{ countryCode: string; count: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const requestRows = (await db`
+      SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY COALESCE(country_code, 'ZZ')
+      ORDER BY count DESC
+    `) as Array<{ country_code: string; count: number | string }>;
+		const sessionRows = (await db`
+      SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
+      FROM access_sessions
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY COALESCE(country_code, 'ZZ')
+      ORDER BY count DESC
+    `) as Array<{ country_code: string; count: number | string }>;
+		return {
+			requests: requestRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
+			sessions: sessionRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
+		};
+	},
+	async eventsMissingCountry(limit: number): Promise<Array<{ id: string; ip: string }>> {
+		if (limit <= 0) return [];
+		return (await db`SELECT id, ip FROM request_events WHERE country_code IS NULL ORDER BY created_at DESC LIMIT ${limit}`) as Array<{
+			id: string;
+			ip: string;
+		}>;
+	},
+	async sessionsMissingCountry(limit: number): Promise<Array<{ id: string; initial_ip: string }>> {
+		if (limit <= 0) return [];
+		return (await db`SELECT id, initial_ip FROM access_sessions WHERE country_code IS NULL ORDER BY created_at DESC LIMIT ${limit}`) as Array<{
+			id: string;
+			initial_ip: string;
+		}>;
+	},
+	async updateEventCountry(id: string, countryCode: string): Promise<void> {
+		await db`UPDATE request_events SET country_code=${countryCode} WHERE id=${id} AND country_code IS NULL`;
+	},
+	async updateSessionCountry(id: string, countryCode: string): Promise<void> {
+		await db`UPDATE access_sessions SET country_code=${countryCode} WHERE id=${id} AND country_code IS NULL`;
 	},
 	async tlsSettings(siteId: string): Promise<SiteTlsSettingsRecord | null> {
 		const rows = (await db`SELECT * FROM site_tls_settings WHERE site_id=${siteId} LIMIT 1`) as SiteTlsSettingsRecord[];

@@ -12,6 +12,7 @@ import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, AdminSessionRecord, SiteRecord } from "../types.ts";
 import { parseCookies, serializeCookie } from "../utils/cookies.ts";
 import { randomId, randomToken, sha256Hex } from "../utils/crypto.ts";
+import { countryCodeForStorage } from "./geoip-service.ts";
 
 function cookieTokens(request: Request, names: readonly string[]): string[] {
 	const cookies = parseCookies(request.headers.get("cookie"));
@@ -67,6 +68,7 @@ export async function createAccessSession(
 		revoked_at: null,
 		verification_summary_json: JSON.stringify(summary),
 		request_count: 0,
+		country_code: countryCodeForStorage(ip),
 	};
 	await repository.insertSession(record);
 	return {

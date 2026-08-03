@@ -47,11 +47,12 @@ function cookieSecureMode(value: string | undefined): CookieSecureMode {
 }
 
 const legacyPort = envNumber("BG_PORT", 80, 1, 65535);
+const dataDirectory = process.env.BG_DATA_DIR?.trim() || "./data";
 
 export const config = {
 	environment: process.env.BG_ENV ?? "production",
 	host: process.env.BG_HOST ?? "0.0.0.0",
-	dataDirectory: process.env.BG_DATA_DIR?.trim() || "./data",
+	dataDirectory,
 	// BG_PORT remains a backwards-compatible alias for the HTTP listener.
 	port: legacyPort,
 	http: {
@@ -81,6 +82,13 @@ export const config = {
 	challengeMinDisplayMs: envNumber("BG_CHALLENGE_MIN_DISPLAY_MS", 0, 0, 86_400_000),
 	maxChallengeAttempts: envNumber("BG_MAX_CHALLENGE_ATTEMPTS", 8, 1, 100),
 	eventRetentionDays: envNumber("BG_EVENT_RETENTION_DAYS", 7, 1, 365),
+	geoip: {
+		enabled: envBoolean("BG_GEOIP_ENABLED", true),
+		databasePath: process.env.BG_GEOIP_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-Country.mmdb`,
+		cacheEntries: envNumber("BG_GEOIP_CACHE_ENTRIES", 4_096, 1, 1_000_000),
+		backfillBatchSize: envNumber("BG_GEOIP_BACKFILL_BATCH_SIZE", 500, 0, 10_000),
+		retrySeconds: envNumber("BG_GEOIP_RETRY_SECONDS", 30, 5, 3_600),
+	},
 	maintenanceIntervalSeconds: envNumber("BG_MAINTENANCE_INTERVAL_SECONDS", 3_600, 60, 86_400),
 	adminPageSize: envNumber("BG_ADMIN_PAGE_SIZE", 50, 10, 200),
 	masterKey: process.env.BG_MASTER_KEY?.trim() || (null as string | null),

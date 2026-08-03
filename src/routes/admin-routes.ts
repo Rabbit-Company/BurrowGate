@@ -16,6 +16,7 @@ import { createRoutePolicy, deleteRoutePolicy, routePolicyView, updateRoutePolic
 import { invalidateRouteRateLimiter } from "../services/rate-limit-service.ts";
 import { issueLetsEncryptCertificate } from "../services/acme-service.ts";
 import { recordCertificateEvent, saveCertificate, tlsView, updateTlsSettings } from "../services/certificate-service.ts";
+import { geoIpStatus } from "../services/geoip-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
 import type { IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage } from "../ui/admin-page.ts";
@@ -125,6 +126,19 @@ export function registerAdminRoutes(app: Web<any>): void {
 			}),
 	);
 
+	app.get("/_burrowgate/static/world.svg", (ctx) => {
+		const accepted = ctx.req.headers.get("accept-encoding") ?? "";
+		const encoding = accepted.includes("br") ? "br" : accepted.includes("gzip") ? "gzip" : null;
+		const file = encoding === "br" ? "public/world.svg.br" : encoding === "gzip" ? "public/world.svg.gz" : "public/world.svg";
+		const headers: Record<string, string> = {
+			"content-type": "image/svg+xml; charset=utf-8",
+			"cache-control": "public, max-age=2592000, immutable",
+			vary: "Accept-Encoding",
+		};
+		if (encoding) headers["content-encoding"] = encoding;
+		return new Response(Bun.file(file), { headers });
+	});
+
 	app.get("/_burrowgate/api/admin/sites", async (ctx) => {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
@@ -221,6 +235,25 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const message = error instanceof Error ? error.message : "Unable to delete route policy";
 			return jsonResponse({ error: message }, message === "Route policy not found" ? 404 : 400);
 		}
+	});
+
+	app.get("/_burrowgate/api/admin/geo-metrics", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedSite(url);
+		if (selection.error) return selection.error;
+		const hours = enumParam(url, "range", ["1", "6", "24", "168"] as const, "24") ?? "24";
+		const rangeHours = Number(hours);
+		const now = Date.now();
+		const metrics = await repository.geoMetrics(selection.site?.id, now - rangeHours * 3_600_000, now);
+		return jsonResponse({
+			rangeHours,
+			site: selection.site ? siteView(selection.site) : null,
+			status: geoIpStatus(),
+			requests: metrics.requests,
+			sessions: metrics.sessions,
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/overview", async (ctx) => {

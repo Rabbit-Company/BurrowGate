@@ -1,6 +1,7 @@
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { renewDueCertificates } from "./acme-service.ts";
+import { backfillGeoIp } from "./geoip-service.ts";
 
 const DAY_MS = 86_400_000;
 let maintenanceRunning = false;
@@ -15,6 +16,7 @@ export async function runMaintenance(): Promise<void> {
 			await repository.deleteEventsBeforeForSite(site.id, now - retentionDays * DAY_MS);
 		}
 		await repository.deleteExpiredAcmeChallenges(now);
+		await backfillGeoIp();
 	} catch (error) {
 		console.error("[BurrowGate] Retention cleanup failed", error);
 	}

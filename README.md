@@ -19,6 +19,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Signed origin verification headers
 - Paginated traffic, session, route, rule, and site monitoring
 - Per-site traffic retention
+- Country-level GeoIP analytics with an interactive SVG world map
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
 
@@ -83,27 +84,31 @@ docker compose up -d --build --force-recreate
 
 ## Configuration
 
-| Variable                            | Default                         | Description                                              |
-| ----------------------------------- | ------------------------------- | -------------------------------------------------------- |
-| `BG_ENV`                            | `production`                    | Runtime environment                                      |
-| `BG_HOST`                           | `0.0.0.0`                       | Listener address                                         |
-| `BG_HTTP_ENABLED`                   | `true`                          | Enable the HTTP listener                                 |
-| `BG_HTTP_PORT`                      | `80`                            | Internal HTTP port                                       |
-| `BG_HTTP_PUBLIC_PORT`               | `80`                            | Public HTTP port used in redirects and ACME validation   |
-| `BG_HTTPS_ENABLED`                  | `true`                          | Enable the HTTPS listener                                |
-| `BG_HTTPS_PORT`                     | `443`                           | Internal HTTPS port                                      |
-| `BG_HTTPS_PUBLIC_PORT`              | `443`                           | Public HTTPS port used in redirects                      |
-| `DATABASE_URL`                      | `sqlite://./data/burrowgate.db` | Bun.SQL database URL                                     |
-| `BG_ADMIN_USERNAME`                 | `admin`                         | Dashboard username                                       |
-| `BG_ADMIN_PASSWORD`                 | generated                       | Dashboard password                                       |
-| `BG_COOKIE_SECURE`                  | `auto`                          | Use secure cookies on HTTPS and ordinary cookies on HTTP |
-| `BG_MASTER_KEY`                     | generated                       | Encrypts certificate and ACME private keys               |
-| `BG_EVENT_RETENTION_DAYS`           | `7`                             | Default retention assigned to new sites                  |
-| `BG_DEFAULT_POW_DIFFICULTY`         | `18`                            | Default SHA-256 challenge difficulty                     |
-| `BG_WEBSOCKET_ENABLED`              | `true`                          | Enable WebSocket proxying                                |
-| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | `120`                           | WebSocket idle timeout from 10 to 960 seconds            |
-| `BG_ACME_DIRECTORY_URL`             | Let's Encrypt production        | ACME directory URL                                       |
-| `BG_ACME_EMAIL`                     | empty                           | Default ACME contact email                               |
+| Variable                            | Default                              | Description                                              |
+| ----------------------------------- | ------------------------------------ | -------------------------------------------------------- |
+| `BG_ENV`                            | `production`                         | Runtime environment                                      |
+| `BG_HOST`                           | `0.0.0.0`                            | Listener address                                         |
+| `BG_HTTP_ENABLED`                   | `true`                               | Enable the HTTP listener                                 |
+| `BG_HTTP_PORT`                      | `80`                                 | Internal HTTP port                                       |
+| `BG_HTTP_PUBLIC_PORT`               | `80`                                 | Public HTTP port used in redirects and ACME validation   |
+| `BG_HTTPS_ENABLED`                  | `true`                               | Enable the HTTPS listener                                |
+| `BG_HTTPS_PORT`                     | `443`                                | Internal HTTPS port                                      |
+| `BG_HTTPS_PUBLIC_PORT`              | `443`                                | Public HTTPS port used in redirects                      |
+| `DATABASE_URL`                      | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                     |
+| `BG_ADMIN_USERNAME`                 | `admin`                              | Dashboard username                                       |
+| `BG_ADMIN_PASSWORD`                 | generated                            | Dashboard password                                       |
+| `BG_COOKIE_SECURE`                  | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP |
+| `BG_MASTER_KEY`                     | generated                            | Encrypts certificate and ACME private keys               |
+| `BG_EVENT_RETENTION_DAYS`           | `7`                                  | Default retention assigned to new sites                  |
+| `BG_GEOIP_ENABLED`                  | `true`                               | Enable country-level GeoIP enrichment                    |
+| `BG_GEOIP_DATABASE_PATH`            | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                              |
+| `BG_GEOIP_CACHE_ENTRIES`            | `4096`                               | Maximum GeoIP reader cache entries                       |
+| `BG_GEOIP_RETRY_SECONDS`            | `30`                                 | Retry interval when the MMDB file is not available yet   |
+| `BG_DEFAULT_POW_DIFFICULTY`         | `18`                                 | Default SHA-256 challenge difficulty                     |
+| `BG_WEBSOCKET_ENABLED`              | `true`                               | Enable WebSocket proxying                                |
+| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | `120`                                | WebSocket idle timeout from 10 to 960 seconds            |
+| `BG_ACME_DIRECTORY_URL`             | Let's Encrypt production             | ACME directory URL                                       |
+| `BG_ACME_EMAIL`                     | empty                                | Default ACME contact email                               |
 
 See [`.env.example`](.env.example) for every available setting.
 
@@ -143,6 +148,25 @@ BG_DEFAULT_ORIGIN=http://10.0.0.20:8989
 ```
 
 Environment settings only seed an empty database. Existing sites are managed from the dashboard.
+
+## GeoIP Analytics
+
+BurrowGate can store an ISO country code with each request event and visitor session. The dashboard renders an interactive SVG world map for request volume and newly created sessions.
+
+Lookups use a local `GeoLite2-Country.mmdb` file. BurrowGate reuses one database reader, keeps a bounded LRU cache, and stores only the two-letter country code. It does not call an external GeoIP API for each request.
+
+The included optional Compose profile runs MaxMind's official database updater:
+
+```env
+MAXMIND_ACCOUNT_ID=123456
+MAXMIND_LICENSE_KEY=replace-with-license-key
+```
+
+```bash
+docker compose --profile geoip up -d --build
+```
+
+See [`docs/GEOIP.md`](docs/GEOIP.md).
 
 ## Route Policies
 
@@ -263,6 +287,7 @@ The dashboard includes:
 - IP-rule activity and current rule state
 - route-policy outcomes and configuration totals
 - cross-site request and latency comparison
+- interactive country map for requests and newly created sessions
 - server-side pagination, search, filters, and sorting
 - one-hour, six-hour, 24-hour, and seven-day graph ranges
 
@@ -295,6 +320,12 @@ Run tests and TypeScript checks:
 ```bash
 bun test
 bun run typecheck
+```
+
+Regenerate the compressed world map assets after changing `public/world.svg`:
+
+```bash
+bun run build:map
 ```
 
 The project uses `.editorconfig` and `.prettierrc.json` with tabs and a width of 2. YAML files use two spaces.

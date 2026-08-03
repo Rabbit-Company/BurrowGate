@@ -128,6 +128,7 @@ export interface AccessSessionRecord {
 	revoked_at: number | null;
 	verification_summary_json: string;
 	request_count: number;
+	country_code: string | null;
 }
 
 export interface ChallengeFlowRecord {
@@ -179,6 +180,7 @@ export interface RequestEventRecord {
 	status: number;
 	decision: string;
 	latency_ms: number;
+	country_code: string | null;
 	created_at: number;
 }
 

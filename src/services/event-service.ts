@@ -1,5 +1,6 @@
 import { repository } from "../db/repository.ts";
 import { randomId } from "../utils/crypto.ts";
+import { countryCodeForStorage } from "./geoip-service.ts";
 
 export async function recordEvent(input: {
 	siteId: string;
@@ -22,6 +23,7 @@ export async function recordEvent(input: {
 			status: input.status,
 			decision: input.decision,
 			latency_ms: input.latencyMs,
+			country_code: countryCodeForStorage(input.ip),
 			created_at: Date.now(),
 		});
 	} catch (error) {

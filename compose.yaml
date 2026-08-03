@@ -13,6 +13,7 @@ services:
       - NET_BIND_SERVICE
     volumes:
       - burrowgate-data:/app/data
+      - burrowgate-geoip:/app/data/geoip:ro
     healthcheck:
       test: ["CMD", "bun", "-e", "const response = await fetch('http://127.0.0.1/_burrowgate/health'); if (!response.ok) process.exit(1)"]
       interval: 30s
@@ -20,5 +21,18 @@ services:
       start_period: 20s
       retries: 3
 
+  geoipupdate:
+    image: ghcr.io/maxmind/geoipupdate:v8.0.0
+    profiles: ["geoip"]
+    restart: unless-stopped
+    environment:
+      GEOIPUPDATE_ACCOUNT_ID: "${MAXMIND_ACCOUNT_ID:-}"
+      GEOIPUPDATE_LICENSE_KEY: "${MAXMIND_LICENSE_KEY:-}"
+      GEOIPUPDATE_EDITION_IDS: GeoLite2-Country
+      GEOIPUPDATE_FREQUENCY: "${GEOIPUPDATE_FREQUENCY:-72}"
+    volumes:
+      - burrowgate-geoip:/usr/share/GeoIP
+
 volumes:
   burrowgate-data:
+  burrowgate-geoip:

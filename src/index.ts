@@ -13,6 +13,7 @@ import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
 import { evaluateIp } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
+import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
 import { proxyRequest, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { findAccessSession, userAgentHash } from "./services/session-service.ts";
@@ -26,6 +27,8 @@ import { jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
+await initializeGeoIp();
+startGeoIpRetry();
 await seedDefaultSite();
 await runMaintenance();
 startMaintenance();
@@ -39,7 +42,15 @@ if (config.http.enabled && config.cookieSecureMode === "always") {
 const app = new Web<GatewayState>();
 app.use(ipExtract(config.proxyPreset));
 app.use(
-	logger({ preset: "standard", excludePaths: ["/_burrowgate/static/favicon.svg", "/_burrowgate/static/burrowgate.css", "/_burrowgate/static/pow-worker.js"] }),
+	logger({
+		preset: "standard",
+		excludePaths: [
+			"/_burrowgate/static/favicon.svg",
+			"/_burrowgate/static/burrowgate.css",
+			"/_burrowgate/static/pow-worker.js",
+			"/_burrowgate/static/world.svg",
+		],
+	}),
 );
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
 app.onError((error) => {
@@ -50,7 +61,14 @@ app.onError((error) => {
 registerAcmeRoutes(app);
 registerChallengeRoutes(app);
 registerAdminRoutes(app);
-app.get("/_burrowgate/health", () => jsonResponse({ status: "ok", challengeProviders: challengeRegistry.names() }));
+app.get("/_burrowgate/health", () => {
+	const geoip = geoIpStatus();
+	return jsonResponse({
+		status: "ok",
+		challengeProviders: challengeRegistry.names(),
+		geoip: { enabled: geoip.enabled, available: geoip.available },
+	});
+});
 
 async function gateway(ctx: any): Promise<Response> {
 	const started = performance.now();

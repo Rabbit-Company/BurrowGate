@@ -11,6 +11,8 @@ let activeTab = "traffic";
 let latestMetrics = null;
 let trafficChart = null;
 let latencyChart = null;
+let geoMapGeometry = null;
+let geoMetrics = null;
 let sites = [];
 let challengeProviders = [];
 let defaultEventRetentionDays = 7;
@@ -477,7 +479,7 @@ function resetSiteScopedPages() {
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
 	for (const name of ["sessions", "rules", "routes"]) loadedTabs.delete(name);
-	const tasks = [loadOverview(), loadMetrics(), loadTraffic()];
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadTraffic()];
 	if (activeTab === "sessions") {
 		loadedTabs.add("sessions");
 		tasks.push(loadSessions());
@@ -1152,6 +1154,135 @@ async function loadMetrics() {
 	}
 }
 
+function countryDisplayName(code, fallback = "") {
+	if (code === "ZZ") return "Unknown";
+	try {
+		return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? (fallback || code);
+	} catch {
+		return fallback || code;
+	}
+}
+
+function geoLevel(value, maximum) {
+	if (value <= 0 || maximum <= 0) return 0;
+	return Math.max(1, Math.min(5, Math.ceil((Math.log1p(value) / Math.log1p(maximum)) * 5)));
+}
+
+function positionGeoTooltip(event, content) {
+	const tooltip = byId("geoTooltip");
+	const wrapper = tooltip.parentElement;
+	const rect = wrapper.getBoundingClientRect();
+	tooltip.innerHTML = content;
+	tooltip.classList.remove("hidden");
+	const x = event?.clientX ? event.clientX - rect.left + 12 : 16;
+	const y = event?.clientY ? event.clientY - rect.top + 12 : 16;
+	tooltip.style.left = `${Math.min(Math.max(8, x), Math.max(8, rect.width - 190))}px`;
+	tooltip.style.top = `${Math.min(Math.max(8, y), Math.max(8, rect.height - 70))}px`;
+}
+
+function hideGeoTooltip() {
+	byId("geoTooltip").classList.add("hidden");
+}
+
+function renderGeoMap() {
+	if (!geoMapGeometry || !geoMetrics) return;
+	const mode = byId("geoMetricMode").value;
+	const items = geoMetrics[mode] ?? [];
+	const values = new Map(items.map((item) => [String(item.countryCode).toUpperCase(), Number(item.count)]));
+	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ").map((item) => Number(item.count)));
+	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
+	const rangeLabel = compactRangeLabel(geoMetrics.rangeHours ?? Number(byId("metricRange").value));
+	const unit = mode === "sessions" ? "sessions" : "requests";
+	byId("geoSubtitle").textContent = `${mode === "sessions" ? "Sessions created" : "Requests"} by country (${rangeLabel})`;
+	byId("geoTotal").textContent = `${formatNumber(total)} ${unit}`;
+
+	const svg = byId("geoMap");
+	svg.setAttribute("aria-label", `World map showing ${unit} by country`);
+	for (const [code, path] of geoMapGeometry.paths) {
+		const value = values.get(code) ?? 0;
+		const name = path.dataset.name ?? countryDisplayName(code);
+		path.setAttribute("class", `geo-country geo-level-${geoLevel(value, maximum)}`);
+		path.setAttribute("tabindex", value > 0 ? "0" : "-1");
+		path.setAttribute("aria-label", `${name}: ${formatNumber(value)} ${unit}`);
+		path.dataset.value = String(value);
+		path.dataset.unit = unit;
+	}
+
+	const sorted = [...items].sort((a, b) => Number(b.count) - Number(a.count));
+	byId("geoCountryList").innerHTML =
+		sorted.length === 0
+			? '<p class="muted">No geographic data is available for this range.</p>'
+			: sorted
+					.slice(0, 10)
+					.map((item) => {
+						const code = String(item.countryCode).toUpperCase();
+						const name = countryDisplayName(code);
+						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
+						return `<div class="geo-country-row"><div class="row between"><span><code>${escapeHtml(code)}</code> ${escapeHtml(name)}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+					})
+					.join("");
+
+	const status = geoMetrics.status;
+	if (!status?.enabled) {
+		byId("geoMapStatus").textContent = "GeoIP is disabled.";
+		byId("geoMapStatus").classList.remove("hidden");
+	} else if (!status.available) {
+		byId("geoMapStatus").textContent = status.error ?? "GeoIP database is unavailable.";
+		byId("geoMapStatus").classList.remove("hidden");
+	} else {
+		byId("geoMapStatus").classList.add("hidden");
+	}
+}
+
+async function loadGeoMapGeometry() {
+	if (geoMapGeometry) return;
+	const response = await fetch("/_burrowgate/static/world.svg?v=2.0.0", { cache: "force-cache" });
+	if (!response.ok) throw new Error("Unable to load world map");
+	const documentNode = new DOMParser().parseFromString(await response.text(), "image/svg+xml");
+	const sourceRoot = documentNode.documentElement;
+	if (sourceRoot.nodeName.toLowerCase() === "parsererror") throw new Error("Invalid world map SVG");
+
+	const svg = byId("geoMap");
+	svg.setAttribute("viewBox", sourceRoot.getAttribute("viewBox") ?? "0 0 1010 666");
+	svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+	const fragment = document.createDocumentFragment();
+	const paths = new Map();
+	for (const sourcePath of sourceRoot.querySelectorAll("path")) {
+		const code = String(sourcePath.id ?? "").toUpperCase();
+		const data = sourcePath.getAttribute("d") ?? "";
+		if (!code || !data) continue;
+		const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		const name = countryDisplayName(code, sourcePath.getAttribute("aria-label") ?? code);
+		path.setAttribute("d", data);
+		path.setAttribute("class", "geo-country geo-level-0");
+		path.setAttribute("tabindex", "-1");
+		path.dataset.code = code;
+		path.dataset.name = name;
+		path.dataset.value = "0";
+		path.dataset.unit = "requests";
+		const show = (event) =>
+			positionGeoTooltip(
+				event,
+				`<strong>${escapeHtml(path.dataset.name)}</strong><span>${formatNumber(path.dataset.value)} ${escapeHtml(path.dataset.unit)}</span>`,
+			);
+		path.addEventListener("pointerenter", show);
+		path.addEventListener("pointermove", show);
+		path.addEventListener("pointerleave", hideGeoTooltip);
+		path.addEventListener("focus", show);
+		path.addEventListener("blur", hideGeoTooltip);
+		paths.set(code, path);
+		fragment.append(path);
+	}
+	svg.replaceChildren(fragment);
+	geoMapGeometry = { paths };
+}
+
+async function loadGeoMetrics() {
+	await loadGeoMapGeometry();
+	geoMetrics = await api(`/geo-metrics?${queryString({ range: byId("metricRange").value })}`);
+	renderGeoMap();
+}
+
 function markUpdated(prefix = "Updated") {
 	byId("lastUpdated").textContent = `${prefix} ${new Date().toLocaleTimeString()}`;
 }
@@ -1166,7 +1297,7 @@ async function runWithButton(button, task) {
 }
 
 async function refreshDashboard() {
-	const tasks = [loadOverview(), loadMetrics()];
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
 	if (activeTab === "sessions") tasks.push(loadSessions());
 	if (activeTab === "rules") tasks.push(loadRules());
@@ -1402,9 +1533,10 @@ function bindActions() {
 			}),
 	);
 	byId("metricRange").addEventListener("change", async () => {
-		await Promise.all([loadOverview(), loadMetrics()]);
+		await Promise.all([loadOverview(), loadMetrics(), loadGeoMetrics()]);
 		markUpdated("Dashboard updated");
 	});
+	byId("geoMetricMode").addEventListener("change", renderGeoMap);
 	byId("logout").addEventListener("click", async () => {
 		await api("/logout", { method: "POST" }, false);
 		location.href = "/_burrowgate/admin/login";
@@ -1453,7 +1585,7 @@ async function start() {
 	try {
 		await loadSites();
 		await loadOverview();
-		await Promise.all([loadTraffic(), loadMetrics()]);
+		await Promise.all([loadTraffic(), loadMetrics(), loadGeoMetrics()]);
 		markUpdated("Loaded");
 	} catch (error) {
 		showToast(error.message, "bad");
