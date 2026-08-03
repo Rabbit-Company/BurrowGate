@@ -1,0 +1,94 @@
+import { describe, expect, test } from "bun:test";
+import {
+	isWebSocketUpgrade,
+	offeredWebSocketProtocols,
+	selectedProtocolHeaders,
+	websocketUpstreamHeaders,
+	websocketUpstreamUrl,
+} from "../src/services/websocket-proxy-service.ts";
+import type { SiteRecord } from "../src/types.ts";
+
+const site: SiteRecord = {
+	id: "site-websocket-test",
+	name: "WebSocket test",
+	public_host: "socket.example.test",
+	origin_url: "https://origin.example.test/base",
+	origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+	enabled: 1,
+	session_ttl_seconds: 3_600,
+	default_access_mode: "challenge",
+	event_retention_days: 7,
+	challenge_policy_json: "[]",
+	created_at: Date.now(),
+	updated_at: Date.now(),
+};
+
+describe("WebSocket reverse proxy", () => {
+	test("recognizes valid WebSocket upgrade requests", () => {
+		expect(
+			isWebSocketUpgrade(
+				new Request("https://socket.example.test/ws", {
+					headers: { connection: "keep-alive, Upgrade", upgrade: "websocket" },
+				}),
+			),
+		).toBe(true);
+		expect(isWebSocketUpgrade(new Request("https://socket.example.test/ws"))).toBe(false);
+	});
+
+	test("parses and preserves offered subprotocol order", () => {
+		const request = new Request("https://socket.example.test/ws", {
+			headers: { "sec-websocket-protocol": " graphql-ws, graphql-transport-ws " },
+		});
+		expect(offeredWebSocketProtocols(request)).toEqual(["graphql-ws", "graphql-transport-ws"]);
+		expect(offeredWebSocketProtocols(new Request("https://socket.example.test/ws"))).toEqual([]);
+	});
+
+	test("returns the upstream-selected subprotocol in upgrade headers", () => {
+		const headers = selectedProtocolHeaders({ protocol: "graphql-transport-ws" });
+		expect(new Headers(headers).get("sec-websocket-protocol")).toBe("graphql-transport-ws");
+		expect(selectedProtocolHeaders({ protocol: "" })).toBeUndefined();
+	});
+
+	test("maps HTTPS origins to WSS and preserves paths", () => {
+		const target = websocketUpstreamUrl(site, new Request("https://socket.example.test/api/ws?token=1"));
+		expect(target.toString()).toBe("wss://origin.example.test/base/api/ws?token=1");
+	});
+
+	test("maps HTTP origins to WS", () => {
+		const httpSite = { ...site, origin_url: "http://127.0.0.1:8989" };
+		const target = websocketUpstreamUrl(httpSite, new Request("https://socket.example.test/signalr/messages?id=1"));
+		expect(target.toString()).toBe("ws://127.0.0.1:8989/signalr/messages?id=1");
+	});
+
+	test("creates a fresh upstream handshake without leaking edge credentials", async () => {
+		const headers = await websocketUpstreamHeaders(
+			new Request("https://socket.example.test/ws", {
+				headers: {
+					connection: "Upgrade",
+					upgrade: "websocket",
+					cookie: "application=value; bg_session=edge-secret",
+					authorization: "Burrow edge-header-token",
+					"x-burrow-token": "edge-token",
+					"sec-websocket-key": "downstream-key",
+					"sec-websocket-version": "13",
+					"sec-websocket-extensions": "permessage-deflate",
+					"sec-websocket-protocol": "graphql-ws, graphql-transport-ws",
+				},
+			}),
+			site,
+			"203.0.113.7",
+			null,
+		);
+
+		expect(headers.get("cookie")).toBe("application=value");
+		expect(headers.has("authorization")).toBe(false);
+		expect(headers.has("x-burrow-token")).toBe(false);
+		expect(headers.has("sec-websocket-key")).toBe(false);
+		expect(headers.has("sec-websocket-version")).toBe(false);
+		expect(headers.has("sec-websocket-extensions")).toBe(false);
+		expect(headers.get("sec-websocket-protocol")).toBe("graphql-ws, graphql-transport-ws");
+		expect(headers.get("x-forwarded-for")).toBe("203.0.113.7");
+		expect(headers.get("x-forwarded-proto")).toBe("https");
+		expect(headers.get("x-burrowgate-verified")).toBe("true");
+	});
+});

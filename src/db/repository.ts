@@ -1,0 +1,823 @@
+import { config } from "../config.ts";
+import { db } from "./client.ts";
+import type {
+	AccessSessionRecord,
+	AcmeAccountRecord,
+	AcmeHttpChallengeRecord,
+	AdminSessionRecord,
+	CertificateEventRecord,
+	CertificateRecord,
+	ChallengeFlowRecord,
+	ChallengeStepRecord,
+	IpRuleRecord,
+	RequestEventRecord,
+	RoutePolicyRecord,
+	SiteRecord,
+	SiteTlsSettingsRecord,
+} from "../types.ts";
+
+export type SortDirection = "asc" | "desc";
+
+export interface PageResult<T> {
+	items: T[];
+	page: number;
+	pageSize: number;
+	total: number;
+	totalPages: number;
+}
+
+export interface EventQuery {
+	siteId?: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	decision?: string;
+	method?: string;
+	statusGroup?: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
+	since?: number;
+	until?: number;
+	sortBy: "created_at" | "ip" | "method" | "path" | "status" | "decision" | "latency_ms";
+	sortDirection: SortDirection;
+}
+
+export interface SessionQuery {
+	siteId?: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	state?: "active" | "expired" | "revoked";
+	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip";
+	sortDirection: SortDirection;
+}
+
+export interface RuleQuery {
+	siteId: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	action?: "allow" | "block" | "challenge";
+	state?: "active" | "expired";
+	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
+	sortDirection: SortDirection;
+}
+
+export interface TrafficMetricPoint {
+	bucket: number;
+	requests: number;
+	blocked: number;
+	errors: number;
+	averageLatency: number;
+}
+
+export function fillTrafficMetricSeries(rows: TrafficMetricPoint[], startBucket: number, endTime: number, bucketMs: number): TrafficMetricPoint[] {
+	const endBucket = Math.floor(endTime / bucketMs) * bucketMs;
+	const byBucket = new Map(rows.map((row) => [row.bucket, row]));
+	const completed: TrafficMetricPoint[] = [];
+	for (let bucket = startBucket; bucket <= endBucket; bucket += bucketMs) {
+		completed.push(
+			byBucket.get(bucket) ?? {
+				bucket,
+				requests: 0,
+				blocked: 0,
+				errors: 0,
+				averageLatency: 0,
+			},
+		);
+	}
+	return completed;
+}
+
+function metricBucketExpression(column: "created_at" | "expires_at" | "revoked_at", bucketMs: number) {
+	const safeColumn = db.unsafe(column);
+	return config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://")
+		? db`FLOOR(${safeColumn} / ${bucketMs})`
+		: db`CAST(${safeColumn} / ${bucketMs} AS BIGINT)`;
+}
+
+function emptyMetricPoints<T extends { bucket: number }>(startBucket: number, endTime: number, bucketMs: number, factory: (bucket: number) => T): T[] {
+	const endBucket = Math.floor(endTime / bucketMs) * bucketMs;
+	const points: T[] = [];
+	for (let bucket = startBucket; bucket <= endBucket; bucket += bucketMs) points.push(factory(bucket));
+	return points;
+}
+
+function toNumber(value: unknown): number {
+	const converted = Number(value ?? 0);
+	return Number.isFinite(converted) ? converted : 0;
+}
+
+function pageResult<T>(items: T[], totalValue: unknown, page: number, pageSize: number): PageResult<T> {
+	const total = toNumber(totalValue);
+	return {
+		items,
+		page,
+		pageSize,
+		total,
+		totalPages: Math.max(1, Math.ceil(total / pageSize)),
+	};
+}
+
+function searchPattern(search: string | undefined): string | null {
+	const value = search?.trim().toLowerCase();
+	return value ? `%${value}%` : null;
+}
+
+export const repository = {
+	async siteByHost(host: string): Promise<SiteRecord | null> {
+		const rows = (await db`SELECT * FROM sites WHERE public_host = ${host} AND enabled = 1 LIMIT 1`) as SiteRecord[];
+		return rows[0] ?? null;
+	},
+	async siteById(id: string): Promise<SiteRecord | null> {
+		const rows = (await db`SELECT * FROM sites WHERE id = ${id} LIMIT 1`) as SiteRecord[];
+		return rows[0] ?? null;
+	},
+	async siteByPublicHost(host: string): Promise<SiteRecord | null> {
+		const rows = (await db`SELECT * FROM sites WHERE public_host = ${host} LIMIT 1`) as SiteRecord[];
+		return rows[0] ?? null;
+	},
+	async allSites(): Promise<SiteRecord[]> {
+		return (await db`SELECT * FROM sites ORDER BY enabled DESC, name ASC`) as SiteRecord[];
+	},
+	async insertSite(site: SiteRecord): Promise<void> {
+		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,created_at,updated_at)
+      VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.created_at},${site.updated_at})`;
+	},
+	async updateSite(site: SiteRecord): Promise<void> {
+		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+	},
+	async routePolicies(siteId: string): Promise<RoutePolicyRecord[]> {
+		return (await db`SELECT * FROM route_policies WHERE site_id=${siteId} ORDER BY priority DESC, created_at ASC`) as RoutePolicyRecord[];
+	},
+	async routePolicyById(id: string, siteId: string): Promise<RoutePolicyRecord | null> {
+		const rows = (await db`SELECT * FROM route_policies WHERE id=${id} AND site_id=${siteId} LIMIT 1`) as RoutePolicyRecord[];
+		return rows[0] ?? null;
+	},
+	async insertRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
+		await db`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,priority,enabled,created_at,updated_at)
+      VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
+	},
+	async updateRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
+		await db`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
+	},
+	async deleteRoutePolicy(id: string, siteId: string): Promise<void> {
+		await db`DELETE FROM route_policies WHERE id=${id} AND site_id=${siteId}`;
+	},
+	async sessionByHash(siteId: string, hash: string): Promise<AccessSessionRecord | null> {
+		const rows = (await db`SELECT * FROM access_sessions WHERE site_id=${siteId} AND token_hash=${hash} LIMIT 1`) as AccessSessionRecord[];
+		return rows[0] ?? null;
+	},
+	async insertSession(session: AccessSessionRecord): Promise<void> {
+		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count)
+      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count})`;
+	},
+	async touchSession(id: string, ip: string, now: number): Promise<void> {
+		await db`UPDATE access_sessions SET last_ip=${ip}, last_seen_at=${now}, request_count=request_count+1 WHERE id=${id}`;
+	},
+	async revokeSession(id: string, now: number): Promise<void> {
+		await db`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND revoked_at IS NULL`;
+	},
+	async revokeSessionForSite(id: string, siteId: string, now: number): Promise<void> {
+		await db`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL`;
+	},
+	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord>> {
+		const pattern = searchPattern(query.search);
+		const now = Date.now();
+		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
+		const searchFilter = pattern
+			? db`AND (LOWER(id) LIKE ${pattern} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern} OR LOWER(user_agent_hash) LIKE ${pattern})`
+			: db``;
+		const stateFilter =
+			query.state === "active"
+				? db`AND revoked_at IS NULL AND expires_at > ${now}`
+				: query.state === "expired"
+					? db`AND revoked_at IS NULL AND expires_at <= ${now}`
+					: query.state === "revoked"
+						? db`AND revoked_at IS NOT NULL`
+						: db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM access_sessions
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${stateFilter}
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT * FROM access_sessions
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${stateFilter}
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as AccessSessionRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async insertFlow(flow: ChallengeFlowRecord): Promise<void> {
+		await db`INSERT INTO challenge_flows (id,site_id,return_path,client_ip,user_agent_hash,current_step,policy_json,status,created_at,expires_at,completed_at) VALUES (${flow.id},${flow.site_id},${flow.return_path},${flow.client_ip},${flow.user_agent_hash},${flow.current_step},${flow.policy_json},${flow.status},${flow.created_at},${flow.expires_at},${flow.completed_at})`;
+	},
+	async flow(id: string): Promise<ChallengeFlowRecord | null> {
+		const rows = (await db`SELECT * FROM challenge_flows WHERE id=${id} LIMIT 1`) as ChallengeFlowRecord[];
+		return rows[0] ?? null;
+	},
+	async updateFlowStep(id: string, step: number): Promise<void> {
+		await db`UPDATE challenge_flows SET current_step=${step} WHERE id=${id}`;
+	},
+	async completeFlow(id: string, now: number): Promise<void> {
+		await db`UPDATE challenge_flows SET status='completed', completed_at=${now} WHERE id=${id} AND status='pending'`;
+	},
+	async step(flowId: string, index: number): Promise<ChallengeStepRecord | null> {
+		const rows = (await db`SELECT * FROM challenge_steps WHERE flow_id=${flowId} AND step_index=${index} LIMIT 1`) as ChallengeStepRecord[];
+		return rows[0] ?? null;
+	},
+	async insertStep(step: ChallengeStepRecord): Promise<void> {
+		await db`INSERT INTO challenge_steps (id,flow_id,step_index,provider,config_json,private_data_json,public_data_json,status,attempts,created_at,expires_at,completed_at) VALUES (${step.id},${step.flow_id},${step.step_index},${step.provider},${step.config_json},${step.private_data_json},${step.public_data_json},${step.status},${step.attempts},${step.created_at},${step.expires_at},${step.completed_at})`;
+	},
+	async failStepAttempt(id: string): Promise<void> {
+		await db`UPDATE challenge_steps SET attempts=attempts+1 WHERE id=${id}`;
+	},
+	async completeStep(id: string, now: number): Promise<void> {
+		await db`UPDATE challenge_steps SET status='completed', completed_at=${now} WHERE id=${id} AND status='pending'`;
+	},
+	async consumeStep(id: string, now: number): Promise<boolean> {
+		try {
+			await db`INSERT INTO challenge_consumptions (step_id,consumed_at) VALUES (${id},${now})`;
+			return true;
+		} catch {
+			return false;
+		}
+	},
+	async pagedRules(query: RuleQuery): Promise<PageResult<IpRuleRecord>> {
+		const pattern = searchPattern(query.search);
+		const now = Date.now();
+		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern})` : db``;
+		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
+		const stateFilter =
+			query.state === "active"
+				? db`AND (expires_at IS NULL OR expires_at > ${now})`
+				: query.state === "expired"
+					? db`AND expires_at IS NOT NULL AND expires_at <= ${now}`
+					: db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM ip_rules
+      WHERE site_id=${query.siteId} ${searchFilter} ${actionFilter} ${stateFilter}
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT * FROM ip_rules
+      WHERE site_id=${query.siteId} ${searchFilter} ${actionFilter} ${stateFilter}
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as IpRuleRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async rules(siteId: string): Promise<IpRuleRecord[]> {
+		return (await db`SELECT * FROM ip_rules WHERE site_id=${siteId} ORDER BY created_at DESC`) as IpRuleRecord[];
+	},
+	async insertRule(rule: IpRuleRecord): Promise<void> {
+		await db`INSERT INTO ip_rules (id,site_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteRule(id: string): Promise<void> {
+		await db`DELETE FROM ip_rules WHERE id=${id}`;
+	},
+	async deleteRuleForSite(id: string, siteId: string): Promise<void> {
+		await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+	},
+	async insertEvent(event: RequestEventRecord): Promise<void> {
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.created_at})`;
+	},
+	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
+		const pattern = searchPattern(query.search);
+		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
+		const searchFilter = pattern
+			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern})`
+			: db``;
+		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
+		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
+		const statusFilter =
+			query.statusGroup === "1xx"
+				? db`AND status >= 100 AND status < 200`
+				: query.statusGroup === "2xx"
+					? db`AND status >= 200 AND status < 300`
+					: query.statusGroup === "3xx"
+						? db`AND status >= 300 AND status < 400`
+						: query.statusGroup === "4xx"
+							? db`AND status >= 400 AND status < 500`
+							: query.statusGroup === "5xx"
+								? db`AND status >= 500 AND status < 600`
+								: db``;
+		const sinceFilter = query.since ? db`AND created_at >= ${query.since}` : db``;
+		const untilFilter = query.until ? db`AND created_at <= ${query.until}` : db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM request_events
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT * FROM request_events
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as RequestEventRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async trafficMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: TrafficMetricPoint[];
+		decisions: Array<{ decision: string; count: number }>;
+		methods: Array<{ method: string; count: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const bucketExpression =
+			config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://")
+				? db`FLOOR(created_at / ${bucketMs})`
+				: db`CAST(created_at / ${bucketMs} AS BIGINT)`;
+		const rows = (await db`
+      SELECT
+        ${bucketExpression} * ${bucketMs} AS bucket,
+        COUNT(*) AS requests,
+        SUM(CASE WHEN decision IN ('blocked','route-blocked','rate-limited') THEN 1 ELSE 0 END) AS blocked,
+        SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
+        COALESCE(AVG(latency_ms), 0) AS average_latency
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY ${bucketExpression}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; requests: number | string; blocked: number | string; errors: number | string; average_latency: number | string }>;
+		const decisions = (await db`
+      SELECT decision, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY decision
+      ORDER BY count DESC
+    `) as Array<{ decision: string; count: number | string }>;
+		const methods = (await db`
+      SELECT method, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY method
+      ORDER BY count DESC
+    `) as Array<{ method: string; count: number | string }>;
+		return {
+			series: fillTrafficMetricSeries(
+				rows.map((row) => ({
+					bucket: toNumber(row.bucket),
+					requests: toNumber(row.requests),
+					blocked: toNumber(row.blocked),
+					errors: toNumber(row.errors),
+					averageLatency: Math.round(toNumber(row.average_latency)),
+				})),
+				since,
+				until,
+				bucketMs,
+			),
+			decisions: decisions.map((row) => ({ decision: row.decision, count: toNumber(row.count) })),
+			methods: methods.map((row) => ({ method: row.method, count: toNumber(row.count) })),
+		};
+	},
+	async sessionMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; created: number; expired: number; revoked: number; active: number }>;
+		states: Array<{ label: string; count: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const createdBucket = metricBucketExpression("created_at", bucketMs);
+		const expiredBucket = metricBucketExpression("expires_at", bucketMs);
+		const revokedBucket = metricBucketExpression("revoked_at", bucketMs);
+		const createdRows = (await db`
+      SELECT ${createdBucket} * ${bucketMs} AS bucket, COUNT(*) AS count
+      FROM access_sessions
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      GROUP BY ${createdBucket}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; count: number | string }>;
+		const expiredRows = (await db`
+      SELECT ${expiredBucket} * ${bucketMs} AS bucket, COUNT(*) AS count
+      FROM access_sessions
+      WHERE expires_at >= ${since} AND expires_at <= ${until}
+        AND (revoked_at IS NULL OR expires_at <= revoked_at) ${siteFilter}
+      GROUP BY ${expiredBucket}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; count: number | string }>;
+		const revokedRows = (await db`
+      SELECT ${revokedBucket} * ${bucketMs} AS bucket, COUNT(*) AS count
+      FROM access_sessions
+      WHERE revoked_at IS NOT NULL AND revoked_at >= ${since} AND revoked_at <= ${until}
+        AND revoked_at < expires_at ${siteFilter}
+      GROUP BY ${revokedBucket}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; count: number | string }>;
+		const [initialRow] = (await db`
+      SELECT COUNT(*) AS count
+      FROM access_sessions
+      WHERE created_at < ${since} AND expires_at >= ${since}
+        AND (revoked_at IS NULL OR revoked_at >= ${since}) ${siteFilter}
+    `) as Array<{ count: number | string }>;
+		const now = Date.now();
+		const [stateRow] = (await db`
+      SELECT
+        SUM(CASE WHEN revoked_at IS NULL AND expires_at > ${now} THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN revoked_at IS NULL AND expires_at <= ${now} THEN 1 ELSE 0 END) AS expired,
+        SUM(CASE WHEN revoked_at IS NOT NULL THEN 1 ELSE 0 END) AS revoked
+      FROM access_sessions
+      WHERE 1=1 ${siteFilter}
+    `) as Array<{ active: number | string; expired: number | string; revoked: number | string }>;
+
+		const points = emptyMetricPoints(since, until, bucketMs, (bucket) => ({
+			bucket,
+			created: 0,
+			expired: 0,
+			revoked: 0,
+			active: 0,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of createdRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) point.created = toNumber(row.count);
+		}
+		for (const row of expiredRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) point.expired = toNumber(row.count);
+		}
+		for (const row of revokedRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) point.revoked = toNumber(row.count);
+		}
+		let active = toNumber(initialRow?.count);
+		for (const point of points) {
+			active = Math.max(0, active + point.created - point.expired - point.revoked);
+			point.active = active;
+		}
+		return {
+			series: points,
+			states: [
+				{ label: "Active", count: toNumber(stateRow?.active) },
+				{ label: "Expired", count: toNumber(stateRow?.expired) },
+				{ label: "Revoked", count: toNumber(stateRow?.revoked) },
+			],
+		};
+	},
+	async ruleMetrics(
+		siteId: string,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; allow: number; block: number; challenge: number }>;
+		states: Array<{ label: string; active: number; expired: number }>;
+	}> {
+		const bucket = metricBucketExpression("created_at", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket, action, COUNT(*) AS count
+      FROM ip_rules
+      WHERE site_id=${siteId} AND created_at >= ${since} AND created_at <= ${until}
+      GROUP BY ${bucket}, action
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; action: string; count: number | string }>;
+		const now = Date.now();
+		const stateRows = (await db`
+      SELECT action,
+        SUM(CASE WHEN expires_at IS NULL OR expires_at > ${now} THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN expires_at IS NOT NULL AND expires_at <= ${now} THEN 1 ELSE 0 END) AS expired
+      FROM ip_rules
+      WHERE site_id=${siteId}
+      GROUP BY action
+    `) as Array<{ action: string; active: number | string; expired: number | string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			allow: 0,
+			block: 0,
+			challenge: 0,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point || !["allow", "block", "challenge"].includes(row.action)) continue;
+			point[row.action as "allow" | "block" | "challenge"] = toNumber(row.count);
+		}
+		const states = new Map(stateRows.map((row) => [row.action, row]));
+		return {
+			series: points,
+			states: ["allow", "block", "challenge"].map((action) => ({
+				label: action[0]!.toUpperCase() + action.slice(1),
+				active: toNumber(states.get(action)?.active),
+				expired: toNumber(states.get(action)?.expired),
+			})),
+		};
+	},
+	async routeMetrics(
+		siteId: string,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; verified: number; bypassed: number; challenged: number; rateLimited: number; blocked: number }>;
+		policies: Array<{ label: string; count: number }>;
+		enabledPolicies: number;
+		disabledPolicies: number;
+	}> {
+		const bucket = metricBucketExpression("created_at", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        SUM(CASE WHEN decision IN ('proxied','websocket-proxied') THEN 1 ELSE 0 END) AS verified,
+        SUM(CASE WHEN decision IN ('proxied-unprotected','websocket-unprotected','allowlisted','websocket-allowlisted') THEN 1 ELSE 0 END) AS bypassed,
+        SUM(CASE WHEN decision='challenge-required' THEN 1 ELSE 0 END) AS challenged,
+        SUM(CASE WHEN decision='rate-limited' THEN 1 ELSE 0 END) AS rate_limited,
+        SUM(CASE WHEN decision='route-blocked' THEN 1 ELSE 0 END) AS blocked
+      FROM request_events
+      WHERE site_id=${siteId} AND created_at >= ${since} AND created_at <= ${until}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			verified: number | string;
+			bypassed: number | string;
+			challenged: number | string;
+			rate_limited: number | string;
+			blocked: number | string;
+		}>;
+		const policyRows = (await db`
+      SELECT access_mode, COUNT(*) AS count,
+        SUM(CASE WHEN enabled=1 THEN 1 ELSE 0 END) AS enabled,
+        SUM(CASE WHEN enabled=0 THEN 1 ELSE 0 END) AS disabled,
+        SUM(CASE WHEN rate_limit_enabled=1 THEN 1 ELSE 0 END) AS rate_limited
+      FROM route_policies
+      WHERE site_id=${siteId}
+      GROUP BY access_mode
+    `) as Array<{ access_mode: string; count: number | string; enabled: number | string; disabled: number | string; rate_limited: number | string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			verified: 0,
+			bypassed: 0,
+			challenged: 0,
+			rateLimited: 0,
+			blocked: 0,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.verified = toNumber(row.verified);
+			point.bypassed = toNumber(row.bypassed);
+			point.challenged = toNumber(row.challenged);
+			point.rateLimited = toNumber(row.rate_limited);
+			point.blocked = toNumber(row.blocked);
+		}
+		const counts = new Map(policyRows.map((row) => [row.access_mode, toNumber(row.count)]));
+		const rateLimited = policyRows.reduce((sum, row) => sum + toNumber(row.rate_limited), 0);
+		return {
+			series: points,
+			policies: [
+				{ label: "Inherit", count: counts.get("inherit") ?? 0 },
+				{ label: "Challenge", count: counts.get("challenge") ?? 0 },
+				{ label: "Bypass", count: counts.get("bypass") ?? 0 },
+				{ label: "Block", count: counts.get("block") ?? 0 },
+				{ label: "Rate limited", count: rateLimited },
+			],
+			enabledPolicies: policyRows.reduce((sum, row) => sum + toNumber(row.enabled), 0),
+			disabledPolicies: policyRows.reduce((sum, row) => sum + toNumber(row.disabled), 0),
+		};
+	},
+	async siteMetrics(
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; values: Record<string, number> }>;
+		sites: Array<{ key: string; label: string; requests: number; averageLatency: number }>;
+		enabledSites: number;
+		disabledSites: number;
+	}> {
+		const bucket = metricBucketExpression("created_at", bucketMs);
+		const siteRows = (await db`SELECT id,name,enabled FROM sites ORDER BY enabled DESC,name ASC`) as Array<{ id: string; name: string; enabled: number }>;
+		const rows = (await db`
+      SELECT site_id, ${bucket} * ${bucketMs} AS bucket, COUNT(*) AS requests, COALESCE(SUM(latency_ms),0) AS total_latency
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until}
+      GROUP BY site_id, ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{ site_id: string; bucket: number | string; requests: number | string; total_latency: number | string }>;
+		const totals = new Map<string, { requests: number; totalLatency: number }>();
+		for (const row of rows) {
+			const current = totals.get(row.site_id) ?? { requests: 0, totalLatency: 0 };
+			current.requests += toNumber(row.requests);
+			current.totalLatency += toNumber(row.total_latency);
+			totals.set(row.site_id, current);
+		}
+		const ordered = [...siteRows].sort((a, b) => {
+			const requestDifference = (totals.get(b.id)?.requests ?? 0) - (totals.get(a.id)?.requests ?? 0);
+			return requestDifference || b.enabled - a.enabled || a.name.localeCompare(b.name);
+		});
+		const selected = ordered.length <= 6 ? ordered : ordered.slice(0, 5);
+		const selectedIds = new Set(selected.map((site) => site.id));
+		const includeOther = ordered.length > selected.length;
+		const descriptors = selected.map((site) => {
+			const total = totals.get(site.id) ?? { requests: 0, totalLatency: 0 };
+			return {
+				key: site.id,
+				label: site.name,
+				requests: total.requests,
+				averageLatency: total.requests > 0 ? Math.round(total.totalLatency / total.requests) : 0,
+			};
+		});
+		if (includeOther) {
+			let requests = 0;
+			let totalLatency = 0;
+			for (const site of ordered) {
+				if (selectedIds.has(site.id)) continue;
+				const total = totals.get(site.id);
+				requests += total?.requests ?? 0;
+				totalLatency += total?.totalLatency ?? 0;
+			}
+			descriptors.push({
+				key: "__other__",
+				label: `Other (${ordered.length - selected.length})`,
+				requests,
+				averageLatency: requests > 0 ? Math.round(totalLatency / requests) : 0,
+			});
+		}
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({ bucket: value, values: {} as Record<string, number> }));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const point of points) {
+			for (const descriptor of descriptors) point.values[descriptor.key] = 0;
+		}
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			const key = selectedIds.has(row.site_id) ? row.site_id : includeOther ? "__other__" : null;
+			if (key) point.values[key] = (point.values[key] ?? 0) + toNumber(row.requests);
+		}
+		return {
+			series: points,
+			sites: descriptors,
+			enabledSites: siteRows.filter((site) => site.enabled === 1).length,
+			disabledSites: siteRows.filter((site) => site.enabled !== 1).length,
+		};
+	},
+	async overview(siteId?: string, rangeHours = 24): Promise<Record<string, number>> {
+		const now = Date.now();
+		const normalizedRangeHours = [1, 6, 24, 168].includes(rangeHours) ? rangeHours : 24;
+		const since = now - normalizedRangeHours * 3_600_000;
+		const sessionSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const eventSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const ruleSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const flowSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const [sessions] =
+			(await db`SELECT COUNT(*) AS count FROM access_sessions WHERE revoked_at IS NULL AND expires_at > ${now} ${sessionSiteFilter}`) as Array<{
+				count: number | string;
+			}>;
+		const [eventStats] = (await db`
+      SELECT
+        COUNT(*) AS requests,
+        SUM(CASE WHEN decision IN ('blocked','route-blocked','rate-limited') THEN 1 ELSE 0 END) AS blocked,
+        SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
+        COUNT(DISTINCT ip) AS unique_ips,
+        COALESCE(AVG(latency_ms),0) AS average_latency
+      FROM request_events
+      WHERE created_at > ${since} ${eventSiteFilter}
+    `) as Array<{
+			requests: number | string;
+			blocked: number | string;
+			errors: number | string;
+			unique_ips: number | string;
+			average_latency: number | string;
+		}>;
+		const [challenges] = (await db`SELECT COUNT(*) AS count FROM challenge_flows WHERE created_at > ${since} ${flowSiteFilter}`) as Array<{
+			count: number | string;
+		}>;
+		const [rules] = (await db`SELECT COUNT(*) AS count FROM ip_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
+			count: number | string;
+		}>;
+		const requests = toNumber(eventStats?.requests);
+		const errors = toNumber(eventStats?.errors);
+		return {
+			activeSessions: toNumber(sessions?.count),
+			activeRules: toNumber(rules?.count),
+			blocked24h: toNumber(eventStats?.blocked),
+			requests24h: requests,
+			challenges24h: toNumber(challenges?.count),
+			errors24h: errors,
+			uniqueIps24h: toNumber(eventStats?.unique_ips),
+			averageLatency24h: Math.round(toNumber(eventStats?.average_latency)),
+			errorRate24h: requests > 0 ? Math.round((errors / requests) * 10_000) / 100 : 0,
+			rangeHours: normalizedRangeHours,
+		};
+	},
+	async tlsSettings(siteId: string): Promise<SiteTlsSettingsRecord | null> {
+		const rows = (await db`SELECT * FROM site_tls_settings WHERE site_id=${siteId} LIMIT 1`) as SiteTlsSettingsRecord[];
+		return rows[0] ?? null;
+	},
+	async ensureTlsSettings(siteId: string, now = Date.now()): Promise<SiteTlsSettingsRecord> {
+		const existing = await this.tlsSettings(siteId);
+		if (existing) return existing;
+		const settings: SiteTlsSettingsRecord = {
+			site_id: siteId,
+			mode: "disabled",
+			force_https: 0,
+			acme_email: null,
+			acme_directory_url: null,
+			created_at: now,
+			updated_at: now,
+		};
+		try {
+			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.created_at},${settings.updated_at})`;
+		} catch {
+			return (await this.tlsSettings(siteId)) ?? settings;
+		}
+		return settings;
+	},
+	async saveTlsSettings(settings: SiteTlsSettingsRecord): Promise<void> {
+		const existing = await this.tlsSettings(settings.site_id);
+		if (existing) {
+			await db`UPDATE site_tls_settings SET mode=${settings.mode},force_https=${settings.force_https},acme_email=${settings.acme_email},acme_directory_url=${settings.acme_directory_url},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+		} else {
+			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.created_at},${settings.updated_at})`;
+		}
+	},
+	async certificateBySite(siteId: string): Promise<CertificateRecord | null> {
+		const rows = (await db`SELECT * FROM certificates WHERE site_id=${siteId} LIMIT 1`) as CertificateRecord[];
+		return rows[0] ?? null;
+	},
+	async activeCertificates(): Promise<Array<CertificateRecord & { public_host: string }>> {
+		return (await db`SELECT c.*, s.public_host FROM certificates c JOIN sites s ON s.id=c.site_id JOIN site_tls_settings t ON t.site_id=s.id WHERE c.status='active' AND c.expires_at > ${Date.now()} AND c.certificate_pem IS NOT NULL AND c.encrypted_private_key IS NOT NULL AND s.enabled=1 AND t.mode <> 'disabled' ORDER BY s.public_host ASC`) as Array<
+			CertificateRecord & { public_host: string }
+		>;
+	},
+	async saveCertificate(certificate: CertificateRecord): Promise<void> {
+		const existing = await this.certificateBySite(certificate.site_id);
+		if (existing) {
+			await db`UPDATE certificates SET id=${certificate.id},source=${certificate.source},status=${certificate.status},primary_domain=${certificate.primary_domain},alternative_names_json=${certificate.alternative_names_json},certificate_pem=${certificate.certificate_pem},encrypted_private_key=${certificate.encrypted_private_key},issuer=${certificate.issuer},serial_number=${certificate.serial_number},valid_from=${certificate.valid_from},expires_at=${certificate.expires_at},next_renewal_at=${certificate.next_renewal_at},last_attempt_at=${certificate.last_attempt_at},last_error=${certificate.last_error},updated_at=${certificate.updated_at} WHERE site_id=${certificate.site_id}`;
+		} else {
+			await db`INSERT INTO certificates (id,site_id,source,status,primary_domain,alternative_names_json,certificate_pem,encrypted_private_key,issuer,serial_number,valid_from,expires_at,next_renewal_at,last_attempt_at,last_error,created_at,updated_at) VALUES (${certificate.id},${certificate.site_id},${certificate.source},${certificate.status},${certificate.primary_domain},${certificate.alternative_names_json},${certificate.certificate_pem},${certificate.encrypted_private_key},${certificate.issuer},${certificate.serial_number},${certificate.valid_from},${certificate.expires_at},${certificate.next_renewal_at},${certificate.last_attempt_at},${certificate.last_error},${certificate.created_at},${certificate.updated_at})`;
+		}
+	},
+	async updateCertificateAttempt(siteId: string, attemptedAt: number, error: string | null): Promise<void> {
+		await db`UPDATE certificates SET last_attempt_at=${attemptedAt},last_error=${error},updated_at=${attemptedAt} WHERE site_id=${siteId}`;
+	},
+	async deleteCertificate(siteId: string): Promise<void> {
+		await db`DELETE FROM certificates WHERE site_id=${siteId}`;
+	},
+	async dueAcmeCertificates(cutoff: number): Promise<CertificateRecord[]> {
+		return (await db`SELECT c.* FROM certificates c JOIN site_tls_settings t ON t.site_id=c.site_id JOIN sites s ON s.id=c.site_id WHERE c.source='letsencrypt' AND c.status='active' AND t.mode='letsencrypt' AND s.enabled=1 AND c.next_renewal_at IS NOT NULL AND c.next_renewal_at <= ${cutoff} ORDER BY c.next_renewal_at ASC`) as CertificateRecord[];
+	},
+	async acmeAccount(directoryUrl: string): Promise<AcmeAccountRecord | null> {
+		const rows = (await db`SELECT * FROM acme_accounts WHERE directory_url=${directoryUrl} LIMIT 1`) as AcmeAccountRecord[];
+		return rows[0] ?? null;
+	},
+	async saveAcmeAccount(account: AcmeAccountRecord): Promise<void> {
+		const existing = await this.acmeAccount(account.directory_url);
+		if (existing) {
+			await db`UPDATE acme_accounts SET email=${account.email},account_url=${account.account_url},encrypted_account_key=${account.encrypted_account_key},terms_accepted_at=${account.terms_accepted_at},updated_at=${account.updated_at} WHERE directory_url=${account.directory_url}`;
+		} else {
+			await db`INSERT INTO acme_accounts (id,directory_url,email,account_url,encrypted_account_key,terms_accepted_at,created_at,updated_at) VALUES (${account.id},${account.directory_url},${account.email},${account.account_url},${account.encrypted_account_key},${account.terms_accepted_at},${account.created_at},${account.updated_at})`;
+		}
+	},
+	async acmeChallenge(token: string, hostname: string): Promise<AcmeHttpChallengeRecord | null> {
+		const rows =
+			(await db`SELECT * FROM acme_http_challenges WHERE token=${token} AND hostname=${hostname} AND expires_at > ${Date.now()} LIMIT 1`) as AcmeHttpChallengeRecord[];
+		return rows[0] ?? null;
+	},
+	async saveAcmeChallenge(challenge: AcmeHttpChallengeRecord): Promise<void> {
+		await db`DELETE FROM acme_http_challenges WHERE token=${challenge.token}`;
+		await db`INSERT INTO acme_http_challenges (token,site_id,hostname,key_authorization,created_at,expires_at) VALUES (${challenge.token},${challenge.site_id},${challenge.hostname},${challenge.key_authorization},${challenge.created_at},${challenge.expires_at})`;
+	},
+	async deleteAcmeChallenge(token: string): Promise<void> {
+		await db`DELETE FROM acme_http_challenges WHERE token=${token}`;
+	},
+	async deleteAcmeChallengesForSite(siteId: string): Promise<void> {
+		await db`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
+	},
+	async deleteExpiredAcmeChallenges(now: number): Promise<void> {
+		await db`DELETE FROM acme_http_challenges WHERE expires_at <= ${now}`;
+	},
+	async insertCertificateEvent(event: CertificateEventRecord): Promise<void> {
+		await db`INSERT INTO certificate_events (id,site_id,certificate_id,level,message,details_json,created_at) VALUES (${event.id},${event.site_id},${event.certificate_id},${event.level},${event.message},${event.details_json},${event.created_at})`;
+	},
+	async certificateEvents(siteId: string, limit = 30): Promise<CertificateEventRecord[]> {
+		return (await db`SELECT * FROM certificate_events WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as CertificateEventRecord[];
+	},
+	async deleteEventsBeforeForSite(siteId: string, cutoff: number): Promise<void> {
+		await db`DELETE FROM request_events WHERE site_id=${siteId} AND created_at < ${cutoff}`;
+	},
+	async deleteEventsBefore(cutoff: number): Promise<void> {
+		await db`DELETE FROM request_events WHERE created_at < ${cutoff}`;
+	},
+	async adminByHash(hash: string): Promise<AdminSessionRecord | null> {
+		const rows = (await db`SELECT * FROM admin_sessions WHERE token_hash=${hash} LIMIT 1`) as AdminSessionRecord[];
+		return rows[0] ?? null;
+	},
+	async insertAdmin(session: AdminSessionRecord): Promise<void> {
+		await db`INSERT INTO admin_sessions (id,token_hash,username,created_at,expires_at,last_seen_at) VALUES (${session.id},${session.token_hash},${session.username},${session.created_at},${session.expires_at},${session.last_seen_at})`;
+	},
+	async touchAdmin(id: string, now: number): Promise<void> {
+		await db`UPDATE admin_sessions SET last_seen_at=${now} WHERE id=${id}`;
+	},
+	async deleteAdmin(hash: string): Promise<void> {
+		await db`DELETE FROM admin_sessions WHERE token_hash=${hash}`;
+	},
+};

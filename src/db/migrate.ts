@@ -1,0 +1,249 @@
+import { config } from "../config.ts";
+import { db } from "./client.ts";
+
+const schema = `
+CREATE TABLE IF NOT EXISTS sites (
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  public_host VARCHAR(255) NOT NULL UNIQUE,
+  origin_url TEXT NOT NULL,
+  origin_signing_secret TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  session_ttl_seconds INTEGER NOT NULL,
+  challenge_policy_json TEXT NOT NULL,
+  default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge',
+  event_retention_days INTEGER NOT NULL DEFAULT 7,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS route_policies (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  path_pattern TEXT NOT NULL,
+  methods_json TEXT NOT NULL,
+  access_mode VARCHAR(32) NOT NULL,
+  challenge_policy_json TEXT NULL,
+  rate_limit_enabled INTEGER NOT NULL DEFAULT 0,
+  rate_limit_algorithm VARCHAR(32) NOT NULL DEFAULT 'sliding-window',
+  rate_limit_window_ms BIGINT NOT NULL DEFAULT 60000,
+  rate_limit_max INTEGER NOT NULL DEFAULT 60,
+  rate_limit_refill_rate INTEGER NOT NULL DEFAULT 1,
+  rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000,
+  rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100,
+  rate_limit_key_mode VARCHAR(32) NOT NULL DEFAULT 'ip',
+  rate_limit_key_header VARCHAR(255) NULL,
+  rate_limit_scope VARCHAR(32) NOT NULL DEFAULT 'policy',
+  priority INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS access_sessions (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  initial_ip VARCHAR(128) NOT NULL,
+  last_ip VARCHAR(128) NOT NULL,
+  user_agent_hash VARCHAR(64) NOT NULL,
+  created_at BIGINT NOT NULL,
+  last_seen_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  revoked_at BIGINT NULL,
+  verification_summary_json TEXT NOT NULL,
+  request_count BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS challenge_flows (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  return_path TEXT NOT NULL,
+  client_ip VARCHAR(128) NOT NULL,
+  user_agent_hash VARCHAR(64) NOT NULL,
+  current_step INTEGER NOT NULL DEFAULT 0,
+  policy_json TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  completed_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS challenge_steps (
+  id VARCHAR(64) PRIMARY KEY,
+  flow_id VARCHAR(64) NOT NULL,
+  step_index INTEGER NOT NULL,
+  provider VARCHAR(128) NOT NULL,
+  config_json TEXT NOT NULL,
+  private_data_json TEXT NOT NULL,
+  public_data_json TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  completed_at BIGINT NULL,
+  UNIQUE(flow_id, step_index)
+);
+CREATE TABLE IF NOT EXISTS challenge_consumptions (
+  step_id VARCHAR(64) PRIMARY KEY,
+  consumed_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ip_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  network_cidr VARCHAR(160) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS request_events (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  session_id VARCHAR(64) NULL,
+  ip VARCHAR(128) NOT NULL,
+  method VARCHAR(16) NOT NULL,
+  path TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  decision VARCHAR(64) NOT NULL,
+  latency_ms INTEGER NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id VARCHAR(64) PRIMARY KEY,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  username VARCHAR(255) NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  last_seen_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_tls_settings (
+  site_id VARCHAR(64) PRIMARY KEY,
+  mode VARCHAR(32) NOT NULL DEFAULT 'disabled',
+  force_https INTEGER NOT NULL DEFAULT 0,
+  acme_email VARCHAR(512) NULL,
+  acme_directory_url TEXT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS certificates (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL UNIQUE,
+  source VARCHAR(32) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  primary_domain VARCHAR(255) NOT NULL,
+  alternative_names_json TEXT NOT NULL,
+  certificate_pem TEXT NULL,
+  encrypted_private_key TEXT NULL,
+  issuer TEXT NULL,
+  serial_number VARCHAR(255) NULL,
+  valid_from BIGINT NULL,
+  expires_at BIGINT NULL,
+  next_renewal_at BIGINT NULL,
+  last_attempt_at BIGINT NULL,
+  last_error TEXT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS acme_accounts (
+  id VARCHAR(64) PRIMARY KEY,
+  directory_url TEXT NOT NULL UNIQUE,
+  email VARCHAR(512) NULL,
+  account_url TEXT NULL,
+  encrypted_account_key TEXT NOT NULL,
+  terms_accepted_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS acme_http_challenges (
+  token VARCHAR(512) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  hostname VARCHAR(255) NOT NULL,
+  key_authorization TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS certificate_events (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  certificate_id VARCHAR(64) NULL,
+  level VARCHAR(32) NOT NULL,
+  message TEXT NOT NULL,
+  details_json TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+`;
+
+const indexes = [
+	"CREATE INDEX IF NOT EXISTS idx_sites_enabled_name ON sites (enabled, name)",
+	"CREATE INDEX IF NOT EXISTS idx_route_policies_site_priority ON route_policies (site_id, enabled, priority)",
+	"CREATE INDEX IF NOT EXISTS idx_route_policies_site_updated ON route_policies (site_id, updated_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_created ON request_events (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_created ON request_events (created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_decision_created ON request_events (site_id, decision, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_status_created ON request_events (site_id, status, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_method_created ON request_events (site_id, method, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_created ON access_sessions (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_last_seen ON access_sessions (site_id, last_seen_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_revoked ON access_sessions (site_id, revoked_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_expires ON access_sessions (site_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_state ON access_sessions (site_id, revoked_at, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_ip ON access_sessions (site_id, last_ip)",
+	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_created ON ip_rules (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_action_created ON ip_rules (site_id, action, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions (expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_tls_settings_mode ON site_tls_settings (mode, force_https)",
+	"CREATE INDEX IF NOT EXISTS idx_certificates_status_expiry ON certificates (status, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_certificates_source_renewal ON certificates (source, next_renewal_at)",
+	"CREATE INDEX IF NOT EXISTS idx_acme_challenges_site_expiry ON acme_http_challenges (site_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_acme_challenges_expiry ON acme_http_challenges (expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_certificate_events_site_created ON certificate_events (site_id, created_at)",
+];
+
+function isMySql(): boolean {
+	return config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://");
+}
+
+function duplicateColumnError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+	return message.includes("duplicate column") || message.includes("already exists") || (message.includes("column name") && message.includes("duplicate"));
+}
+
+async function ensureSiteColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE sites ADD COLUMN default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge'",
+		"ALTER TABLE sites ADD COLUMN event_retention_days INTEGER NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+	await db`UPDATE sites SET event_retention_days=${config.eventRetentionDays} WHERE event_retention_days IS NULL`;
+}
+
+function duplicateIndexError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+	return message.includes("already exists") || message.includes("duplicate key name") || message.includes("duplicate index");
+}
+
+async function createIndexes(): Promise<void> {
+	for (const index of indexes) {
+		const statement = isMySql() ? index.replace(" IF NOT EXISTS", "") : index;
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateIndexError(error)) throw error;
+		}
+	}
+}
+
+export async function migrate(): Promise<void> {
+	await db.unsafe(schema);
+	await ensureSiteColumns();
+	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
+		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+	}
+	await createIndexes();
+}

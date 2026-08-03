@@ -1,0 +1,30 @@
+import { repository } from "../db/repository.ts";
+import { randomId } from "../utils/crypto.ts";
+
+export async function recordEvent(input: {
+	siteId: string;
+	sessionId: string | null;
+	ip: string;
+	method: string;
+	path: string;
+	status: number;
+	decision: string;
+	latencyMs: number;
+}): Promise<void> {
+	try {
+		await repository.insertEvent({
+			id: randomId("evt"),
+			site_id: input.siteId,
+			session_id: input.sessionId,
+			ip: input.ip,
+			method: input.method,
+			path: input.path,
+			status: input.status,
+			decision: input.decision,
+			latency_ms: input.latencyMs,
+			created_at: Date.now(),
+		});
+	} catch (error) {
+		console.error("Failed to record request event", error);
+	}
+}
