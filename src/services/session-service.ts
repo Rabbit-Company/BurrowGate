@@ -69,6 +69,8 @@ export async function createAccessSession(
 		verification_summary_json: JSON.stringify(summary),
 		request_count: 0,
 		country_code: countryCodeForStorage(ip),
+		access_user_id: null,
+		authenticated_at: null,
 	};
 	await repository.insertSession(record);
 	return {

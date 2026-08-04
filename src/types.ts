@@ -137,6 +137,31 @@ export interface AccessSessionRecord {
 	verification_summary_json: string;
 	request_count: number;
 	country_code: string | null;
+	access_user_id: string | null;
+	authenticated_at: number | null;
+}
+
+export interface AccessUserRecord {
+	id: string;
+	username: string;
+	password_hash: string;
+	enabled: number;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface SiteAccessSettingsRecord {
+	site_id: string;
+	enabled: number;
+	send_username_to_upstream: number;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface SiteAccessUserRecord {
+	site_id: string;
+	user_id: string;
+	created_at: number;
 }
 
 export interface ChallengeFlowRecord {

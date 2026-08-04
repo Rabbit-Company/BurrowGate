@@ -12,6 +12,7 @@ function site(overrides: Partial<SiteRecord> = {}): SiteRecord {
 		enabled: 1,
 		session_ttl_seconds: 3_600,
 		challenge_policy_json: "[]",
+		challenge_html_template: "",
 		default_access_mode: "challenge",
 		event_retention_days: 7,
 		default_ip_action: "inherit",

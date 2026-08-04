@@ -60,7 +60,30 @@ CREATE TABLE IF NOT EXISTS access_sessions (
   revoked_at BIGINT NULL,
   verification_summary_json TEXT NOT NULL,
   request_count BIGINT NOT NULL DEFAULT 0,
-  country_code VARCHAR(2) NULL
+  country_code VARCHAR(2) NULL,
+  access_user_id VARCHAR(64) NULL,
+  authenticated_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS access_users (
+  id VARCHAR(64) PRIMARY KEY,
+  username VARCHAR(255) NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_access_settings (
+  site_id VARCHAR(64) PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  send_username_to_upstream INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_access_users (
+  site_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (site_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS challenge_flows (
   id VARCHAR(64) PRIMARY KEY,
@@ -208,6 +231,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_expires ON access_sessions (site_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_state ON access_sessions (site_id, revoked_at, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_ip ON access_sessions (site_id, last_ip)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_access_user ON access_sessions (access_user_id, revoked_at, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_users_enabled_username ON access_users (enabled, username)",
+	"CREATE INDEX IF NOT EXISTS idx_site_access_users_user ON site_access_users (user_id, site_id)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_country_created ON access_sessions (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_created ON ip_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_action_created ON ip_rules (site_id, action, created_at)",
@@ -270,6 +296,20 @@ async function ensureGeoIpColumns(): Promise<void> {
 	}
 }
 
+async function ensureAccessSessionColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE access_sessions ADD COLUMN access_user_id VARCHAR(64) NULL",
+		"ALTER TABLE access_sessions ADD COLUMN authenticated_at BIGINT NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 function duplicateIndexError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 	return message.includes("already exists") || message.includes("duplicate key name") || message.includes("duplicate index");
@@ -290,6 +330,7 @@ export async function migrate(): Promise<void> {
 	await db.unsafe(schema);
 	await ensureSiteColumns();
 	await ensureGeoIpColumns();
+	await ensureAccessSessionColumns();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 	}

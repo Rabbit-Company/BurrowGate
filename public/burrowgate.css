@@ -982,6 +982,13 @@ form.grid label {
 	border-radius: 12px;
 	background: rgba(11, 18, 32, 0.42);
 }
+.access-user-fields {
+	display: grid;
+	gap: 12px;
+}
+.access-user-select {
+	min-height: 150px;
+}
 
 @media (max-width: 1180px) {
 	.route-policy-layout {

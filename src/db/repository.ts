@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import { db } from "./client.ts";
 import type {
 	IpRuleAction,
+	AccessUserRecord,
 	AccessSessionRecord,
 	AcmeAccountRecord,
 	AcmeHttpChallengeRecord,
@@ -15,6 +16,7 @@ import type {
 	RequestEventRecord,
 	RoutePolicyRecord,
 	SiteRecord,
+	SiteAccessSettingsRecord,
 	SiteTlsSettingsRecord,
 } from "../types.ts";
 
@@ -175,8 +177,90 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
-		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code)
-      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code})`;
+		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at)
+      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at})`;
+	},
+	async authenticateSession(id: string, siteId: string, userId: string, now: number): Promise<void> {
+		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
+	},
+	async revokeSessionsForAccessUser(userId: string, now: number, siteId?: string): Promise<void> {
+		if (siteId) {
+			await db`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND site_id=${siteId} AND revoked_at IS NULL`;
+			return;
+		}
+		await db`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND revoked_at IS NULL`;
+	},
+	async accessSettings(siteId: string): Promise<SiteAccessSettingsRecord | null> {
+		const rows = (await db`SELECT * FROM site_access_settings WHERE site_id=${siteId} LIMIT 1`) as SiteAccessSettingsRecord[];
+		return rows[0] ?? null;
+	},
+	async ensureAccessSettings(siteId: string, now = Date.now()): Promise<SiteAccessSettingsRecord> {
+		const existing = await this.accessSettings(siteId);
+		if (existing) return existing;
+		const settings: SiteAccessSettingsRecord = {
+			site_id: siteId,
+			enabled: 0,
+			send_username_to_upstream: 0,
+			created_at: now,
+			updated_at: now,
+		};
+		try {
+			await db`INSERT INTO site_access_settings (site_id,enabled,send_username_to_upstream,created_at,updated_at) VALUES (${siteId},0,0,${now},${now})`;
+		} catch {
+			return (await this.accessSettings(siteId)) ?? settings;
+		}
+		return settings;
+	},
+	async updateAccessSettings(settings: SiteAccessSettingsRecord): Promise<void> {
+		await db`UPDATE site_access_settings SET enabled=${settings.enabled},send_username_to_upstream=${settings.send_username_to_upstream},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+	},
+	async accessUsersForSite(siteId: string): Promise<Array<AccessUserRecord & { site_count: number | string }>> {
+		return (await db`SELECT u.*, (SELECT COUNT(*) FROM site_access_users memberships WHERE memberships.user_id=u.id) AS site_count
+			FROM access_users u JOIN site_access_users membership ON membership.user_id=u.id
+			WHERE membership.site_id=${siteId} ORDER BY u.username ASC`) as Array<AccessUserRecord & { site_count: number | string }>;
+	},
+	async availableAccessUsers(siteId: string): Promise<Array<AccessUserRecord & { site_count: number | string }>> {
+		return (await db`SELECT u.*, (SELECT COUNT(*) FROM site_access_users memberships WHERE memberships.user_id=u.id) AS site_count
+			FROM access_users u
+			WHERE u.id NOT IN (SELECT user_id FROM site_access_users WHERE site_id=${siteId})
+			ORDER BY u.username ASC`) as Array<AccessUserRecord & { site_count: number | string }>;
+	},
+	async accessUserById(id: string): Promise<AccessUserRecord | null> {
+		const rows = (await db`SELECT * FROM access_users WHERE id=${id} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
+	},
+	async accessUserByUsername(username: string): Promise<AccessUserRecord | null> {
+		const rows = (await db`SELECT * FROM access_users WHERE username=${username} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
+	},
+	async accessUserForSite(siteId: string, userId: string): Promise<AccessUserRecord | null> {
+		const rows =
+			(await db`SELECT u.* FROM access_users u JOIN site_access_users membership ON membership.user_id=u.id WHERE membership.site_id=${siteId} AND u.id=${userId} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
+	},
+	async accessUserForSiteByUsername(siteId: string, username: string): Promise<AccessUserRecord | null> {
+		const rows =
+			(await db`SELECT u.* FROM access_users u JOIN site_access_users membership ON membership.user_id=u.id WHERE membership.site_id=${siteId} AND u.username=${username} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
+	},
+	async insertAccessUser(user: AccessUserRecord): Promise<void> {
+		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at) VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at})`;
+	},
+	async updateAccessUser(user: AccessUserRecord): Promise<void> {
+		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at} WHERE id=${user.id}`;
+	},
+	async deleteAccessUser(userId: string): Promise<void> {
+		await db`DELETE FROM access_users WHERE id=${userId}`;
+	},
+	async assignAccessUser(siteId: string, userId: string, now = Date.now()): Promise<void> {
+		await db`INSERT INTO site_access_users (site_id,user_id,created_at) VALUES (${siteId},${userId},${now})`;
+	},
+	async unassignAccessUser(siteId: string, userId: string): Promise<void> {
+		await db`DELETE FROM site_access_users WHERE site_id=${siteId} AND user_id=${userId}`;
+	},
+	async accessSiteIdsForUser(userId: string): Promise<string[]> {
+		const rows = (await db`SELECT site_id FROM site_access_users WHERE user_id=${userId}`) as Array<{ site_id: string }>;
+		return rows.map((row) => row.site_id);
 	},
 	async touchSession(id: string, ip: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET last_ip=${ip}, last_seen_at=${now}, request_count=request_count+1 WHERE id=${id}`;
@@ -567,7 +651,7 @@ export const repository = {
 		const bucket = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT ${bucket} * ${bucketMs} AS bucket,
-        SUM(CASE WHEN decision IN ('proxied','websocket-proxied') THEN 1 ELSE 0 END) AS verified,
+        SUM(CASE WHEN decision IN ('proxied','websocket-proxied','proxied-authenticated','websocket-authenticated') THEN 1 ELSE 0 END) AS verified,
         SUM(CASE WHEN decision IN ('proxied-unprotected','websocket-unprotected','allowlisted','websocket-allowlisted') THEN 1 ELSE 0 END) AS bypassed,
         SUM(CASE WHEN decision='challenge-required' THEN 1 ELSE 0 END) AS challenged,
         SUM(CASE WHEN decision='rate-limited' THEN 1 ELSE 0 END) AS rate_limited,
@@ -624,6 +708,63 @@ export const repository = {
 			],
 			enabledPolicies: policyRows.reduce((sum, row) => sum + toNumber(row.enabled), 0),
 			disabledPolicies: policyRows.reduce((sum, row) => sum + toNumber(row.disabled), 0),
+		};
+	},
+	async accessListMetrics(
+		siteId: string,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; authenticated: number; loginRequired: number; failed: number; rateLimited: number }>;
+		activeUsers: number;
+		disabledUsers: number;
+	}> {
+		const bucket = metricBucketExpression("created_at", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        SUM(CASE WHEN decision IN ('access-authenticated','proxied-authenticated','websocket-authenticated') THEN 1 ELSE 0 END) AS authenticated,
+        SUM(CASE WHEN decision='access-login-required' THEN 1 ELSE 0 END) AS login_required,
+        SUM(CASE WHEN decision='access-login-failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN decision='access-login-rate-limited' THEN 1 ELSE 0 END) AS rate_limited
+      FROM request_events
+      WHERE site_id=${siteId} AND created_at >= ${since} AND created_at <= ${until}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			authenticated: number | string;
+			login_required: number | string;
+			failed: number | string;
+			rate_limited: number | string;
+		}>;
+		const [users] = (await db`
+      SELECT
+        SUM(CASE WHEN u.enabled=1 THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN u.enabled=0 THEN 1 ELSE 0 END) AS disabled
+      FROM access_users u JOIN site_access_users membership ON membership.user_id=u.id
+      WHERE membership.site_id=${siteId}
+    `) as Array<{ active: number | string; disabled: number | string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			authenticated: 0,
+			loginRequired: 0,
+			failed: 0,
+			rateLimited: 0,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.authenticated = toNumber(row.authenticated);
+			point.loginRequired = toNumber(row.login_required);
+			point.failed = toNumber(row.failed);
+			point.rateLimited = toNumber(row.rate_limited);
+		}
+		return {
+			series: points,
+			activeUsers: toNumber(users?.active),
+			disabledUsers: toNumber(users?.disabled),
 		};
 	},
 	async siteMetrics(

@@ -77,6 +77,7 @@ export function adminPage(): string {
   <button class="tab" data-tab="sessions" type="button">Sessions</button>
   <button class="tab" data-tab="rules" type="button">Network rules</button>
   <button class="tab" data-tab="routes" type="button">Routes</button>
+  <button class="tab" data-tab="access" type="button">Access List</button>
   <button class="tab" data-tab="sites" type="button">Sites</button>
 </nav>
 
@@ -85,7 +86,7 @@ export function adminPage(): string {
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar">
       <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session..."></label>
-      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
@@ -180,6 +181,31 @@ export function adminPage(): string {
           <div class="row site-form-actions"><button id="saveRoutePolicy" class="button" type="submit">Create</button><button id="resetRoutePolicyForm" class="button secondary" type="button">Reset</button></div>
         </form>
       </div>
+    </article>
+  </div>
+</section>
+
+<section id="panel-access" class="tab-panel hidden">
+  <div class="route-policy-layout">
+    <div class="grid">
+      <article class="card">
+        <div class="pad section-heading"><div><h2>Access authentication</h2><p class="muted">Require a completed browser challenge and user sign-in before proxying requests.</p></div><button id="saveAccessSettings" class="button" type="button">Save</button></div>
+        <div class="pad pad-topless grid">
+          <label class="check-row"><input id="accessEnabled" type="checkbox"><span><strong>Require user authentication</strong><small class="muted">At least one active user must be assigned. Existing sessions without a user will be sent to sign in.</small></span></label>
+          <label class="check-row"><input id="accessSendUsername" type="checkbox"><span><strong>Send authenticated username to upstream</strong><small class="muted">Adds signed identity headers and browser-readable <code>bg_authenticated_user</code> / <code>bg_identity_signature</code> cookies. Passwords are never forwarded.</small></span></label>
+          <p class="notice muted">Application <code>Authorization</code> headers remain available to the origin. Use HTTPS whenever user authentication is enabled.</p>
+        </div>
+      </article>
+      <article class="card">
+        <div class="pad"><h2>Create user</h2><form id="accessUserForm" class="site-form"><div class="site-form-grid"><label><span>Username</span><input id="accessUsername" class="input" autocomplete="off" maxlength="255" placeholder="ziga" required><small class="muted">Usernames are lowercase and global across all sites.</small></label><label><span>Password</span><input id="accessPassword" class="input" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label></div><label class="check-row"><input id="accessUserEnabled" type="checkbox" checked><span><strong>User enabled</strong><small class="muted">Disabled shared users cannot sign in to any assigned site.</small></span></label><button class="button" type="submit">Create and assign</button></form></div>
+      </article>
+      <article class="card">
+        <div class="pad"><h2>Add users from another site</h2><p class="muted">Users are linked to this site. Password changes continue to apply everywhere they are assigned.</p><div class="site-form"><label><span>Source site</span><select id="accessImportSite" class="select"><option value="">Select a site</option></select></label><label><span>Users</span><select id="accessImportUsers" class="select access-user-select" multiple size="6"></select></label><button id="importAccessUsers" class="button" type="button">Add selected users</button></div></div>
+      </article>
+    </div>
+    <article class="card">
+      <div class="pad section-heading"><div><h2>Assigned users</h2><p class="muted">Editing a shared identity affects every assigned site. Removing it here only removes this site membership.</p></div><button id="refreshAccessList" class="button secondary" type="button">Refresh</button></div>
+      <div id="accessUserList" class="route-policy-list"><div class="empty-state-inline">Open the tab to load users.</div></div>
     </article>
   </div>
 </section>

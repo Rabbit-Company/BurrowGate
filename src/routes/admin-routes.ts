@@ -25,6 +25,14 @@ import {
 } from "../services/error-response-service.ts";
 import { DEFAULT_CHALLENGE_HTML_TEMPLATE, CHALLENGE_TEMPLATE_PLACEHOLDERS } from "../services/challenge-page-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
+import {
+	accessListView,
+	createAccessUser,
+	importAccessUsers,
+	removeAccessUser,
+	updateAccessSettings,
+	updateAccessUser,
+} from "../services/access-list-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
@@ -279,6 +287,89 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 	});
 
+	app.get("/_burrowgate/api/admin/access-list", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before configuring access authentication" }, 400);
+		return jsonResponse(await accessListView(selection.site.id));
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/access-list", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before configuring access authentication" }, 400);
+		try {
+			const body = (await ctx.req.json()) as any;
+			await updateAccessSettings(selection.site.id, body ?? {});
+			return jsonResponse(await accessListView(selection.site.id));
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update access-list settings" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/users", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before adding users" }, 400);
+		try {
+			const user = await createAccessUser(selection.site.id, (await ctx.req.json()) as any);
+			return jsonResponse({ user }, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create access user" }, 400);
+		}
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/access-list/users/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		try {
+			const user = await updateAccessUser(selection.site.id, ctx.params.id, (await ctx.req.json()) as any);
+			return jsonResponse({ user });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to update access user";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/access-list/users/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		try {
+			await removeAccessUser(selection.site.id, ctx.params.id);
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to remove access user";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/import", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		try {
+			const body = (await ctx.req.json()) as { userIds?: unknown };
+			const imported = await importAccessUsers(selection.site.id, body?.userIds);
+			return jsonResponse({ imported }, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to import access users" }, 400);
+		}
+	});
+
 	app.get("/_burrowgate/api/admin/geo-metrics", async (ctx) => {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
@@ -317,7 +408,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
 		const url = new URL(ctx.req.url);
-		const section = enumParam(url, "section", ["traffic", "sessions", "rules", "routes", "sites"] as const, "traffic") ?? "traffic";
+		const section = enumParam(url, "section", ["traffic", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
 		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
@@ -437,6 +528,45 @@ export function registerAdminRoutes(app: Web<any>): void {
 				breakdown: [
 					{ label: "Enabled policies", count: metrics.enabledPolicies },
 					{ label: "Disabled policies", count: metrics.disabledPolicies },
+				],
+			});
+		}
+
+		if (section === "access") {
+			const metrics = await repository.accessListMetrics(selection.site?.id ?? "", since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Access authentication",
+					subtitle: "Authenticated requests and login outcomes",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "number",
+					emptyMessage: "No access authentication activity in this range.",
+					datasets: [
+						{ key: "authenticated", label: "Authenticated" },
+						{ key: "loginRequired", label: "Login required" },
+						{ key: "failed", label: "Failed" },
+						{ key: "rateLimited", label: "Rate limited" },
+					],
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Assigned users",
+					subtitle: "Current users by state",
+					type: "bar",
+					timeSeries: false,
+					valueFormat: "number",
+					emptyMessage: "No users are assigned to this site.",
+					datasets: [{ key: "count", label: "Users" }],
+					data: [
+						{ label: "Active", count: metrics.activeUsers },
+						{ label: "Disabled", count: metrics.disabledUsers },
+					],
+				},
+				breakdown: [
+					{ label: "Active users", count: metrics.activeUsers },
+					{ label: "Disabled users", count: metrics.disabledUsers },
 				],
 			});
 		}

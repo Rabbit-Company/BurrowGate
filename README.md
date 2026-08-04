@@ -230,6 +230,14 @@ Custom responses cover network blocks, route blocks, rate limits, verification-r
 
 See [`docs/ERROR_RESPONSES.md`](docs/ERROR_RESPONSES.md).
 
+## Access Lists
+
+Each protected site can require a BurrowGate user login after the browser challenge. Users are global identities and can be linked to multiple sites without copying password hashes. Passwords are Argon2id-hashed, login attempts are rate limited, and password changes or disabling a user revoke their authenticated sessions.
+
+Proxy authentication uses the existing HTTP-only BurrowGate session, so an application's `Authorization: Basic` or `Authorization: Bearer` header remains available to the origin. An optional setting sends the authenticated username in client-spoof-resistant, HMAC-signed identity headers and browser-readable signed cookies; passwords are never forwarded.
+
+See [`docs/ACCESS_LISTS.md`](docs/ACCESS_LISTS.md).
+
 ## Challenge Providers
 
 A site or route stores an ordered challenge policy:
@@ -319,6 +327,7 @@ The dashboard includes:
 - active, expired, and revoked sessions
 - IP-rule activity and current rule state
 - route-policy outcomes and configuration totals
+- challenge-gated access lists with reusable users and signed upstream identity
 - cross-site request and latency comparison
 - interactive country map for requests and newly created sessions
 - server-side pagination, search, filters, and sorting

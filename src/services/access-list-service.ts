@@ -1,0 +1,284 @@
+import { repository } from "../db/repository.ts";
+import type { AccessSessionRecord, AccessUserRecord, SiteAccessSettingsRecord, SiteRecord } from "../types.ts";
+import { hmacSha256Hex, randomId } from "../utils/crypto.ts";
+import { secureCookieForRequest } from "../config.ts";
+import { serializeCookie } from "../utils/cookies.ts";
+
+export interface AccessUserInput {
+	username?: unknown;
+	password?: unknown;
+	enabled?: unknown;
+}
+
+export interface AccessUserView {
+	id: string;
+	username: string;
+	enabled: boolean;
+	siteCount: number;
+	createdAt: number;
+	updatedAt: number;
+	siteIds: string[];
+}
+
+export interface AccessListView {
+	settings: {
+		enabled: boolean;
+		sendUsernameToUpstream: boolean;
+	};
+	users: AccessUserView[];
+	availableUsers: AccessUserView[];
+}
+
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_FAILURES = 8;
+const loginFailures = new Map<string, { count: number; resetAt: number }>();
+const settingsCache = new Map<string, { settings: SiteAccessSettingsRecord; expiresAt: number }>();
+const SETTINGS_CACHE_TTL_MS = 5_000;
+export const accessIdentityCookieNames = ["bg_authenticated_user", "bg_identity_signature"] as const;
+let dummyHash: Promise<string> | null = null;
+
+function booleanValue(value: unknown, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value === "boolean") return value;
+	if (value === 1 || value === "1" || value === "true") return true;
+	if (value === 0 || value === "0" || value === "false") return false;
+	throw new Error("Boolean value expected");
+}
+
+export function normalizeAccessUsername(value: unknown): string {
+	const username = String(value ?? "")
+		.trim()
+		.toLowerCase();
+	if (!username) throw new Error("Username is required");
+	if (username.length > 255) throw new Error("Username must be at most 255 characters");
+	if (!/^[a-z0-9][a-z0-9._@+-]*$/u.test(username)) {
+		throw new Error("Username may contain lowercase letters, numbers, dots, underscores, @, +, and hyphens");
+	}
+	return username;
+}
+
+function passwordValue(value: unknown, required: boolean): string | null {
+	if (value === undefined || value === null || value === "") {
+		if (required) throw new Error("Password is required");
+		return null;
+	}
+	const password = String(value);
+	if (password.length < 8) throw new Error("Password must be at least 8 characters");
+	if (password.length > 1024) throw new Error("Password must be at most 1024 characters");
+	return password;
+}
+
+function userView(user: AccessUserRecord & { site_count?: number | string }, siteIds: string[] = []): AccessUserView {
+	return {
+		id: user.id,
+		username: user.username,
+		enabled: user.enabled === 1,
+		siteCount: Number(user.site_count ?? 1),
+		createdAt: Number(user.created_at),
+		updatedAt: Number(user.updated_at),
+		siteIds,
+	};
+}
+
+async function activeUserCount(siteId: string, excludedUserId?: string): Promise<number> {
+	return (await repository.accessUsersForSite(siteId)).filter((user) => user.enabled === 1 && user.id !== excludedUserId).length;
+}
+
+export async function accessListView(siteId: string): Promise<AccessListView> {
+	const [settings, users, available] = await Promise.all([
+		repository.ensureAccessSettings(siteId),
+		repository.accessUsersForSite(siteId),
+		repository.availableAccessUsers(siteId),
+	]);
+	const siteIds = new Map<string, string[]>();
+	for (const user of [...users, ...available]) siteIds.set(user.id, await repository.accessSiteIdsForUser(user.id));
+	return {
+		settings: { enabled: settings.enabled === 1, sendUsernameToUpstream: settings.send_username_to_upstream === 1 },
+		users: users.map((user) => userView(user, siteIds.get(user.id))),
+		availableUsers: available.map((user) => userView(user, siteIds.get(user.id))),
+	};
+}
+
+export async function accessSettingsForSite(siteId: string): Promise<SiteAccessSettingsRecord> {
+	const cached = settingsCache.get(siteId);
+	if (cached && cached.expiresAt > Date.now()) return cached.settings;
+	const settings = await repository.ensureAccessSettings(siteId);
+	settingsCache.set(siteId, { settings, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+	return settings;
+}
+
+export async function updateAccessSettings(siteId: string, input: { enabled?: unknown; sendUsernameToUpstream?: unknown }): Promise<SiteAccessSettingsRecord> {
+	const existing = await repository.ensureAccessSettings(siteId);
+	const enabled = booleanValue(input.enabled, existing.enabled === 1);
+	if (enabled && (await activeUserCount(siteId)) === 0) throw new Error("Assign at least one active user before enabling access authentication");
+	const updated: SiteAccessSettingsRecord = {
+		...existing,
+		enabled: enabled ? 1 : 0,
+		send_username_to_upstream: booleanValue(input.sendUsernameToUpstream, existing.send_username_to_upstream === 1) ? 1 : 0,
+		updated_at: Date.now(),
+	};
+	await repository.updateAccessSettings(updated);
+	settingsCache.set(siteId, { settings: updated, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+	return updated;
+}
+
+export async function createAccessUser(siteId: string, input: AccessUserInput): Promise<AccessUserView> {
+	const username = normalizeAccessUsername(input.username);
+	if (await repository.accessUserByUsername(username)) throw new Error("This username already exists; add the existing user instead");
+	const password = passwordValue(input.password, true)!;
+	const now = Date.now();
+	const user: AccessUserRecord = {
+		id: randomId("user"),
+		username,
+		password_hash: await Bun.password.hash(password, { algorithm: "argon2id" }),
+		enabled: booleanValue(input.enabled, true) ? 1 : 0,
+		created_at: now,
+		updated_at: now,
+	};
+	await repository.insertAccessUser(user);
+	await repository.assignAccessUser(siteId, user.id, now);
+	return userView(user);
+}
+
+export async function importAccessUsers(siteId: string, userIds: unknown): Promise<number> {
+	if (!Array.isArray(userIds) || userIds.length === 0) throw new Error("Select at least one user to add");
+	let imported = 0;
+	for (const rawId of [...new Set(userIds.map((value) => String(value)))]) {
+		const user = await repository.accessUserById(rawId);
+		if (!user) throw new Error("One of the selected users no longer exists");
+		if (await repository.accessUserForSite(siteId, user.id)) continue;
+		await repository.assignAccessUser(siteId, user.id);
+		imported += 1;
+	}
+	return imported;
+}
+
+export async function updateAccessUser(siteId: string, userId: string, input: AccessUserInput): Promise<AccessUserView> {
+	const existing = await repository.accessUserForSite(siteId, userId);
+	if (!existing) throw new Error("Access user not found");
+	const username = input.username === undefined ? existing.username : normalizeAccessUsername(input.username);
+	const conflict = await repository.accessUserByUsername(username);
+	if (conflict && conflict.id !== userId) throw new Error("This username already exists");
+	const password = passwordValue(input.password, false);
+	const enabled = booleanValue(input.enabled, existing.enabled === 1);
+	if (!enabled && existing.enabled === 1) {
+		for (const assignedSiteId of await repository.accessSiteIdsForUser(userId)) {
+			const settings = await repository.ensureAccessSettings(assignedSiteId);
+			if (settings.enabled === 1 && (await activeUserCount(assignedSiteId, userId)) === 0) {
+				throw new Error("This user is the last active user on an enabled access list");
+			}
+		}
+	}
+	const updated: AccessUserRecord = {
+		...existing,
+		username,
+		password_hash: password ? await Bun.password.hash(password, { algorithm: "argon2id" }) : existing.password_hash,
+		enabled: enabled ? 1 : 0,
+		updated_at: Date.now(),
+	};
+	await repository.updateAccessUser(updated);
+	if (password || !enabled) await repository.revokeSessionsForAccessUser(userId, Date.now());
+	return userView({ ...updated, site_count: (await repository.accessSiteIdsForUser(userId)).length });
+}
+
+export async function removeAccessUser(siteId: string, userId: string): Promise<void> {
+	const existing = await repository.accessUserForSite(siteId, userId);
+	if (!existing) throw new Error("Access user not found");
+	const settings = await repository.ensureAccessSettings(siteId);
+	if (settings.enabled === 1 && existing.enabled === 1 && (await activeUserCount(siteId, userId)) === 0) {
+		throw new Error("This user is the last active user on the enabled access list");
+	}
+	await repository.unassignAccessUser(siteId, userId);
+	await repository.revokeSessionsForAccessUser(userId, Date.now(), siteId);
+	if ((await repository.accessSiteIdsForUser(userId)).length === 0) await repository.deleteAccessUser(userId);
+}
+
+function failureKeys(siteId: string, ip: string, username: string): string[] {
+	return [`site:${siteId}:ip:${ip}`, `site:${siteId}:user:${username}`];
+}
+
+function rateLimitStatus(keys: string[], now: number): number {
+	let retryAfter = 0;
+	for (const key of keys) {
+		const entry = loginFailures.get(key);
+		if (!entry) continue;
+		if (entry.resetAt <= now) {
+			loginFailures.delete(key);
+			continue;
+		}
+		if (entry.count >= LOGIN_MAX_FAILURES) retryAfter = Math.max(retryAfter, Math.ceil((entry.resetAt - now) / 1000));
+	}
+	return retryAfter;
+}
+
+function recordFailure(keys: string[], now: number): void {
+	for (const key of keys) {
+		const entry = loginFailures.get(key);
+		if (!entry || entry.resetAt <= now) loginFailures.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+		else entry.count += 1;
+	}
+}
+
+export async function authenticateAccessUser(
+	siteId: string,
+	ip: string,
+	usernameInput: unknown,
+	passwordInput: unknown,
+): Promise<{ user: AccessUserRecord | null; retryAfterSeconds: number }> {
+	let username = "invalid";
+	try {
+		username = normalizeAccessUsername(usernameInput);
+	} catch {
+		// Invalid usernames receive the same response and password-verification work.
+	}
+	const suppliedPassword = String(passwordInput ?? "");
+	const password = suppliedPassword.length <= 1024 ? suppliedPassword : "";
+	const now = Date.now();
+	const keys = failureKeys(siteId, ip, username);
+	const retryAfterSeconds = rateLimitStatus(keys, now);
+	if (retryAfterSeconds > 0) return { user: null, retryAfterSeconds };
+	const user = await repository.accessUserForSiteByUsername(siteId, username);
+	dummyHash ??= Bun.password.hash("burrowgate-dummy-access-password", { algorithm: "argon2id" });
+	const valid = await Bun.password.verify(password, user?.password_hash ?? (await dummyHash));
+	if (!valid || !user || user.enabled !== 1) {
+		recordFailure(keys, now);
+		return { user: null, retryAfterSeconds: 0 };
+	}
+	for (const key of keys) loginFailures.delete(key);
+	return { user, retryAfterSeconds: 0 };
+}
+
+export async function authenticatedAccessUser(siteId: string, session: AccessSessionRecord | null): Promise<AccessUserRecord | null> {
+	if (!session?.access_user_id) return null;
+	const user = await repository.accessUserForSite(siteId, session.access_user_id);
+	return user?.enabled === 1 ? user : null;
+}
+
+export async function accessIdentityCookieValues(
+	site: SiteRecord,
+	session: AccessSessionRecord,
+	username: string,
+): Promise<{ username: string; signature: string }> {
+	const canonical = ["identity-cookie-v1", site.id, session.id, username].join("\n");
+	return { username, signature: await hmacSha256Hex(site.origin_signing_secret, canonical) };
+}
+
+export async function accessIdentitySetCookies(request: Request, site: SiteRecord, session: AccessSessionRecord, username: string): Promise<string[]> {
+	const values = await accessIdentityCookieValues(site, session, username);
+	const options = {
+		secure: secureCookieForRequest(request),
+		httpOnly: false,
+		sameSite: "Lax" as const,
+		maxAge: Math.max(0, Math.ceil((Number(session.expires_at) - Date.now()) / 1000)),
+	};
+	return [serializeCookie(accessIdentityCookieNames[0], values.username, options), serializeCookie(accessIdentityCookieNames[1], values.signature, options)];
+}
+
+export function clearAccessIdentityCookies(request: Request): string[] {
+	const options = { secure: secureCookieForRequest(request), httpOnly: false, sameSite: "Lax" as const, maxAge: 0 };
+	return accessIdentityCookieNames.map((name) => serializeCookie(name, "", options));
+}
+
+export function resetAccessLoginRateLimits(): void {
+	loginFailures.clear();
+}

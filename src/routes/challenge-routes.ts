@@ -7,6 +7,21 @@ import { renderChallengePage } from "../services/challenge-page-service.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
 
 export function registerChallengeRoutes(app: Web<any>): void {
+	app.get("/_burrowgate/api/challenge/state", async (ctx) => {
+		const flowId = new URL(ctx.req.url).searchParams.get("flow");
+		if (!flowId) return jsonResponse({ error: "Missing flow" }, 400);
+		const flow = await repository.flow(flowId);
+		if (!flow || flow.status !== "pending" || flow.expires_at <= Date.now()) return jsonResponse({ error: "Challenge expired" }, 410);
+		const step = await currentStep(flow);
+		const provider = challengeRegistry.get(step.provider);
+		return jsonResponse({
+			flowId: flow.id,
+			provider: provider.name,
+			publicData: JSON.parse(step.public_data_json),
+			expiresAt: Number(step.expires_at),
+		});
+	});
+
 	app.get("/_burrowgate/verify", async (ctx) => {
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {
 			return htmlResponse(insecureCookieConfigurationMessage(), 409);

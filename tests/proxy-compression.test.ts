@@ -37,6 +37,7 @@ const site: SiteRecord = {
 	error_html_template: "",
 	error_json_fields_json: '["error","status"]',
 	challenge_policy_json: "[]",
+	challenge_html_template: "",
 	created_at: Date.now(),
 	updated_at: Date.now(),
 };

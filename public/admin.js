@@ -22,6 +22,7 @@ let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
 let routePolicies = [];
+let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
 let countryRules = [];
 let editingRoutePolicyId = null;
 let currentTls = null;
@@ -262,8 +263,9 @@ function statusClass(status) {
 }
 
 function decisionClass(decision) {
-	if (["blocked", "route-blocked", "origin-error", "websocket-origin-error", "websocket-upgrade-failed"].includes(decision)) return "bad";
-	if (["challenge-required", "websocket-disabled", "rate-limited"].includes(decision)) return "warn";
+	if (["blocked", "route-blocked", "origin-error", "websocket-origin-error", "websocket-upgrade-failed", "access-login-failed"].includes(decision))
+		return "bad";
+	if (["challenge-required", "websocket-disabled", "rate-limited", "access-login-required", "access-login-rate-limited"].includes(decision)) return "warn";
 	if (["allowlisted", "websocket-allowlisted", "proxied-unprotected", "websocket-unprotected"].includes(decision)) return "info";
 	return "ok";
 }
@@ -680,6 +682,7 @@ async function loadSites() {
 	persistSiteSelection();
 	renderSiteSelector();
 	renderSites();
+	if (loadedTabs.has("access")) renderAccessList();
 	const providerText = challengeProviders.length
 		? challengeProviders.map((provider) => `${provider.name} (${provider.title})`).join(", ")
 		: "No challenge providers are registered";
@@ -694,13 +697,14 @@ function resetSiteScopedPages() {
 	tableState.rules.page = 1;
 	latestMetrics = null;
 	routePolicies = [];
+	accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
 	countryRules = [];
 	resetRoutePolicyForm();
 }
 
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
-	for (const name of ["sessions", "rules", "routes"]) loadedTabs.delete(name);
+	for (const name of ["sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadTraffic()];
 	if (activeTab === "sessions") {
 		loadedTabs.add("sessions");
@@ -713,6 +717,10 @@ async function reloadSelectedSite() {
 	if (activeTab === "routes") {
 		loadedTabs.add("routes");
 		tasks.push(loadRoutePolicies());
+	}
+	if (activeTab === "access") {
+		loadedTabs.add("access");
+		tasks.push(loadAccessList());
 	}
 	await Promise.all(tasks);
 	renderSites();
@@ -912,6 +920,110 @@ async function loadRoutePolicies() {
 	} catch (error) {
 		byId("routePolicyList").innerHTML = `<div class="empty-state-inline error-text">${escapeHtml(error.message)}</div>`;
 	}
+}
+
+function renderAccessImportUsers() {
+	const sourceSiteId = byId("accessImportSite").value;
+	const users = accessList.availableUsers.filter((user) => user.siteIds?.includes(sourceSiteId));
+	byId("accessImportUsers").innerHTML =
+		users.length === 0
+			? '<option value="" disabled>No users available from this site</option>'
+			: users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.username)}${user.enabled ? "" : " (disabled)"}</option>`).join("");
+}
+
+function renderAccessList() {
+	byId("accessEnabled").checked = Boolean(accessList.settings.enabled);
+	byId("accessSendUsername").checked = Boolean(accessList.settings.sendUsernameToUpstream);
+	const sourceIds = new Set(accessList.availableUsers.flatMap((user) => user.siteIds ?? []).filter((siteId) => siteId !== selectedSiteId));
+	const source = byId("accessImportSite");
+	const previousSource = source.value;
+	source.innerHTML =
+		'<option value="">Select a site</option>' +
+		sites
+			.filter((site) => sourceIds.has(site.id))
+			.map((site) => `<option value="${escapeHtml(site.id)}">${escapeHtml(site.name)} | ${escapeHtml(site.publicHost)}</option>`)
+			.join("");
+	if (sourceIds.has(previousSource)) source.value = previousSource;
+	renderAccessImportUsers();
+
+	const container = byId("accessUserList");
+	if (!selectedSiteId) {
+		container.innerHTML = '<div class="empty-state-inline">Create or select a site before configuring access authentication.</div>';
+		return;
+	}
+	if (accessList.users.length === 0) {
+		container.innerHTML = '<div class="empty-state-inline">No users are assigned to this site.</div>';
+		return;
+	}
+	container.innerHTML = accessList.users
+		.map(
+			(user) => `<div class="route-policy-item ${user.enabled ? "" : "disabled"}" data-access-user-row="${escapeHtml(user.id)}">
+    <div class="route-policy-main access-user-fields">
+      <div class="site-list-title"><strong>${escapeHtml(user.username)}</strong><span class="badge ${user.enabled ? "ok" : "warn"}">${user.enabled ? "enabled" : "disabled"}</span>${user.siteCount > 1 ? `<span class="badge info">${formatNumber(user.siteCount)} sites</span>` : ""}</div>
+      <div class="site-form-grid"><label><span>Username</span><input class="input" data-access-username value="${escapeHtml(user.username)}" maxlength="255"></label><label><span>New password</span><input class="input" data-access-password type="password" autocomplete="new-password" minlength="8" maxlength="1024" placeholder="Leave blank to keep current"></label></div>
+      <label class="check-row"><input data-access-enabled type="checkbox"${user.enabled ? " checked" : ""}><span><strong>User enabled</strong><small class="muted">Changes to this shared identity apply on every assigned site.</small></span></label>
+    </div>
+    <div class="site-list-actions"><button class="button secondary compact" type="button" data-access-save="${escapeHtml(user.id)}">Save</button><button class="button danger compact" type="button" data-access-remove="${escapeHtml(user.id)}">Remove</button></div>
+  </div>`,
+		)
+		.join("");
+}
+
+async function loadAccessList() {
+	if (!selectedSiteId) {
+		accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
+		renderAccessList();
+		return;
+	}
+	byId("accessUserList").innerHTML = '<div class="empty-state-inline"><span class="spinner"></span> Loading access users...</div>';
+	try {
+		accessList = await api("/access-list");
+		renderAccessList();
+	} catch (error) {
+		byId("accessUserList").innerHTML = `<div class="empty-state-inline error-text">${escapeHtml(error.message)}</div>`;
+	}
+}
+
+async function saveAccessSettings() {
+	accessList = await api("/access-list", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ enabled: byId("accessEnabled").checked, sendUsernameToUpstream: byId("accessSendUsername").checked }),
+	});
+	renderAccessList();
+	showToast("Access authentication settings saved.");
+}
+
+async function createAccessUser(event) {
+	event.preventDefault();
+	const submit = event.currentTarget.querySelector('button[type="submit"]');
+	submit.disabled = true;
+	try {
+		await api("/access-list/users", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ username: byId("accessUsername").value, password: byId("accessPassword").value, enabled: byId("accessUserEnabled").checked }),
+		});
+		event.currentTarget.reset();
+		byId("accessUserEnabled").checked = true;
+		showToast("User created and assigned.");
+		await loadAccessList();
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		submit.disabled = false;
+	}
+}
+
+async function importSelectedAccessUsers() {
+	const userIds = [...byId("accessImportUsers").selectedOptions].map((option) => option.value).filter(Boolean);
+	const result = await api("/access-list/import", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ userIds }),
+	});
+	showToast(`${formatNumber(result.imported)} user${result.imported === 1 ? "" : "s"} added.`);
+	await loadAccessList();
 }
 
 async function saveRoutePolicy(event) {
@@ -1671,6 +1783,7 @@ async function refreshDashboard() {
 	if (activeTab === "sessions") tasks.push(loadSessions());
 	if (activeTab === "rules") tasks.push(loadRules());
 	if (activeTab === "routes") tasks.push(loadRoutePolicies());
+	if (activeTab === "access") tasks.push(loadAccessList());
 	if (activeTab === "sites") tasks.push(loadSites());
 	await Promise.all(tasks);
 	markUpdated();
@@ -1688,6 +1801,7 @@ function setActiveTab(name) {
 	if (name === "sessions") void loadSessions();
 	if (name === "rules") void loadRules();
 	if (name === "routes") void loadRoutePolicies();
+	if (name === "access") void loadAccessList();
 	if (name === "sites") void loadSites();
 }
 
@@ -1796,6 +1910,50 @@ async function handleBodyClick(event) {
 		return;
 	}
 
+	const saveAccessUserButton = event.target.closest("button[data-access-save]");
+	if (saveAccessUserButton) {
+		const row = saveAccessUserButton.closest("[data-access-user-row]");
+		if (!row) return;
+		saveAccessUserButton.disabled = true;
+		try {
+			const response = await api(`/access-list/users/${encodeURIComponent(saveAccessUserButton.dataset.accessSave)}`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					username: row.querySelector("[data-access-username]").value,
+					password: row.querySelector("[data-access-password]").value,
+					enabled: row.querySelector("[data-access-enabled]").checked,
+				}),
+			});
+			showToast(response.user.siteCount > 1 ? "Shared user updated on every assigned site." : "User updated.");
+			await loadAccessList();
+		} catch (error) {
+			saveAccessUserButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const removeAccessUserButton = event.target.closest("button[data-access-remove]");
+	if (removeAccessUserButton) {
+		const user = accessList.users.find((item) => item.id === removeAccessUserButton.dataset.accessRemove);
+		const message =
+			Number(user?.siteCount ?? 1) > 1
+				? "Remove this user from the selected site? The shared identity remains available on its other sites."
+				: "Remove this user? Because this is its only assigned site, the identity will be permanently deleted.";
+		if (!confirm(message)) return;
+		removeAccessUserButton.disabled = true;
+		try {
+			await api(`/access-list/users/${encodeURIComponent(removeAccessUserButton.dataset.accessRemove)}`, { method: "DELETE" });
+			showToast("User removed from this site.");
+			await loadAccessList();
+		} catch (error) {
+			removeAccessUserButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
 	const sessionButton = event.target.closest("button[data-session-id]");
 	if (sessionButton) {
 		if (!confirm("Revoke this access session immediately?")) return;
@@ -1861,6 +2019,39 @@ function bindActions() {
 			void runWithButton(event.currentTarget, async () => {
 				await Promise.all([loadRoutePolicies(), loadMetrics()]);
 				markUpdated("Route policies updated");
+			}),
+	);
+	byId("accessUserForm").addEventListener("submit", createAccessUser);
+	byId("accessImportSite").addEventListener("change", renderAccessImportUsers);
+	byId("saveAccessSettings").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					await saveAccessSettings();
+					await loadMetrics();
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	byId("importAccessUsers").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					await importSelectedAccessUsers();
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	byId("refreshAccessList").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				await Promise.all([loadAccessList(), loadMetrics()]);
+				markUpdated("Access list updated");
 			}),
 	);
 	byId("newSite").addEventListener("click", () => {

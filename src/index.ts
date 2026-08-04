@@ -9,6 +9,7 @@ import { repository } from "./db/repository.ts";
 import { registerAdminRoutes } from "./routes/admin-routes.ts";
 import { registerAcmeRoutes } from "./routes/acme-routes.ts";
 import { registerChallengeRoutes } from "./routes/challenge-routes.ts";
+import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
 import { siteErrorResponse } from "./services/error-response-service.ts";
@@ -21,10 +22,17 @@ import { findAccessSession, userAgentHash } from "./services/session-service.ts"
 import { resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
 import { resolveRoutePolicy } from "./services/route-policy-service.ts";
 import { appendRateLimitHeaders, applyRouteRateLimit } from "./services/rate-limit-service.ts";
+import {
+	accessIdentityCookieNames,
+	accessIdentitySetCookies,
+	accessSettingsForSite,
+	authenticatedAccessUser,
+	clearAccessIdentityCookies,
+} from "./services/access-list-service.ts";
 import { siteHostname } from "./services/certificate-service.ts";
 import { TlsListenerManager } from "./services/tls-listener-service.ts";
 import type { GatewayState } from "./types.ts";
-import { jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
+import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
 
 await initializeRuntimeSecrets();
@@ -63,6 +71,7 @@ app.onError((error) => {
 
 registerAcmeRoutes(app);
 registerChallengeRoutes(app);
+registerAccessRoutes(app);
 registerAdminRoutes(app);
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
@@ -132,11 +141,91 @@ async function gateway(ctx: any): Promise<Response> {
 			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This route is not available.",
 		});
 	}
+	const accessSettings = await accessSettingsForSite(site.id);
+	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
-	// A session is required for challenge-protected routes and can optionally be
-	// used as the rate-limit identity. Bypass routes never require the session.
-	const needsSession = route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
+	// A session is required for challenge-protected routes, access-list login,
+	// and optionally as the route rate-limit identity.
+	const needsSession =
+		accessAuthenticationEnabled || route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
 	const candidateSession = needsSession ? await findAccessSession(request, site, ip) : null;
+
+	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
+	const session = effectiveAccess === "challenge" || accessAuthenticationEnabled ? candidateSession : null;
+
+	if ((effectiveAccess === "challenge" || accessAuthenticationEnabled) && !session) {
+		if (!["GET", "HEAD"].includes(request.method)) {
+			const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
+			const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
+			await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
+			const headers = new Headers();
+			headers.set("burrowgate-verification", verificationUrl);
+			return appendSetCookies(
+				siteErrorResponse(
+					site,
+					request,
+					{
+						status: 428,
+						code: "verification_required",
+						error: "Verification required before replaying this request",
+						clientIp: ip,
+						routePolicy: route.policy?.name,
+						reason: "Complete verification before sending this request again.",
+						verificationUrl,
+					},
+					headers,
+				),
+				accessAuthenticationEnabled ? clearAccessIdentityCookies(request) : [],
+			);
+		}
+		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
+		await recordEvent({ ...eventBase, sessionId: null, status: 302, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
+		return appendSetCookies(
+			new Response(null, {
+				status: 302,
+				headers: {
+					location: `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`,
+					"cache-control": "no-store",
+				},
+			}),
+			accessAuthenticationEnabled ? clearAccessIdentityCookies(request) : [],
+		);
+	}
+
+	const accessUser = accessAuthenticationEnabled ? await authenticatedAccessUser(site.id, session) : null;
+	if (accessAuthenticationEnabled && !accessUser) {
+		const loginUrl = `/_burrowgate/access/login?return=${encodeURIComponent(url.pathname + url.search)}`;
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: request.method === "GET" || request.method === "HEAD" ? 302 : 428,
+			decision: "access-login-required",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		if (["GET", "HEAD"].includes(request.method)) {
+			return appendSetCookies(
+				new Response(null, { status: 302, headers: { location: loginUrl, "cache-control": "no-store" } }),
+				clearAccessIdentityCookies(request),
+			);
+		}
+		return appendSetCookies(
+			siteErrorResponse(
+				site,
+				request,
+				{
+					status: 428,
+					code: "access_login_required",
+					error: "Sign-in required before replaying this request",
+					clientIp: ip,
+					routePolicy: route.policy?.name,
+					reason: "Sign in to BurrowGate before sending this request again.",
+					verificationUrl: loginUrl,
+				},
+				{ "burrowgate-login": loginUrl },
+			),
+			clearAccessIdentityCookies(request),
+		);
+	}
 
 	const rateLimit = await applyRouteRateLimit(route.policy, request, ip, candidateSession);
 	if (rateLimit.limited) {
@@ -163,50 +252,28 @@ async function gateway(ctx: any): Promise<Response> {
 		);
 	}
 
-	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
-	const session = effectiveAccess === "challenge" ? candidateSession : null;
-
-	if (effectiveAccess === "challenge" && !session) {
-		if (!["GET", "HEAD"].includes(request.method)) {
-			const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
-			const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
-			await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
-			const headers = new Headers(rateLimit.headers);
-			headers.set("burrowgate-verification", verificationUrl);
-			return siteErrorResponse(
-				site,
-				request,
-				{
-					status: 428,
-					code: "verification_required",
-					error: "Verification required before replaying this request",
-					clientIp: ip,
-					routePolicy: route.policy?.name,
-					reason: "Complete verification before sending this request again.",
-					verificationUrl,
-				},
-				headers,
-			);
-		}
-		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
-		await recordEvent({ ...eventBase, sessionId: null, status: 302, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
-		return appendRateLimitHeaders(
-			new Response(null, {
-				status: 302,
-				headers: {
-					location: `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`,
-					"cache-control": "no-store",
-				},
-			}),
-			rateLimit.headers,
-		);
-	}
-
-	const accessStatus: OriginAccessStatus = ipRule.action === "allow" ? "allowlisted" : effectiveAccess === "bypass" ? "bypass" : "verified";
-	const decision = accessStatus === "allowlisted" ? "allowlisted" : accessStatus === "bypass" ? "proxied-unprotected" : "proxied";
+	const accessStatus: OriginAccessStatus = accessAuthenticationEnabled
+		? "verified"
+		: ipRule.action === "allow"
+			? "allowlisted"
+			: effectiveAccess === "bypass"
+				? "bypass"
+				: "verified";
+	const decision = accessUser
+		? "proxied-authenticated"
+		: accessStatus === "allowlisted"
+			? "allowlisted"
+			: accessStatus === "bypass"
+				? "proxied-unprotected"
+				: "proxied";
 
 	try {
-		const response = await proxyRequest(request, site, ip, session, accessStatus);
+		let response = await proxyRequest(request, site, ip, session, accessStatus, accessUser?.username ?? null, accessSettings.send_username_to_upstream === 1);
+		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
+			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));
+		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
+			response = appendSetCookies(response, clearAccessIdentityCookies(request));
+		}
 		await recordEvent({ ...eventBase, sessionId: session?.id ?? null, status: response.status, decision, latencyMs: Math.round(performance.now() - started) });
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	} catch (error) {

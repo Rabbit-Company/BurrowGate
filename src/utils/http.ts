@@ -1,3 +1,5 @@
+import type { HeadersInit } from "bun";
+
 const HOP_BY_HOP_HEADERS = new Set([
 	"connection",
 	"keep-alive",
@@ -36,6 +38,13 @@ export function htmlResponse(html: string, status = 200, headers?: HeadersInit):
 		"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 	);
 	return new Response(html, { status, headers: resultHeaders });
+}
+
+export function appendSetCookies(response: Response, cookies: string[]): Response {
+	if (cookies.length === 0) return response;
+	const headers = new Headers(response.headers);
+	for (const cookie of cookies) headers.append("set-cookie", cookie);
+	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export function safeReturnPath(value: string | null | undefined): string {

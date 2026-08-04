@@ -12,6 +12,13 @@ import { upstreamHeaders, upstreamUrl, type OriginAccessStatus } from "./proxy-s
 import { resolveRoutePolicy } from "./route-policy-service.ts";
 import { applyRouteRateLimit } from "./rate-limit-service.ts";
 import { findAccessSession, userAgentHash } from "./session-service.ts";
+import {
+	accessIdentityCookieNames,
+	accessIdentitySetCookies,
+	accessSettingsForSite,
+	authenticatedAccessUser,
+	clearAccessIdentityCookies,
+} from "./access-list-service.ts";
 import { resolveSiteForHost } from "./site-service.ts";
 import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
@@ -63,8 +70,10 @@ export async function websocketUpstreamHeaders(
 	session: AccessSessionRecord | null,
 	accessStatus: OriginAccessStatus = session ? "verified" : "allowlisted",
 	transport?: RequestTransport,
+	authenticatedUsername: string | null = null,
+	sendUsernameToUpstream = false,
 ): Promise<Headers> {
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport);
+	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
 
 	// Bun creates a fresh upstream WebSocket handshake. Never reuse key/version
 	// or compression negotiation from the downstream handshake. Compression is
@@ -355,9 +364,63 @@ export async function handleWebSocketUpgrade(
 			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This WebSocket route is not available.",
 		});
 	}
+	const accessSettings = await accessSettingsForSite(site.id);
+	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
-	const needsSession = route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
+	const needsSession =
+		accessAuthenticationEnabled || route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
 	const candidateSession = needsSession ? await findAccessSession(request, site, ip) : null;
+
+	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
+	const session = effectiveAccess === "challenge" || accessAuthenticationEnabled ? candidateSession : null;
+	if ((effectiveAccess === "challenge" || accessAuthenticationEnabled) && !session) {
+		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
+		const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
+		await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
+		const headers = new Headers();
+		headers.set("burrowgate-verification", verificationUrl);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 428,
+				code: "verification_required",
+				error: "Verification is required before opening this WebSocket",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "Complete verification before opening this WebSocket again.",
+				verificationUrl,
+			},
+			headers,
+		);
+	}
+
+	const accessUser = accessAuthenticationEnabled ? await authenticatedAccessUser(site.id, session) : null;
+	if (accessAuthenticationEnabled && !accessUser) {
+		const loginUrl = `/_burrowgate/access/login?return=${encodeURIComponent(url.pathname + url.search)}`;
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: 428,
+			decision: "access-login-required",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 428,
+				code: "access_login_required",
+				error: "Sign-in is required before opening this WebSocket",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "Complete BurrowGate sign-in before opening this WebSocket again.",
+				verificationUrl: loginUrl,
+			},
+			{ "burrowgate-login": loginUrl },
+		);
+	}
+
 	const rateLimit = await applyRouteRateLimit(route.policy, request, ip, candidateSession);
 	if (rateLimit.limited) {
 		await recordEvent({
@@ -383,34 +446,25 @@ export async function handleWebSocketUpgrade(
 		);
 	}
 
-	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
-	const session = effectiveAccess === "challenge" ? candidateSession : null;
-	if (effectiveAccess === "challenge" && !session) {
-		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
-		const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
-		await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
-		const headers = new Headers(rateLimit.headers);
-		headers.set("burrowgate-verification", verificationUrl);
-		return siteErrorResponse(
-			site,
-			request,
-			{
-				status: 428,
-				code: "verification_required",
-				error: "Verification is required before opening this WebSocket",
-				clientIp: ip,
-				routePolicy: route.policy?.name,
-				reason: "Complete verification before opening this WebSocket again.",
-				verificationUrl,
-			},
-			headers,
-		);
-	}
-
-	const accessStatus: OriginAccessStatus = ipRule.action === "allow" ? "allowlisted" : effectiveAccess === "bypass" ? "bypass" : "verified";
+	const accessStatus: OriginAccessStatus = accessAuthenticationEnabled
+		? "verified"
+		: ipRule.action === "allow"
+			? "allowlisted"
+			: effectiveAccess === "bypass"
+				? "bypass"
+				: "verified";
 	const target = websocketUpstreamUrl(site, request);
 	try {
-		const headers = await websocketUpstreamHeaders(request, site, ip, session, accessStatus, transport);
+		const headers = await websocketUpstreamHeaders(
+			request,
+			site,
+			ip,
+			session,
+			accessStatus,
+			transport,
+			accessUser?.username ?? null,
+			accessSettings.send_username_to_upstream === 1,
+		);
 		const upstream = await openUpstreamWebSocket(target, headers, request);
 		const offeredProtocols = offeredWebSocketProtocols(request);
 		if (offeredProtocols.length > 0 && !upstream.protocol) {
@@ -448,6 +502,11 @@ export async function handleWebSocketUpgrade(
 		attachUpstreamBridgeEvents(bridge);
 
 		const upgradeHeaders = new Headers(rateLimit.headers);
+		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
+			for (const cookie of await accessIdentitySetCookies(request, site, session, accessUser.username)) upgradeHeaders.append("set-cookie", cookie);
+		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
+			for (const cookie of clearAccessIdentityCookies(request)) upgradeHeaders.append("set-cookie", cookie);
+		}
 		if (upstream.protocol) upgradeHeaders.set("sec-websocket-protocol", upstream.protocol);
 		const upgraded = server.upgrade(request, [...upgradeHeaders].length > 0 ? { data: bridge, headers: upgradeHeaders } : { data: bridge });
 		if (!upgraded) {
@@ -474,7 +533,13 @@ export async function handleWebSocketUpgrade(
 			);
 		}
 
-		const decision = accessStatus === "allowlisted" ? "websocket-allowlisted" : accessStatus === "bypass" ? "websocket-unprotected" : "websocket-proxied";
+		const decision = accessUser
+			? "websocket-authenticated"
+			: accessStatus === "allowlisted"
+				? "websocket-allowlisted"
+				: accessStatus === "bypass"
+					? "websocket-unprotected"
+					: "websocket-proxied";
 		await recordEvent({ ...eventBase, sessionId: session?.id ?? null, status: 101, decision, latencyMs: Math.round(performance.now() - started) });
 		return undefined;
 	} catch (error) {

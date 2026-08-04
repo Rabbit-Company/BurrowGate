@@ -2,10 +2,11 @@ import { config, requestTransport, visitorCookieNames, type RequestTransport } f
 import type { AccessSessionRecord, SiteRecord } from "../types.ts";
 
 export type OriginAccessStatus = "verified" | "allowlisted" | "bypass";
-import { removeCookieFromHeader } from "../utils/cookies.ts";
+import { removeCookieFromHeader, setCookieInHeader } from "../utils/cookies.ts";
 import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders } from "../utils/http.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
+import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
 	const incoming = new URL(request.url);
@@ -33,6 +34,8 @@ export async function upstreamHeaders(
 	session: AccessSessionRecord | null,
 	accessStatus: OriginAccessStatus = session ? "verified" : "allowlisted",
 	transport?: RequestTransport,
+	authenticatedUsername: string | null = null,
+	sendUsernameToUpstream = false,
 ): Promise<Headers> {
 	const headers = copyProxyHeaders(request.headers);
 
@@ -43,6 +46,12 @@ export async function upstreamHeaders(
 
 	let cookie = headers.get("cookie");
 	for (const name of visitorCookieNames) cookie = removeCookieFromHeader(cookie, name);
+	for (const name of accessIdentityCookieNames) cookie = removeCookieFromHeader(cookie, name);
+	if (sendUsernameToUpstream && authenticatedUsername && session) {
+		const identity = await accessIdentityCookieValues(site, session, authenticatedUsername);
+		cookie = setCookieInHeader(cookie, accessIdentityCookieNames[0], identity.username);
+		cookie = setCookieInHeader(cookie, accessIdentityCookieNames[1], identity.signature);
+	}
 	if (cookie) headers.set("cookie", cookie);
 	else headers.delete("cookie");
 
@@ -51,6 +60,10 @@ export async function upstreamHeaders(
 	// schemes because applications may use Basic/Bearer authentication.
 	if (headers.get("authorization")?.startsWith("Burrow ")) headers.delete("authorization");
 	headers.delete("x-burrow-token");
+	// Identity assertions are owned by BurrowGate. Never allow a client to
+	// provide or override them, even when identity forwarding is disabled.
+	headers.delete("x-burrowgate-authenticated-user");
+	headers.delete("x-burrowgate-identity-signature");
 
 	const acceptedEncoding = request.headers.get("accept-encoding");
 	headers.set("accept-encoding", acceptedEncoding?.trim() || "identity");
@@ -71,6 +84,11 @@ export async function upstreamHeaders(
 	headers.set("x-burrowgate-client-ip", ip);
 	headers.set("x-burrowgate-timestamp", timestamp);
 	headers.set("x-burrowgate-signature", await hmacSha256Hex(site.origin_signing_secret, canonical));
+	if (sendUsernameToUpstream && authenticatedUsername) {
+		const identityCanonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, timestamp, authenticatedUsername].join("\n");
+		headers.set("x-burrowgate-authenticated-user", authenticatedUsername);
+		headers.set("x-burrowgate-identity-signature", await hmacSha256Hex(site.origin_signing_secret, identityCanonical));
+	}
 
 	return headers;
 }
@@ -114,6 +132,8 @@ export async function proxyRequest(
 	ip: string,
 	session: AccessSessionRecord | null,
 	accessStatus: OriginAccessStatus = session ? "verified" : "allowlisted",
+	authenticatedUsername: string | null = null,
+	sendUsernameToUpstream = false,
 ): Promise<Response> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
@@ -136,7 +156,7 @@ export async function proxyRequest(
 	const incoming = new URL(request.url);
 	const transport = requestTransport(request);
 	const target = upstreamUrl(site, request);
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport);
+	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
 	const hasBody = !["GET", "HEAD"].includes(request.method);
 
 	const response = await fetch(target, {

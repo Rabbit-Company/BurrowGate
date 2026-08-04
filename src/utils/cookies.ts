@@ -42,3 +42,9 @@ export function removeCookieFromHeader(header: string | null, name: string): str
 		.filter((part) => !part.startsWith(`${name}=`));
 	return kept.length > 0 ? kept.join("; ") : null;
 }
+
+export function setCookieInHeader(header: string | null, name: string, value: string): string {
+	const existing = removeCookieFromHeader(header, name);
+	const serialized = `${name}=${encodeURIComponent(value)}`;
+	return existing ? `${existing}; ${serialized}` : serialized;
+}

@@ -6,7 +6,8 @@ import {
 	websocketUpstreamHeaders,
 	websocketUpstreamUrl,
 } from "../src/services/websocket-proxy-service.ts";
-import type { SiteRecord } from "../src/types.ts";
+import type { AccessSessionRecord, SiteRecord } from "../src/types.ts";
+import { hmacSha256Hex } from "../src/utils/crypto.ts";
 
 const site: SiteRecord = {
 	id: "site-websocket-test",
@@ -24,8 +25,27 @@ const site: SiteRecord = {
 	error_html_template: "",
 	error_json_fields_json: '["error","status"]',
 	challenge_policy_json: "[]",
+	challenge_html_template: "",
 	created_at: Date.now(),
 	updated_at: Date.now(),
+};
+
+const accessSession: AccessSessionRecord = {
+	id: "sess_identity_test",
+	site_id: site.id,
+	token_hash: "hash",
+	initial_ip: "203.0.113.8",
+	last_ip: "203.0.113.8",
+	user_agent_hash: "user-agent-hash",
+	created_at: Date.now(),
+	last_seen_at: Date.now(),
+	expires_at: Date.now() + 3_600_000,
+	revoked_at: null,
+	verification_summary_json: "{}",
+	request_count: 1,
+	country_code: "US",
+	access_user_id: "user_ziga",
+	authenticated_at: Date.now(),
 };
 
 describe("WebSocket reverse proxy", () => {
@@ -95,5 +115,44 @@ describe("WebSocket reverse proxy", () => {
 		expect(headers.get("x-forwarded-for")).toBe("203.0.113.7");
 		expect(headers.get("x-forwarded-proto")).toBe("https");
 		expect(headers.get("x-burrowgate-verified")).toBe("true");
+	});
+
+	test("preserves application authorization and replaces spoofed identity assertions", async () => {
+		const request = new Request("https://socket.example.test/ws?room=1", {
+			headers: {
+				connection: "Upgrade",
+				upgrade: "websocket",
+				authorization: "Bearer application-token",
+				cookie: "application=value; bg_authenticated_user=mallory; bg_identity_signature=spoofed",
+				"x-burrowgate-authenticated-user": "mallory",
+				"x-burrowgate-identity-signature": "spoofed",
+			},
+		});
+		const headers = await websocketUpstreamHeaders(request, site, "203.0.113.8", accessSession, "verified", "https", "ziga", true);
+
+		expect(headers.get("authorization")).toBe("Bearer application-token");
+		expect(headers.get("cookie")).toContain("application=value");
+		expect(headers.get("cookie")).toContain("bg_authenticated_user=ziga");
+		expect(headers.get("cookie")).not.toContain("mallory");
+		const cookieCanonical = ["identity-cookie-v1", site.id, accessSession.id, "ziga"].join("\n");
+		expect(headers.get("cookie")).toContain(`bg_identity_signature=${await hmacSha256Hex(site.origin_signing_secret, cookieCanonical)}`);
+		expect(headers.get("x-burrowgate-authenticated-user")).toBe("ziga");
+		const timestamp = headers.get("x-burrowgate-timestamp")!;
+		const canonical = ["GET", "/ws?room=1", accessSession.id, "203.0.113.8", timestamp, "ziga"].join("\n");
+		expect(headers.get("x-burrowgate-identity-signature")).toBe(await hmacSha256Hex(site.origin_signing_secret, canonical));
+	});
+
+	test("strips client identity assertions when username forwarding is disabled", async () => {
+		const headers = await websocketUpstreamHeaders(
+			new Request("https://socket.example.test/ws", {
+				headers: { connection: "Upgrade", upgrade: "websocket", "x-burrowgate-authenticated-user": "mallory" },
+			}),
+			site,
+			"203.0.113.9",
+			null,
+		);
+
+		expect(headers.has("x-burrowgate-authenticated-user")).toBe(false);
+		expect(headers.has("x-burrowgate-identity-signature")).toBe(false);
 	});
 });
