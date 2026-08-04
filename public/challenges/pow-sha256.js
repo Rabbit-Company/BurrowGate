@@ -11,7 +11,7 @@
 	async function submit(nonce) {
 		if (finished) return;
 		finished = true;
-		status.textContent = "Proof found. Verifying with BurrowGate...";
+		if (status) status.textContent = "Proof found. Verifying with BurrowGate...";
 		workers.forEach((worker) => worker.terminate());
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
@@ -24,11 +24,12 @@
 			const minimumDisplayMs = Math.max(0, Number(challenge.minimumDisplayMs) || 0);
 			const remainingMs = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 			if (remainingMs > 0) {
-				status.textContent = `Verification successful. Redirecting in ${Math.ceil(remainingMs / 1000)} seconds...`;
+				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(remainingMs / 1000)} seconds...`;
 				const timer = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
-					status.textContent =
-						left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+					if (status)
+						status.textContent =
+							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
 					if (left <= 0) clearInterval(timer);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), remainingMs);
@@ -41,7 +42,7 @@
 			location.reload();
 			return;
 		}
-		status.textContent = result.reason || "Verification failed. Reloading...";
+		if (status) status.textContent = result.reason || "Verification failed. Reloading...";
 		setTimeout(() => location.reload(), 1200);
 	}
 
@@ -50,11 +51,11 @@
 		workers.push(worker);
 		worker.onmessage = (event) => {
 			total += event.data.iterations || 0;
-			attempts.textContent = total.toLocaleString();
+			if (attempts) attempts.textContent = total.toLocaleString();
 			if (event.data.type === "solved") submit(event.data.nonce);
 		};
 		worker.postMessage({ seed: challenge.publicData.seed, difficulty: challenge.publicData.difficulty, start: index, step: workerCount });
 	}
 
-	status.textContent = `Using ${workerCount} browser worker${workerCount === 1 ? "" : "s"}...`;
+	if (status) status.textContent = `Using ${workerCount} browser worker${workerCount === 1 ? "" : "s"}...`;
 })();

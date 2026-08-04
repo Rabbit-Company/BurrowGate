@@ -1,5 +1,6 @@
 import { config } from "../config.ts";
 import { DEFAULT_ERROR_HTML_TEMPLATE, DEFAULT_ERROR_JSON_FIELDS } from "../services/error-response-service.ts";
+import { DEFAULT_CHALLENGE_HTML_TEMPLATE } from "../services/challenge-page-service.ts";
 import { db } from "./client.ts";
 
 const schema = `
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS sites (
   error_response_mode VARCHAR(16) NOT NULL DEFAULT 'json',
   error_html_template TEXT NULL,
   error_json_fields_json TEXT NULL,
+	challenge_html_template TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -239,6 +241,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN error_response_mode VARCHAR(16) NOT NULL DEFAULT 'json'",
 		"ALTER TABLE sites ADD COLUMN error_html_template TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN error_json_fields_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN challenge_html_template TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -250,6 +253,7 @@ async function ensureSiteColumns(): Promise<void> {
 	await db`UPDATE sites SET event_retention_days=${config.eventRetentionDays} WHERE event_retention_days IS NULL`;
 	await db`UPDATE sites SET error_html_template=${DEFAULT_ERROR_HTML_TEMPLATE} WHERE error_html_template IS NULL`;
 	await db`UPDATE sites SET error_json_fields_json=${JSON.stringify(DEFAULT_ERROR_JSON_FIELDS)} WHERE error_json_fields_json IS NULL`;
+	await db`UPDATE sites SET challenge_html_template=${DEFAULT_CHALLENGE_HTML_TEMPLATE} WHERE challenge_html_template IS NULL`;
 }
 
 async function ensureGeoIpColumns(): Promise<void> {

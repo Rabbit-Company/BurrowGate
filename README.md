@@ -23,6 +23,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Country-level GeoIP analytics with an interactive SVG world map
 - Country codes, country filters, and country tooltips in traffic and session tables
 - Per-site customizable HTML or JSON error responses
+- Per-site customizable HTML challenge pages
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
 

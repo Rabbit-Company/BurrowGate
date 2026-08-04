@@ -3,7 +3,7 @@ import { challengeRegistry } from "../challenges/index.ts";
 import { cookieCanBeIssuedForRequest, insecureCookieConfigurationMessage } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { currentStep, verifyFlow } from "../services/challenge-service.ts";
-import { challengePage } from "../ui/challenge-page.ts";
+import { renderChallengePage } from "../services/challenge-page-service.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
 
 export function registerChallengeRoutes(app: Web<any>): void {
@@ -17,7 +17,9 @@ export function registerChallengeRoutes(app: Web<any>): void {
 		if (!flow || flow.status !== "pending" || flow.expires_at <= Date.now())
 			return htmlResponse("This challenge expired. Return to the website and try again.", 410);
 		const step = await currentStep(flow);
-		return htmlResponse(challengePage(flow, step, challengeRegistry.get(step.provider)));
+		const site = await repository.siteById(flow.site_id);
+		if (!site) return htmlResponse("This challenge expired. Return to the website and try again.", 410);
+		return htmlResponse(renderChallengePage(site, ctx.req, flow, step, challengeRegistry.get(step.provider)));
 	});
 
 	app.post("/_burrowgate/api/challenge/verify", async (ctx) => {

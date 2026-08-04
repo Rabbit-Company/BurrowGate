@@ -17,6 +17,7 @@ let sites = [];
 let challengeProviders = [];
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
+let challengeDefaults = { htmlTemplate: "", placeholders: [] };
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
@@ -549,6 +550,15 @@ function renderErrorResponseOptions() {
 		.join("");
 }
 
+function renderChallengePlaceholders() {
+	byId("challengePlaceholderList").innerHTML = (challengeDefaults.placeholders ?? [])
+		.map(
+			(placeholder) =>
+				`<div class="placeholder-item"><code>&#123;&#123;${escapeHtml(placeholder.name)}&#125;&#125;</code><small>${escapeHtml(placeholder.description)}</small></div>`,
+		)
+		.join("");
+}
+
 function selectedErrorJsonFields() {
 	return [...document.querySelectorAll('input[name="errorJsonField"]:checked')].map((input) => input.value);
 }
@@ -598,6 +608,7 @@ function resetSiteForm() {
 	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(errorResponseDefaults.jsonFields ?? []);
 	updateErrorResponseControls();
+	byId("siteChallengeHtmlTemplate").value = challengeDefaults.htmlTemplate ?? "";
 	byId("siteSigningSecret").value = "";
 	byId("siteSigningSecret").type = "password";
 	byId("siteFormTitle").textContent = "Create site";
@@ -628,6 +639,7 @@ function editSite(id) {
 	byId("siteErrorHtmlTemplate").value = site.errorResponse?.htmlTemplate ?? errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(site.errorResponse?.jsonFields ?? errorResponseDefaults.jsonFields ?? []);
 	updateErrorResponseControls();
+	byId("siteChallengeHtmlTemplate").value = site.challengePage?.htmlTemplate ?? challengeDefaults.htmlTemplate ?? "";
 	byId("siteFormTitle").textContent = `Edit ${site.name}`;
 	byId("siteFormSubtitle").textContent = "Changes apply to new requests immediately. Existing session expiration timestamps are unchanged.";
 	byId("siteSecretHelp").textContent = "Leave blank to keep the current secret, or enter a new value to rotate it.";
@@ -656,6 +668,8 @@ async function loadSites() {
 	const previousErrorJsonFields = errorResponseOptionsLoaded ? selectedErrorJsonFields() : null;
 	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
 	renderErrorResponseOptions();
+	challengeDefaults = response.challengeDefaults ?? challengeDefaults;
+	renderChallengePlaceholders();
 	errorResponseOptionsLoaded = true;
 	if (firstErrorOptionsLoad && !editingSiteId) resetSiteForm();
 	else if (previousErrorJsonFields) setErrorJsonFields(previousErrorJsonFields);
@@ -751,6 +765,7 @@ async function saveSite(event) {
 		errorResponseMode,
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
 		errorJsonFields,
+		challengeHtmlTemplate: byId("siteChallengeHtmlTemplate").value,
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1871,6 +1886,10 @@ function bindActions() {
 	byId("resetErrorHtmlTemplate").addEventListener("click", () => {
 		byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
 		showToast("Default HTML error template restored. Save the site to apply it.");
+	});
+	byId("resetChallengeHtmlTemplate").addEventListener("click", () => {
+		byId("siteChallengeHtmlTemplate").value = challengeDefaults.htmlTemplate ?? "";
+		showToast("Default challenge template restored. Save the site to apply it.");
 	});
 	byId("tlsSettingsForm").addEventListener("submit", (event) => void saveTlsSettings(event).catch((error) => showToast(error.message, "bad")));
 	byId("acmeForm").addEventListener("submit", (event) => void requestAcmeCertificate(event).catch((error) => showToast(error.message, "bad")));

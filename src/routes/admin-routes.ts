@@ -23,6 +23,7 @@ import {
 	ERROR_JSON_FIELD_OPTIONS,
 	ERROR_TEMPLATE_PLACEHOLDERS,
 } from "../services/error-response-service.ts";
+import { DEFAULT_CHALLENGE_HTML_TEMPLATE, CHALLENGE_TEMPLATE_PLACEHOLDERS } from "../services/challenge-page-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage } from "../ui/admin-page.ts";
@@ -182,6 +183,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 				jsonFields: DEFAULT_ERROR_JSON_FIELDS,
 				jsonFieldOptions: ERROR_JSON_FIELD_OPTIONS,
 				placeholders: ERROR_TEMPLATE_PLACEHOLDERS,
+			},
+			challengeDefaults: {
+				htmlTemplate: DEFAULT_CHALLENGE_HTML_TEMPLATE,
+				placeholders: CHALLENGE_TEMPLATE_PLACEHOLDERS,
 			},
 		});
 	});

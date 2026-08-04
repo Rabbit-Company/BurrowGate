@@ -94,6 +94,7 @@ export interface SiteRecord {
 	error_response_mode: ErrorResponseMode;
 	error_html_template: string;
 	error_json_fields_json: string;
+	challenge_html_template: string;
 	created_at: number;
 	updated_at: number;
 }

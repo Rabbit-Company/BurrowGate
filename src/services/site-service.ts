@@ -14,6 +14,7 @@ import {
 	validateErrorResponseMode,
 	type ErrorJsonField,
 } from "./error-response-service.ts";
+import { DEFAULT_CHALLENGE_HTML_TEMPLATE, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -29,6 +30,7 @@ export interface SiteInput {
 	defaultCountryAction?: unknown;
 	errorResponseMode?: unknown;
 	errorHtmlTemplate?: unknown;
+	challengeHtmlTemplate?: unknown;
 	errorJsonFields?: unknown;
 }
 
@@ -49,6 +51,7 @@ export interface SiteView {
 		htmlTemplate: string;
 		jsonFields: ErrorJsonField[];
 	};
+	challengePage: { htmlTemplate: string };
 	createdAt: number;
 	updatedAt: number;
 }
@@ -195,6 +198,9 @@ export function siteView(site: SiteRecord): SiteView {
 			htmlTemplate: site.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE,
 			jsonFields: errorJsonFieldsFromRecord(site),
 		},
+		challengePage: {
+			htmlTemplate: site.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE,
+		},
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -223,6 +229,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, "inherit"),
 		error_response_mode: validateErrorResponseMode(input.errorResponseMode, "json"),
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate),
+		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
@@ -254,6 +261,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing.default_country_action ?? "inherit"),
 		error_response_mode: validateErrorResponseMode(input.errorResponseMode, existing.error_response_mode ?? "json"),
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate, existing.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE),
+		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate, existing.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};
