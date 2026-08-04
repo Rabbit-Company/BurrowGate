@@ -91,11 +91,8 @@ button:disabled {
 .mark {
 	width: 34px;
 	height: 34px;
-	border-radius: 11px;
-	background: linear-gradient(135deg, #8b5cf6, #22d3ee);
-	display: grid;
-	place-items: center;
-	color: white;
+	flex: none;
+	background: url("/_burrowgate/static/favicon.svg") center / contain no-repeat;
 }
 .muted {
 	color: #94a3b8;

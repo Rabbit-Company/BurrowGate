@@ -3,7 +3,7 @@ import { page } from "./layout.ts";
 export function loginPage(error = ""): string {
 	return page(
 		"Admin login",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark">BG</span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${error}</p>` : ""}<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${error}</p>` : ""}<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form></section></main>`,
 	);
 }
 
@@ -20,7 +20,7 @@ export function adminPage(): string {
 		"Dashboard",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark">BG</span> BurrowGate</div><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate</div><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="refreshDashboard" class="button secondary" type="button">Refresh dashboard</button><button id="logout" class="button secondary">Log out</button></div>

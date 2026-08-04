@@ -65,7 +65,7 @@ export const DEFAULT_ERROR_HTML_TEMPLATE = `<!doctype html>
 		body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #e5e7eb; background: radial-gradient(circle at top, #312e81 0, #111827 42%, #030712 100%); }
 		main { width: min(620px, 100%); padding: 36px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 20px; background: rgba(15, 23, 42, .9); box-shadow: 0 24px 80px rgba(0, 0, 0, .4); }
 		.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; font-weight: 700; }
-		.logo { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #7c3aed, #2563eb); color: white; }
+		.logo { width: 42px; height: 42px; flex: none; background: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22BurrowGate%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22bg%22%20x1%3D%2210%22%20y1%3D%228%22%20x2%3D%2254%22%20y2%3D%2256%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20stop-color%3D%22%238b5cf6%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2322d3ee%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22url%28%23bg%29%22%2F%3E%3Cg%20transform%3D%22translate%2814%2014%29%20scale%281.5%29%22%20fill%3D%22none%22%20stroke%3D%22%230b1020%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2021h14a2%202%200%200%200%202%20-2v-7a9%209%200%200%200%20-18%200v7a2%202%200%200%200%202%202%22%2F%3E%3Cpath%20d%3D%22M8%2021v-9a4%204%200%201%201%208%200v9%22%2F%3E%3Cpath%20d%3D%22M3%2017h4%22%2F%3E%3Cpath%20d%3D%22M17%2017h4%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") center / contain no-repeat; }
 		.status { margin: 0; color: #a78bfa; font-size: clamp(48px, 12vw, 84px); line-height: 1; }
 		h1 { margin: 12px 0 10px; font-size: clamp(24px, 5vw, 36px); }
 		p { margin: 0; color: #94a3b8; line-height: 1.65; }
@@ -76,7 +76,7 @@ export const DEFAULT_ERROR_HTML_TEMPLATE = `<!doctype html>
 </head>
 <body>
 	<main>
-		<div class="brand"><span class="logo">BG</span><span>BurrowGate</span></div>
+		<div class="brand"><span class="logo"></span><span>BurrowGate</span></div>
 		<div class="status">{{status}}</div>
 		<h1>{{error}}</h1>
 		<p>{{reason}}</p>

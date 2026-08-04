@@ -1,11 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BurrowGate">
   <defs>
-    <linearGradient id="g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
       <stop stop-color="#8b5cf6"/>
       <stop offset="1" stop-color="#22d3ee"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="18" fill="#111827"/>
-  <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#g)"/>
-  <text x="32" y="40" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="800" text-anchor="middle">BG</text>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <g transform="translate(14 14) scale(1.5)" fill="none" stroke="#0b1020" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 21h14a2 2 0 0 0 2 -2v-7a9 9 0 0 0 -18 0v7a2 2 0 0 0 2 2"/>
+    <path d="M8 21v-9a4 4 0 1 1 8 0v9"/>
+    <path d="M3 17h4"/>
+    <path d="M17 17h4"/>
+  </g>
 </svg>
