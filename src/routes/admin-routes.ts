@@ -17,6 +17,12 @@ import { invalidateRouteRateLimiter } from "../services/rate-limit-service.ts";
 import { issueLetsEncryptCertificate } from "../services/acme-service.ts";
 import { recordCertificateEvent, saveCertificate, tlsView, updateTlsSettings } from "../services/certificate-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
+import {
+	DEFAULT_ERROR_HTML_TEMPLATE,
+	DEFAULT_ERROR_JSON_FIELDS,
+	ERROR_JSON_FIELD_OPTIONS,
+	ERROR_TEMPLATE_PLACEHOLDERS,
+} from "../services/error-response-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage } from "../ui/admin-page.ts";
@@ -170,6 +176,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 			items: (await repository.allSites()).map(siteView),
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
+			errorResponseDefaults: {
+				mode: "json",
+				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,
+				jsonFields: DEFAULT_ERROR_JSON_FIELDS,
+				jsonFieldOptions: ERROR_JSON_FIELD_OPTIONS,
+				placeholders: ERROR_TEMPLATE_PLACEHOLDERS,
+			},
 		});
 	});
 

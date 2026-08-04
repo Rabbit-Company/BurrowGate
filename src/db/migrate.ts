@@ -1,4 +1,5 @@
 import { config } from "../config.ts";
+import { DEFAULT_ERROR_HTML_TEMPLATE, DEFAULT_ERROR_JSON_FIELDS } from "../services/error-response-service.ts";
 import { db } from "./client.ts";
 
 const schema = `
@@ -15,6 +16,9 @@ CREATE TABLE IF NOT EXISTS sites (
   event_retention_days INTEGER NOT NULL DEFAULT 7,
   default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
+  error_response_mode VARCHAR(16) NOT NULL DEFAULT 'json',
+  error_html_template TEXT NULL,
+  error_json_fields_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -232,6 +236,9 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN event_retention_days INTEGER NULL",
 		"ALTER TABLE sites ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE sites ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE sites ADD COLUMN error_response_mode VARCHAR(16) NOT NULL DEFAULT 'json'",
+		"ALTER TABLE sites ADD COLUMN error_html_template TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN error_json_fields_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -241,6 +248,8 @@ async function ensureSiteColumns(): Promise<void> {
 		}
 	}
 	await db`UPDATE sites SET event_retention_days=${config.eventRetentionDays} WHERE event_retention_days IS NULL`;
+	await db`UPDATE sites SET error_html_template=${DEFAULT_ERROR_HTML_TEMPLATE} WHERE error_html_template IS NULL`;
+	await db`UPDATE sites SET error_json_fields_json=${JSON.stringify(DEFAULT_ERROR_JSON_FIELDS)} WHERE error_json_fields_json IS NULL`;
 }
 
 async function ensureGeoIpColumns(): Promise<void> {

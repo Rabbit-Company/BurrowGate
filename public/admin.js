@@ -16,6 +16,8 @@ let geoMetrics = null;
 let sites = [];
 let challengeProviders = [];
 let defaultEventRetentionDays = 7;
+let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
+let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
 let routePolicies = [];
@@ -532,6 +534,38 @@ function renderSiteSelector() {
 					.join("");
 }
 
+function renderErrorResponseOptions() {
+	byId("errorPlaceholderList").innerHTML = (errorResponseDefaults.placeholders ?? [])
+		.map(
+			(placeholder) =>
+				`<div class="placeholder-item"><code>&#123;&#123;${escapeHtml(placeholder.name)}&#125;&#125;</code><small>${escapeHtml(placeholder.description)}</small></div>`,
+		)
+		.join("");
+	byId("errorJsonFieldList").innerHTML = (errorResponseDefaults.jsonFieldOptions ?? [])
+		.map(
+			(field) =>
+				`<label class="json-field-option"><input type="checkbox" name="errorJsonField" value="${escapeHtml(field.name)}"><span><strong>${escapeHtml(field.label)}</strong><small>${escapeHtml(field.description)}</small></span></label>`,
+		)
+		.join("");
+}
+
+function selectedErrorJsonFields() {
+	return [...document.querySelectorAll('input[name="errorJsonField"]:checked')].map((input) => input.value);
+}
+
+function setErrorJsonFields(fields) {
+	const selected = new Set(fields ?? []);
+	document.querySelectorAll('input[name="errorJsonField"]').forEach((input) => {
+		input.checked = selected.has(input.value);
+	});
+}
+
+function updateErrorResponseControls() {
+	const htmlMode = byId("siteErrorResponseMode").value === "html";
+	byId("siteErrorHtmlSettings").classList.toggle("hidden", !htmlMode);
+	byId("siteErrorJsonSettings").classList.toggle("hidden", htmlMode);
+}
+
 function renderSites() {
 	const container = byId("sitesList");
 	if (sites.length === 0) {
@@ -543,7 +577,7 @@ function renderSites() {
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span></div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
@@ -560,6 +594,10 @@ function resetSiteForm() {
 	byId("siteEnabled").checked = true;
 	byId("siteDefaultAccessMode").value = "challenge";
 	byId("siteChallengePolicy").value = JSON.stringify(defaultChallengePolicy(), null, 2);
+	byId("siteErrorResponseMode").value = errorResponseDefaults.mode ?? "json";
+	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
+	setErrorJsonFields(errorResponseDefaults.jsonFields ?? []);
+	updateErrorResponseControls();
 	byId("siteSigningSecret").value = "";
 	byId("siteSigningSecret").type = "password";
 	byId("siteFormTitle").textContent = "Create site";
@@ -586,6 +624,10 @@ function editSite(id) {
 	byId("siteDefaultAccessMode").value = site.defaultAccessMode ?? "challenge";
 	byId("siteSigningSecret").value = "";
 	byId("siteChallengePolicy").value = JSON.stringify(site.challengePolicy, null, 2);
+	byId("siteErrorResponseMode").value = site.errorResponse?.mode ?? "json";
+	byId("siteErrorHtmlTemplate").value = site.errorResponse?.htmlTemplate ?? errorResponseDefaults.htmlTemplate ?? "";
+	setErrorJsonFields(site.errorResponse?.jsonFields ?? errorResponseDefaults.jsonFields ?? []);
+	updateErrorResponseControls();
 	byId("siteFormTitle").textContent = `Edit ${site.name}`;
 	byId("siteFormSubtitle").textContent = "Changes apply to new requests immediately. Existing session expiration timestamps are unchanged.";
 	byId("siteSecretHelp").textContent = "Leave blank to keep the current secret, or enter a new value to rotate it.";
@@ -610,6 +652,13 @@ async function loadSites() {
 	sites = response.items ?? [];
 	challengeProviders = response.challengeProviders ?? [];
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
+	const firstErrorOptionsLoad = !errorResponseOptionsLoaded;
+	const previousErrorJsonFields = errorResponseOptionsLoaded ? selectedErrorJsonFields() : null;
+	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
+	renderErrorResponseOptions();
+	errorResponseOptionsLoaded = true;
+	if (firstErrorOptionsLoad && !editingSiteId) resetSiteForm();
+	else if (previousErrorJsonFields) setErrorJsonFields(previousErrorJsonFields);
 	const requestedId = new URL(location.href).searchParams.get("site");
 	const currentExists = sites.some((site) => site.id === selectedSiteId);
 	const requestedExists = sites.some((site) => site.id === requestedId);
@@ -677,6 +726,18 @@ async function saveSite(event) {
 		submit.disabled = false;
 		return;
 	}
+	const errorResponseMode = byId("siteErrorResponseMode").value;
+	const errorJsonFields = selectedErrorJsonFields();
+	if (errorResponseMode === "json" && errorJsonFields.length === 0) {
+		showToast("Select at least one JSON error field.", "bad");
+		submit.disabled = false;
+		return;
+	}
+	if (errorResponseMode === "html" && !byId("siteErrorHtmlTemplate").value.trim()) {
+		showToast("HTML error template cannot be empty.", "bad");
+		submit.disabled = false;
+		return;
+	}
 	const payload = {
 		name: byId("siteName").value.trim(),
 		publicHost: byId("sitePublicHost").value.trim(),
@@ -687,6 +748,9 @@ async function saveSite(event) {
 		eventRetentionDays: Number(byId("siteEventRetentionDays").value),
 		challengePolicy,
 		originSigningSecret: byId("siteSigningSecret").value.trim(),
+		errorResponseMode,
+		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
+		errorJsonFields,
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1803,6 +1867,11 @@ function bindActions() {
 		}
 	});
 	byId("siteForm").addEventListener("submit", saveSite);
+	byId("siteErrorResponseMode").addEventListener("change", updateErrorResponseControls);
+	byId("resetErrorHtmlTemplate").addEventListener("click", () => {
+		byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
+		showToast("Default HTML error template restored. Save the site to apply it.");
+	});
 	byId("tlsSettingsForm").addEventListener("submit", (event) => void saveTlsSettings(event).catch((error) => showToast(error.message, "bad")));
 	byId("acmeForm").addEventListener("submit", (event) => void requestAcmeCertificate(event).catch((error) => showToast(error.message, "bad")));
 	byId("uploadCertificateForm").addEventListener("submit", (event) => void uploadCertificate(event).catch((error) => showToast(error.message, "bad")));

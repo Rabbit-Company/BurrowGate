@@ -1,6 +1,7 @@
 import { config } from "../config.ts";
 import { db } from "./client.ts";
 import type {
+	IpRuleAction,
 	AccessSessionRecord,
 	AcmeAccountRecord,
 	AcmeHttpChallengeRecord,
@@ -60,7 +61,7 @@ export interface RuleQuery {
 	page: number;
 	pageSize: number;
 	search?: string;
-	action?: "allow" | "block" | "challenge";
+	action?: IpRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
 	sortDirection: SortDirection;
@@ -146,11 +147,11 @@ export const repository = {
 		return (await db`SELECT * FROM sites ORDER BY enabled DESC, name ASC`) as SiteRecord[];
 	},
 	async insertSite(site: SiteRecord): Promise<void> {
-		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,created_at,updated_at)
-      VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.created_at},${site.updated_at})`;
+		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,created_at,updated_at)
+      VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.created_at},${site.updated_at})`;
 	},
 	async updateSite(site: SiteRecord): Promise<void> {
-		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, updated_at=${site.updated_at} WHERE id=${site.id}`;
 	},
 	async routePolicies(siteId: string): Promise<RoutePolicyRecord[]> {
 		return (await db`SELECT * FROM route_policies WHERE site_id=${siteId} ORDER BY priority DESC, created_at ASC`) as RoutePolicyRecord[];

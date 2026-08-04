@@ -1296,3 +1296,85 @@ form.grid label {
 		width: 100%;
 	}
 }
+.error-response-editor {
+	display: grid;
+	gap: 16px;
+	padding: 18px;
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	background: var(--surface-2);
+}
+.error-response-editor > label {
+	display: grid;
+	gap: 7px;
+	color: #94a3b8;
+	font-size: 12px;
+}
+.error-response-heading,
+.compact-heading {
+	padding: 0;
+}
+.error-response-settings {
+	display: grid;
+	gap: 14px;
+}
+.error-template-input {
+	min-height: 420px;
+}
+.placeholder-list {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 10px;
+}
+.placeholder-item {
+	display: grid;
+	gap: 3px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: rgba(11, 18, 32, 0.5);
+}
+.placeholder-item code {
+	color: #c4b5fd;
+	font-size: 12px;
+}
+.placeholder-item small {
+	color: var(--muted);
+	line-height: 1.4;
+}
+.json-field-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 9px;
+}
+.json-field-option {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	padding: 11px 12px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: rgba(11, 18, 32, 0.5);
+	cursor: pointer;
+}
+.json-field-option input {
+	margin-top: 3px;
+	width: 16px;
+	height: 16px;
+	accent-color: #7c3aed;
+}
+.json-field-option span {
+	display: grid;
+	gap: 3px;
+}
+.json-field-option small {
+	color: var(--muted);
+	line-height: 1.4;
+}
+@media (max-width: 720px) {
+	.placeholder-list,
+	.json-field-grid {
+		grid-template-columns: 1fr;
+	}
+}

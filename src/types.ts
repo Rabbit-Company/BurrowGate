@@ -8,6 +8,7 @@ export type RateLimitAlgorithm = "fixed-window" | "sliding-window" | "token-buck
 export type RateLimitKeyMode = "ip" | "session-or-ip" | "header-or-ip";
 export type RateLimitScope = "policy" | "path" | "method-path";
 
+export type ErrorResponseMode = "html" | "json";
 export type TlsMode = "disabled" | "uploaded" | "letsencrypt";
 export type CertificateSource = "uploaded" | "letsencrypt";
 export type CertificateStatus = "pending" | "active" | "renewal-failed" | "expired" | "invalid";
@@ -90,6 +91,9 @@ export interface SiteRecord {
 	event_retention_days: number;
 	default_ip_action: DefaultNetworkAction;
 	default_country_action: DefaultNetworkAction;
+	error_response_mode: ErrorResponseMode;
+	error_html_template: string;
+	error_json_fields_json: string;
 	created_at: number;
 	updated_at: number;
 }

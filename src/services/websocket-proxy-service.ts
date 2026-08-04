@@ -6,6 +6,7 @@ import { jsonResponse, normalizeHost, requestHost } from "../utils/http.ts";
 import { createFlow } from "./challenge-service.ts";
 import { siteHostname } from "./certificate-service.ts";
 import { recordEvent } from "./event-service.ts";
+import { siteErrorResponse } from "./error-response-service.ts";
 import { evaluateIp } from "./ip-rule-service.ts";
 import { upstreamHeaders, upstreamUrl, type OriginAccessStatus } from "./proxy-service.ts";
 import { resolveRoutePolicy } from "./route-policy-service.ts";
@@ -306,7 +307,13 @@ export async function handleWebSocketUpgrade(
 
 	if (!config.websocket.enabled) {
 		await recordEvent({ ...eventBase, sessionId: null, status: 501, decision: "websocket-disabled", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "WebSocket proxying is disabled" }, 501);
+		return siteErrorResponse(site, request, {
+			status: 501,
+			code: "websocket_disabled",
+			error: "WebSocket proxying is disabled",
+			clientIp: ip,
+			reason: "This BurrowGate instance is not configured to proxy WebSocket connections.",
+		});
 	}
 
 	if (transport === "http" && config.https.enabled) {
@@ -325,13 +332,26 @@ export async function handleWebSocketUpgrade(
 	eventBase.countryCode = ipRule.countryCode;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "Access blocked by BurrowGate", reason: ipRule.reason }, 403);
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "network_blocked",
+			error: "Access blocked by BurrowGate",
+			clientIp: ip,
+			reason: ipRule.reason || "This request was blocked by network policy.",
+		});
 	}
 
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);
 	if (route.accessMode === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "route-blocked", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "This WebSocket route is blocked by BurrowGate", routePolicy: route.policy?.name }, 403);
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "route_blocked",
+			error: "This WebSocket route is blocked by BurrowGate",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This WebSocket route is not available.",
+		});
 	}
 
 	const needsSession = route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
@@ -345,7 +365,20 @@ export async function handleWebSocketUpgrade(
 			decision: "rate-limited",
 			latencyMs: Math.round(performance.now() - started),
 		});
-		return rateLimit.response!;
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 429,
+				code: "rate_limited",
+				error: "Too many requests",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "The WebSocket connection rate limit was exceeded.",
+				retryAfterSeconds: rateLimit.retryAfterSeconds,
+			},
+			rateLimit.headers,
+		);
 	}
 
 	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
@@ -354,10 +387,22 @@ export async function handleWebSocketUpgrade(
 		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
 		const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
 		await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "Verification is required before opening this WebSocket", verificationUrl }, 428, {
-			...Object.fromEntries(rateLimit.headers),
-			"burrowgate-verification": verificationUrl,
-		});
+		const headers = new Headers(rateLimit.headers);
+		headers.set("burrowgate-verification", verificationUrl);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 428,
+				code: "verification_required",
+				error: "Verification is required before opening this WebSocket",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "Complete verification before opening this WebSocket again.",
+				verificationUrl,
+			},
+			headers,
+		);
 	}
 
 	const accessStatus: OriginAccessStatus = ipRule.action === "allow" ? "allowlisted" : effectiveAccess === "bypass" ? "bypass" : "verified";
@@ -412,7 +457,19 @@ export async function handleWebSocketUpgrade(
 				decision: "websocket-upgrade-failed",
 				latencyMs: Math.round(performance.now() - started),
 			});
-			return jsonResponse({ error: "Invalid WebSocket upgrade request" }, 400, rateLimit.headers);
+			return siteErrorResponse(
+				site,
+				request,
+				{
+					status: 400,
+					code: "websocket_upgrade_invalid",
+					error: "Invalid WebSocket upgrade request",
+					clientIp: ip,
+					routePolicy: route.policy?.name,
+					reason: "The downstream connection could not be upgraded to WebSocket.",
+				},
+				rateLimit.headers,
+			);
 		}
 
 		const decision = accessStatus === "allowlisted" ? "websocket-allowlisted" : accessStatus === "bypass" ? "websocket-unprotected" : "websocket-proxied";
@@ -427,7 +484,19 @@ export async function handleWebSocketUpgrade(
 			latencyMs: Math.round(performance.now() - started),
 		});
 		console.error(`WebSocket proxy failed for ${target}`, error);
-		return jsonResponse({ error: "Protected WebSocket origin is unavailable" }, 502, rateLimit.headers);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 502,
+				code: "websocket_origin_unavailable",
+				error: "Protected WebSocket origin is unavailable",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "BurrowGate could not connect to the configured WebSocket origin.",
+			},
+			rateLimit.headers,
+		);
 	}
 }
 

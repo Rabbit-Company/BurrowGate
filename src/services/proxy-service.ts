@@ -5,6 +5,7 @@ export type OriginAccessStatus = "verified" | "allowlisted" | "bypass";
 import { removeCookieFromHeader } from "../utils/cookies.ts";
 import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders } from "../utils/http.ts";
+import { siteErrorResponse } from "./error-response-service.ts";
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
 	const incoming = new URL(request.url);
@@ -118,10 +119,18 @@ export async function proxyRequest(
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
 		// dispatch. This is only a defensive response if a custom listener calls
 		// the HTTP proxy directly.
-		return new Response("WebSocket upgrade must be handled by the BurrowGate listener.", {
-			status: 426,
-			headers: { upgrade: "websocket" },
-		});
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 426,
+				code: "websocket_upgrade_required",
+				error: "WebSocket upgrade required",
+				clientIp: ip,
+				reason: "WebSocket upgrades must be handled by the BurrowGate listener.",
+			},
+			{ upgrade: "websocket" },
+		);
 	}
 
 	const incoming = new URL(request.url);

@@ -11,6 +11,7 @@ import { registerAcmeRoutes } from "./routes/acme-routes.ts";
 import { registerChallengeRoutes } from "./routes/challenge-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
+import { siteErrorResponse } from "./services/error-response-service.ts";
 import { evaluateIp } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
@@ -108,13 +109,26 @@ async function gateway(ctx: any): Promise<Response> {
 	eventBase.countryCode = ipRule.countryCode;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "Access blocked by BurrowGate", reason: ipRule.reason }, 403);
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "network_blocked",
+			error: "Access blocked by BurrowGate",
+			clientIp: ip,
+			reason: ipRule.reason || "This request was blocked by network policy.",
+		});
 	}
 
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);
 	if (route.accessMode === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "route-blocked", latencyMs: Math.round(performance.now() - started) });
-		return jsonResponse({ error: "This route is blocked by BurrowGate", routePolicy: route.policy?.name }, 403);
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "route_blocked",
+			error: "This route is blocked by BurrowGate",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This route is not available.",
+		});
 	}
 
 	// A session is required for challenge-protected routes and can optionally be
@@ -131,7 +145,20 @@ async function gateway(ctx: any): Promise<Response> {
 			decision: "rate-limited",
 			latencyMs: Math.round(performance.now() - started),
 		});
-		return rateLimit.response!;
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 429,
+				code: "rate_limited",
+				error: "Too many requests",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "The request rate limit for this route was exceeded.",
+				retryAfterSeconds: rateLimit.retryAfterSeconds,
+			},
+			rateLimit.headers,
+		);
 	}
 
 	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
@@ -142,9 +169,21 @@ async function gateway(ctx: any): Promise<Response> {
 			const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
 			const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
 			await recordEvent({ ...eventBase, sessionId: null, status: 428, decision: "challenge-required", latencyMs: Math.round(performance.now() - started) });
-			return appendRateLimitHeaders(
-				jsonResponse({ error: "Verification required before replaying this request", verificationUrl }, 428, { "burrowgate-verification": verificationUrl }),
-				rateLimit.headers,
+			const headers = new Headers(rateLimit.headers);
+			headers.set("burrowgate-verification", verificationUrl);
+			return siteErrorResponse(
+				site,
+				request,
+				{
+					status: 428,
+					code: "verification_required",
+					error: "Verification required before replaying this request",
+					clientIp: ip,
+					routePolicy: route.policy?.name,
+					reason: "Complete verification before sending this request again.",
+					verificationUrl,
+				},
+				headers,
 			);
 		}
 		const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
@@ -177,7 +216,19 @@ async function gateway(ctx: any): Promise<Response> {
 			latencyMs: Math.round(performance.now() - started),
 		});
 		console.error("Origin proxy failed", error);
-		return appendRateLimitHeaders(jsonResponse({ error: "Protected origin is unavailable" }, 502), rateLimit.headers);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 502,
+				code: "origin_unavailable",
+				error: "Protected origin is unavailable",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "BurrowGate could not connect to the configured origin.",
+			},
+			rateLimit.headers,
+		);
 	}
 }
 

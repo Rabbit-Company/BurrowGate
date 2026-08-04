@@ -1,10 +1,18 @@
 import { challengeRegistry } from "../challenges/index.ts";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { ChallengePolicyStep, DefaultNetworkAction, SiteAccessMode, SiteRecord } from "../types.ts";
+import type { ChallengePolicyStep, DefaultNetworkAction, ErrorResponseMode, SiteAccessMode, SiteRecord } from "../types.ts";
 import { randomId, randomToken } from "../utils/crypto.ts";
 import { normalizeHost } from "../utils/http.ts";
 import { assertTlsHostnameAvailable, certificateCoversHostname, siteHostname } from "./certificate-service.ts";
+import {
+	DEFAULT_ERROR_HTML_TEMPLATE,
+	DEFAULT_ERROR_JSON_FIELDS,
+	validateErrorHtmlTemplate,
+	validateErrorJsonFields,
+	validateErrorResponseMode,
+	type ErrorJsonField,
+} from "./error-response-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -18,6 +26,9 @@ export interface SiteInput {
 	eventRetentionDays?: unknown;
 	defaultIpAction?: unknown;
 	defaultCountryAction?: unknown;
+	errorResponseMode?: unknown;
+	errorHtmlTemplate?: unknown;
+	errorJsonFields?: unknown;
 }
 
 export interface SiteView {
@@ -32,6 +43,11 @@ export interface SiteView {
 	eventRetentionDays: number;
 	defaultIpAction: DefaultNetworkAction;
 	defaultCountryAction: DefaultNetworkAction;
+	errorResponse: {
+		mode: ErrorResponseMode;
+		htmlTemplate: string;
+		jsonFields: ErrorJsonField[];
+	};
 	createdAt: number;
 	updatedAt: number;
 }
@@ -152,6 +168,14 @@ function policyFromRecord(site: SiteRecord): ChallengePolicyStep[] {
 	return parseChallengePolicy(site.challenge_policy_json);
 }
 
+function errorJsonFieldsFromRecord(site: SiteRecord): ErrorJsonField[] {
+	try {
+		return validateErrorJsonFields(site.error_json_fields_json || undefined);
+	} catch {
+		return [...DEFAULT_ERROR_JSON_FIELDS];
+	}
+}
+
 export function siteView(site: SiteRecord): SiteView {
 	return {
 		id: site.id,
@@ -165,6 +189,11 @@ export function siteView(site: SiteRecord): SiteView {
 		eventRetentionDays: Number(site.event_retention_days ?? config.eventRetentionDays),
 		defaultIpAction: site.default_ip_action ?? "inherit",
 		defaultCountryAction: site.default_country_action ?? "inherit",
+		errorResponse: {
+			mode: site.error_response_mode ?? "json",
+			htmlTemplate: site.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE,
+			jsonFields: errorJsonFieldsFromRecord(site),
+		},
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -191,6 +220,9 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, config.eventRetentionDays),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, "inherit"),
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, "inherit"),
+		error_response_mode: validateErrorResponseMode(input.errorResponseMode, "json"),
+		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate),
+		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
 	};
@@ -219,6 +251,9 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, existing.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing.default_ip_action ?? "inherit"),
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing.default_country_action ?? "inherit"),
+		error_response_mode: validateErrorResponseMode(input.errorResponseMode, existing.error_response_mode ?? "json"),
+		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate, existing.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE),
+		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};
 	const tlsSettings = await repository.ensureTlsSettings(id);

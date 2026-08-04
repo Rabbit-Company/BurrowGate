@@ -20,6 +20,7 @@ export interface RouteRateLimitResult {
 	limited: boolean;
 	headers: Headers;
 	response: Response | null;
+	retryAfterSeconds: number | null;
 }
 
 const limiters = new Map<string, CachedLimiter>();
@@ -112,22 +113,24 @@ export async function applyRouteRateLimit(
 	session: AccessSessionRecord | null,
 ): Promise<RouteRateLimitResult> {
 	if (!policy || policy.rate_limit_enabled !== 1) {
-		return { limited: false, headers: new Headers(), response: null };
+		return { limited: false, headers: new Headers(), response: null, retryAfterSeconds: null };
 	}
 
 	const result = limiterFor(policy).check(endpointFor(policy, request), await identifierFor(policy, request, ip, session)) as LimiterResult;
 	const headers = rateHeaders(result, policy.rate_limit_algorithm);
-	if (!result.limited) return { limited: false, headers, response: null };
+	if (!result.limited) return { limited: false, headers, response: null, retryAfterSeconds: null };
 
+	const retryAfterSeconds = Math.max(1, Math.ceil((result.reset - Date.now()) / 1_000));
 	return {
 		limited: true,
 		headers,
+		retryAfterSeconds,
 		response: jsonResponse(
 			{
 				error: "Too many requests",
 				policyId: policy.id,
 				policyName: policy.name,
-				retryAfterSeconds: Math.max(1, Math.ceil((result.reset - Date.now()) / 1_000)),
+				retryAfterSeconds,
 			},
 			429,
 			headers,
