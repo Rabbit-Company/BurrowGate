@@ -86,31 +86,32 @@ docker compose up -d --build --force-recreate
 
 ## Configuration
 
-| Variable                            | Default                              | Description                                              |
-| ----------------------------------- | ------------------------------------ | -------------------------------------------------------- |
-| `BG_ENV`                            | `production`                         | Runtime environment                                      |
-| `BG_HOST`                           | `0.0.0.0`                            | Listener address                                         |
-| `BG_HTTP_ENABLED`                   | `true`                               | Enable the HTTP listener                                 |
-| `BG_HTTP_PORT`                      | `80`                                 | Internal HTTP port                                       |
-| `BG_HTTP_PUBLIC_PORT`               | `80`                                 | Public HTTP port used in redirects and ACME validation   |
-| `BG_HTTPS_ENABLED`                  | `true`                               | Enable the HTTPS listener                                |
-| `BG_HTTPS_PORT`                     | `443`                                | Internal HTTPS port                                      |
-| `BG_HTTPS_PUBLIC_PORT`              | `443`                                | Public HTTPS port used in redirects                      |
-| `DATABASE_URL`                      | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                     |
-| `BG_ADMIN_USERNAME`                 | `admin`                              | Dashboard username                                       |
-| `BG_ADMIN_PASSWORD`                 | generated                            | Dashboard password                                       |
-| `BG_COOKIE_SECURE`                  | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP |
-| `BG_MASTER_KEY`                     | generated                            | Encrypts certificate and ACME private keys               |
-| `BG_EVENT_RETENTION_DAYS`           | `7`                                  | Default retention assigned to new sites                  |
-| `BG_GEOIP_ENABLED`                  | `true`                               | Enable country-level GeoIP enrichment                    |
-| `BG_GEOIP_DATABASE_PATH`            | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                              |
-| `BG_GEOIP_CACHE_ENTRIES`            | `4096`                               | Maximum GeoIP reader cache entries                       |
-| `BG_GEOIP_RETRY_SECONDS`            | `30`                                 | Retry interval when the MMDB file is not available yet   |
-| `BG_DEFAULT_POW_DIFFICULTY`         | `18`                                 | Default SHA-256 challenge difficulty                     |
-| `BG_WEBSOCKET_ENABLED`              | `true`                               | Enable WebSocket proxying                                |
-| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | `120`                                | WebSocket idle timeout from 10 to 960 seconds            |
-| `BG_ACME_DIRECTORY_URL`             | Let's Encrypt production             | ACME directory URL                                       |
-| `BG_ACME_EMAIL`                     | empty                                | Default ACME contact email                               |
+| Variable                            | Default                              | Description                                                                                |
+| ----------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `BG_ENV`                            | `production`                         | Runtime environment                                                                        |
+| `BG_HOST`                           | `0.0.0.0`                            | Listener address                                                                           |
+| `BG_HTTP_ENABLED`                   | `true`                               | Enable the HTTP listener                                                                   |
+| `BG_HTTP_PORT`                      | `80`                                 | Internal HTTP port                                                                         |
+| `BG_HTTP_PUBLIC_PORT`               | `80`                                 | Public HTTP port used in redirects and ACME validation                                     |
+| `BG_HTTPS_ENABLED`                  | `true`                               | Enable the HTTPS listener                                                                  |
+| `BG_HTTPS_PORT`                     | `443`                                | Internal HTTPS port                                                                        |
+| `BG_HTTPS_PUBLIC_PORT`              | `443`                                | Public HTTPS port used in redirects                                                        |
+| `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`  | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload |
+| `DATABASE_URL`                      | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                       |
+| `BG_ADMIN_USERNAME`                 | `admin`                              | Dashboard username                                                                         |
+| `BG_ADMIN_PASSWORD`                 | generated                            | Dashboard password                                                                         |
+| `BG_COOKIE_SECURE`                  | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
+| `BG_MASTER_KEY`                     | generated                            | Encrypts certificate and ACME private keys                                                 |
+| `BG_EVENT_RETENTION_DAYS`           | `7`                                  | Default retention assigned to new sites                                                    |
+| `BG_GEOIP_ENABLED`                  | `true`                               | Enable country-level GeoIP enrichment                                                      |
+| `BG_GEOIP_DATABASE_PATH`            | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
+| `BG_GEOIP_CACHE_ENTRIES`            | `4096`                               | Maximum GeoIP reader cache entries                                                         |
+| `BG_GEOIP_RETRY_SECONDS`            | `30`                                 | Retry interval when the MMDB file is not available yet                                     |
+| `BG_DEFAULT_POW_DIFFICULTY`         | `18`                                 | Default SHA-256 challenge difficulty                                                       |
+| `BG_WEBSOCKET_ENABLED`              | `true`                               | Enable WebSocket proxying                                                                  |
+| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
+| `BG_ACME_DIRECTORY_URL`             | Let's Encrypt production             | ACME directory URL                                                                         |
+| `BG_ACME_EMAIL`                     | empty                                | Default ACME contact email                                                                 |
 
 See [`.env.example`](.env.example) for every available setting.
 
@@ -357,7 +358,6 @@ The project uses `.editorconfig` and `.prettierrc.json` with tabs and a width of
 - ACME supports HTTP-01 only. Wildcard certificates require DNS-01 support.
 - Route rate-limit counters are stored in memory and reset when the process restarts.
 - Multiple gateway nodes do not share rate-limit counters yet.
-- Rebuilding the SNI certificate list briefly recreates the HTTPS listener.
 - Detailed request events are stored in SQL. Very high traffic deployments should use an external log store.
 
 ## License

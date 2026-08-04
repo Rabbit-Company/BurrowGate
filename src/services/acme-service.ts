@@ -96,6 +96,7 @@ export async function issueLetsEncryptCertificate(
 	const attemptedAt = Date.now();
 	const existingCertificate = await repository.certificateBySite(site.id);
 	const settings = await repository.ensureTlsSettings(site.id);
+	let storedCertificateId: string | null = null;
 	const email = (input.email ?? settings.acme_email ?? config.acme.email)?.trim();
 	const directoryUrl = (input.directoryUrl ?? settings.acme_directory_url ?? config.acme.directoryUrl)?.trim();
 	try {
@@ -161,6 +162,7 @@ export async function issueLetsEncryptCertificate(
 			privateKeyPem: text(certificateKey),
 			lastAttemptAt: attemptedAt,
 		});
+		storedCertificateId = certificate.id;
 		await updateTlsSettings(site, {
 			mode: "letsencrypt",
 			forceHttps: input.forceHttps ?? settings.force_https === 1,
@@ -172,17 +174,26 @@ export async function issueLetsEncryptCertificate(
 			expiresAt: certificate.expires_at,
 			issuer: certificate.issuer,
 		});
-		await requestTlsReload();
+		try {
+			await requestTlsReload();
+		} catch (error) {
+			const message = `Certificate was stored, but HTTPS listener activation failed: ${errorMessage(error)}`;
+			await repository.updateCertificateAttempt(site.id, Date.now(), message);
+			await recordCertificateEvent(site.id, certificate.id, "error", "HTTPS listener activation failed", { error: message });
+			throw new Error(message, { cause: error });
+		}
 	} catch (error) {
-		const message = errorMessage(error);
-		await repository.updateCertificateAttempt(site.id, attemptedAt, message);
-		await recordCertificateEvent(
-			site.id,
-			existingCertificate?.id ?? null,
-			"error",
-			input.renewal ? "Certificate renewal failed" : "Certificate issuance failed",
-			{ error: message },
-		);
+		if (storedCertificateId === null) {
+			const message = errorMessage(error);
+			await repository.updateCertificateAttempt(site.id, attemptedAt, message);
+			await recordCertificateEvent(
+				site.id,
+				existingCertificate?.id ?? null,
+				"error",
+				input.renewal ? "Certificate renewal failed" : "Certificate issuance failed",
+				{ error: message },
+			);
+		}
 		throw error;
 	} finally {
 		await repository.deleteAcmeChallengesForSite(site.id).catch(() => undefined);

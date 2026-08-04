@@ -211,13 +211,17 @@ async function openUpstreamWebSocket(target: URL, headers: Headers, request: Req
 		const onAbort = (): void => {
 			try {
 				socket.close();
-			} catch {}
+			} catch {
+				/* no-op */
+			}
 			finish(new Error("Downstream WebSocket request was aborted"));
 		};
 		const timer = setTimeout(() => {
 			try {
 				socket.close();
-			} catch {}
+			} catch {
+				/* no-op */
+			}
 			finish(new Error(`WebSocket origin handshake timed out after ${config.websocket.connectTimeoutMs} ms`));
 		}, config.websocket.connectTimeoutMs);
 
@@ -365,13 +369,17 @@ export async function handleWebSocketUpgrade(
 		if (offeredProtocols.length > 0 && !upstream.protocol) {
 			try {
 				upstream.close(1000, "Upstream did not select a WebSocket subprotocol");
-			} catch {}
+			} catch {
+				/* no-op */
+			}
 			throw new Error(`WebSocket origin ${target.host} did not select any offered subprotocol`);
 		}
 		if (upstream.protocol && !offeredProtocols.includes(upstream.protocol)) {
 			try {
 				upstream.close(1002, "Invalid upstream WebSocket subprotocol");
-			} catch {}
+			} catch {
+				/* no-op */
+			}
 			throw new Error(`WebSocket origin selected an unoffered subprotocol: ${upstream.protocol}`);
 		}
 

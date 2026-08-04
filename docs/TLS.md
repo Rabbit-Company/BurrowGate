@@ -18,6 +18,7 @@ Ports may be translated by Docker or a router. For example, Compose can expose p
 ```env
 BG_HTTP_PUBLIC_PORT=80
 BG_HTTPS_PUBLIC_PORT=443
+BG_TLS_LISTENER_DRAIN_TIMEOUT_MS=5000
 ```
 
 HTTP-01 validation always arrives at the public server on port 80. BurrowGate's internal HTTP port can differ when NAT or Docker forwards public port 80 to it.
@@ -50,7 +51,7 @@ Open **Sites**, edit a site, then use **TLS certificate -> Uploaded certificate*
 - it covers the site's public hostname;
 - the supplied private key matches the certificate public key.
 
-Activating or replacing a certificate rebuilds the HTTPS SNI listener. Two enabled sites may use the same hostname on different ports for plain HTTP development, but TLS cannot be enabled for both because SNI selects by hostname rather than port. BurrowGate rejects that ambiguous configuration.
+Activating or replacing a certificate starts a replacement HTTPS SNI listener with `SO_REUSEPORT` before the current listener is drained. The old listener stops accepting new connections only after the replacement has bound successfully. Existing requests are allowed to finish during the configured drain period, while long-lived connections are closed when the drain timeout expires. Two enabled sites may use the same hostname on different ports for plain HTTP development, but TLS cannot be enabled for both because SNI selects by hostname rather than port. BurrowGate rejects that ambiguous configuration.
 
 If a site already has a certificate, changing its public hostname is allowed only when the existing certificate covers the new hostname. Otherwise, remove or replace the certificate first.
 
@@ -79,7 +80,7 @@ BurrowGate stores `next_renewal_at` for ACME-managed certificates. Maintenance c
 
 - HTTP-01 supports public DNS hostnames, not `localhost`, `.local` names, IP literals, or wildcard names.
 - DNS-01 provider plugins are not implemented yet.
-- Rebuilding the HTTPS listener can briefly interrupt new TLS connections.
+- If a replacement listener cannot bind or load its TLS material, BurrowGate keeps the existing HTTPS listener active and records the activation failure.
 - Upstream WebSocket proxying remains a separate gateway feature.
 
 ## HTTP session cookies

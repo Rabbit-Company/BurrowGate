@@ -64,6 +64,7 @@ export const config = {
 		enabled: envBoolean("BG_HTTPS_ENABLED", true),
 		port: envNumber("BG_HTTPS_PORT", 443, 1, 65535),
 		publicPort: envNumber("BG_HTTPS_PUBLIC_PORT", 443, 1, 65535),
+		listenerDrainTimeoutMs: envNumber("BG_TLS_LISTENER_DRAIN_TIMEOUT_MS", 5_000, 100, 60_000),
 	},
 	databaseUrl: process.env.DATABASE_URL ?? "sqlite://./data/burrowgate.db",
 	proxyPreset: proxyPreset(process.env.BG_PROXY_PRESET),
