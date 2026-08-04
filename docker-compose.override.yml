@@ -1,6 +1,7 @@
 services:
   burrowgate:
     build: .
+    container_name: burrowgate
     restart: unless-stopped
     init: true
     ports:
@@ -12,8 +13,7 @@ services:
     cap_add:
       - NET_BIND_SERVICE
     volumes:
-      - burrowgate-data:/app/data
-      - burrowgate-geoip:/app/data/geoip:ro
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "bun", "-e", "const response = await fetch('http://127.0.0.1/_burrowgate/health'); if (!response.ok) process.exit(1)"]
       interval: 30s
@@ -22,17 +22,14 @@ services:
       retries: 3
 
   geoipupdate:
-    image: ghcr.io/maxmind/geoipupdate:v8.0.0
-    profiles: ["geoip"]
+    image: ghcr.io/maxmind/geoipupdate
+    container_name: geoipupdate
     restart: unless-stopped
+    profiles: ["geoip"]
     environment:
       GEOIPUPDATE_ACCOUNT_ID: "${MAXMIND_ACCOUNT_ID:-}"
       GEOIPUPDATE_LICENSE_KEY: "${MAXMIND_LICENSE_KEY:-}"
       GEOIPUPDATE_EDITION_IDS: GeoLite2-Country
       GEOIPUPDATE_FREQUENCY: "${GEOIPUPDATE_FREQUENCY:-72}"
     volumes:
-      - burrowgate-geoip:/usr/share/GeoIP
-
-volumes:
-  burrowgate-data:
-  burrowgate-geoip:
+      - ./data/geoip:/usr/share/GeoIP
