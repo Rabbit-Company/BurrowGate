@@ -34,6 +34,7 @@ import { TlsListenerManager } from "./services/tls-listener-service.ts";
 import type { GatewayState } from "./types.ts";
 import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
+import { startBandwidthMetrics } from "./services/bandwidth-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -42,6 +43,7 @@ startGeoIpRetry();
 await seedDefaultSite();
 await runMaintenance();
 startMaintenance();
+startBandwidthMetrics();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
 	Logger.warn(
@@ -268,7 +270,16 @@ async function gateway(ctx: any): Promise<Response> {
 				: "proxied";
 
 	try {
-		let response = await proxyRequest(request, site, ip, session, accessStatus, accessUser?.username ?? null, accessSettings.send_username_to_upstream === 1);
+		let response = await proxyRequest(
+			request,
+			site,
+			ip,
+			session,
+			accessStatus,
+			accessUser?.username ?? null,
+			accessSettings.send_username_to_upstream === 1,
+			eventBase.countryCode ?? null,
+		);
 		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
 			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));
 		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {

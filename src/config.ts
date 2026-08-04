@@ -83,6 +83,10 @@ export const config = {
 	challengeMinDisplayMs: envNumber("BG_CHALLENGE_MIN_DISPLAY_MS", 0, 0, 86_400_000),
 	maxChallengeAttempts: envNumber("BG_MAX_CHALLENGE_ATTEMPTS", 8, 1, 100),
 	eventRetentionDays: envNumber("BG_EVENT_RETENTION_DAYS", 7, 1, 365),
+	bandwidth: {
+		flushIntervalMs: envNumber("BG_BANDWIDTH_FLUSH_INTERVAL_MS", 10_000, 1_000, 300_000),
+		maxPendingKeys: envNumber("BG_BANDWIDTH_MAX_PENDING_KEYS", 50_000, 100, 1_000_000),
+	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
 		databasePath: process.env.BG_GEOIP_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-Country.mmdb`,

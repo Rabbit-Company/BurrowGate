@@ -18,6 +18,7 @@ import type {
 	SiteRecord,
 	SiteAccessSettingsRecord,
 	SiteTlsSettingsRecord,
+	BandwidthMinuteRecord,
 } from "../types.ts";
 
 export type SortDirection = "asc" | "desc";
@@ -69,6 +70,38 @@ export interface RuleQuery {
 	sortDirection: SortDirection;
 }
 
+export interface BandwidthIpQuery {
+	siteId: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	countryCode?: string;
+	protocol?: "http" | "websocket";
+	since: number;
+	until: number;
+	sortBy:
+		| "ip"
+		| "country_code"
+		| "client_received_bytes"
+		| "client_sent_bytes"
+		| "upstream_sent_bytes"
+		| "upstream_received_bytes"
+		| "client_total_bytes"
+		| "upstream_total_bytes";
+	sortDirection: SortDirection;
+}
+
+export interface BandwidthIpRow {
+	ip: string;
+	country_code: string;
+	client_received_bytes: number | string;
+	client_sent_bytes: number | string;
+	upstream_sent_bytes: number | string;
+	upstream_received_bytes: number | string;
+	client_total_bytes: number | string;
+	upstream_total_bytes: number | string;
+}
+
 export interface TrafficMetricPoint {
 	bucket: number;
 	requests: number;
@@ -96,7 +129,7 @@ export function fillTrafficMetricSeries(rows: TrafficMetricPoint[], startBucket:
 	return completed;
 }
 
-function metricBucketExpression(column: "created_at" | "expires_at" | "revoked_at", bucketMs: number) {
+function metricBucketExpression(column: "created_at" | "expires_at" | "revoked_at" | "bucket_start", bucketMs: number) {
 	const safeColumn = db.unsafe(column);
 	return config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://")
 		? db`FLOOR(${safeColumn} / ${bucketMs})`
@@ -395,6 +428,31 @@ export const repository = {
 	async insertEvent(event: RequestEventRecord): Promise<void> {
 		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.created_at})`;
 	},
+	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
+		if (records.length === 0) return;
+		const mysql = config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://");
+		await db.begin(async (transaction) => {
+			for (const record of records) {
+				if (mysql) {
+					await transaction`INSERT INTO bandwidth_minutes (site_id,bucket_start,ip,country_code,protocol,client_received_bytes,client_sent_bytes,upstream_sent_bytes,upstream_received_bytes)
+						VALUES (${record.site_id},${record.bucket_start},${record.ip},${record.country_code},${record.protocol},${record.client_received_bytes},${record.client_sent_bytes},${record.upstream_sent_bytes},${record.upstream_received_bytes})
+						ON DUPLICATE KEY UPDATE
+						client_received_bytes=client_received_bytes+${record.client_received_bytes},
+						client_sent_bytes=client_sent_bytes+${record.client_sent_bytes},
+						upstream_sent_bytes=upstream_sent_bytes+${record.upstream_sent_bytes},
+						upstream_received_bytes=upstream_received_bytes+${record.upstream_received_bytes}`;
+				} else {
+					await transaction`INSERT INTO bandwidth_minutes (site_id,bucket_start,ip,country_code,protocol,client_received_bytes,client_sent_bytes,upstream_sent_bytes,upstream_received_bytes)
+						VALUES (${record.site_id},${record.bucket_start},${record.ip},${record.country_code},${record.protocol},${record.client_received_bytes},${record.client_sent_bytes},${record.upstream_sent_bytes},${record.upstream_received_bytes})
+						ON CONFLICT (site_id,bucket_start,ip,country_code,protocol) DO UPDATE SET
+						client_received_bytes=bandwidth_minutes.client_received_bytes+EXCLUDED.client_received_bytes,
+						client_sent_bytes=bandwidth_minutes.client_sent_bytes+EXCLUDED.client_sent_bytes,
+						upstream_sent_bytes=bandwidth_minutes.upstream_sent_bytes+EXCLUDED.upstream_sent_bytes,
+						upstream_received_bytes=bandwidth_minutes.upstream_received_bytes+EXCLUDED.upstream_received_bytes`;
+				}
+			}
+		});
+	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
 		const pattern = searchPattern(query.search);
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
@@ -489,6 +547,103 @@ export const repository = {
 			decisions: decisions.map((row) => ({ decision: row.decision, count: toNumber(row.count) })),
 			methods: methods.map((row) => ({ method: row.method, count: toNumber(row.count) })),
 		};
+	},
+	async bandwidthMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; clientUpload: number; clientDownload: number; upstreamUpload: number; upstreamDownload: number }>;
+		protocols: Array<{ protocol: string; clientBytes: number; upstreamBytes: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const bucket = metricBucketExpression("bucket_start", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        COALESCE(SUM(client_received_bytes),0) AS client_upload,
+        COALESCE(SUM(client_sent_bytes),0) AS client_download,
+        COALESCE(SUM(upstream_sent_bytes),0) AS upstream_upload,
+        COALESCE(SUM(upstream_received_bytes),0) AS upstream_download
+      FROM bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			client_upload: number | string;
+			client_download: number | string;
+			upstream_upload: number | string;
+			upstream_download: number | string;
+		}>;
+		const protocolRows = (await db`
+      SELECT protocol,
+        COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS client_bytes,
+        COALESCE(SUM(upstream_sent_bytes + upstream_received_bytes),0) AS upstream_bytes
+      FROM bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
+      GROUP BY protocol
+      ORDER BY client_bytes DESC
+    `) as Array<{ protocol: string; client_bytes: number | string; upstream_bytes: number | string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			clientUpload: 0,
+			clientDownload: 0,
+			upstreamUpload: 0,
+			upstreamDownload: 0,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.clientUpload = toNumber(row.client_upload);
+			point.clientDownload = toNumber(row.client_download);
+			point.upstreamUpload = toNumber(row.upstream_upload);
+			point.upstreamDownload = toNumber(row.upstream_download);
+		}
+		return {
+			series: points,
+			protocols: protocolRows.map((row) => ({
+				protocol: row.protocol,
+				clientBytes: toNumber(row.client_bytes),
+				upstreamBytes: toNumber(row.upstream_bytes),
+			})),
+		};
+	},
+	async pagedBandwidthIps(query: BandwidthIpQuery): Promise<PageResult<BandwidthIpRow>> {
+		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
+		const pattern = searchPattern(query.search);
+		const searchFilter = pattern ? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(country_code) LIKE ${pattern})` : db``;
+		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
+		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM (
+        SELECT ip, country_code
+        FROM bandwidth_minutes
+        WHERE site_id=${query.siteId} AND bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
+          AND ip <> '__other__' ${searchFilter} ${countryFilter} ${protocolFilter}
+        GROUP BY ip, country_code
+      ) AS bandwidth_ips
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT ip, country_code,
+        COALESCE(SUM(client_received_bytes),0) AS client_received_bytes,
+        COALESCE(SUM(client_sent_bytes),0) AS client_sent_bytes,
+        COALESCE(SUM(upstream_sent_bytes),0) AS upstream_sent_bytes,
+        COALESCE(SUM(upstream_received_bytes),0) AS upstream_received_bytes,
+        COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS client_total_bytes,
+        COALESCE(SUM(upstream_sent_bytes + upstream_received_bytes),0) AS upstream_total_bytes
+      FROM bandwidth_minutes
+      WHERE site_id=${query.siteId} AND bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
+        AND ip <> '__other__' ${searchFilter} ${countryFilter} ${protocolFilter}
+      GROUP BY ip, country_code
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as BandwidthIpRow[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async sessionMetrics(
 		siteId: string | undefined,
@@ -904,8 +1059,10 @@ export const repository = {
 	): Promise<{
 		requests: Array<{ countryCode: string; count: number }>;
 		sessions: Array<{ countryCode: string; count: number }>;
+		bandwidth: Array<{ countryCode: string; count: number }>;
 	}> {
 		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const requestRows = (await db`
       SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
       FROM request_events
@@ -920,9 +1077,18 @@ export const repository = {
       GROUP BY COALESCE(country_code, 'ZZ')
       ORDER BY count DESC
     `) as Array<{ country_code: string; count: number | string }>;
+		const bandwidthRows = (await db`
+      SELECT COALESCE(country_code, 'ZZ') AS country_code,
+        COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS count
+      FROM bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
+      GROUP BY COALESCE(country_code, 'ZZ')
+      ORDER BY count DESC
+    `) as Array<{ country_code: string; count: number | string }>;
 		return {
 			requests: requestRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
 			sessions: sessionRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
+			bandwidth: bandwidthRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
 		};
 	},
 	async eventsMissingCountry(limit: number): Promise<Array<{ id: string; ip: string }>> {
@@ -1040,9 +1206,11 @@ export const repository = {
 	},
 	async deleteEventsBeforeForSite(siteId: string, cutoff: number): Promise<void> {
 		await db`DELETE FROM request_events WHERE site_id=${siteId} AND created_at < ${cutoff}`;
+		await db`DELETE FROM bandwidth_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff}`;
 	},
 	async deleteEventsBefore(cutoff: number): Promise<void> {
 		await db`DELETE FROM request_events WHERE created_at < ${cutoff}`;
+		await db`DELETE FROM bandwidth_minutes WHERE bucket_start < ${cutoff}`;
 	},
 	async adminByHash(hash: string): Promise<AdminSessionRecord | null> {
 		const rows = (await db`SELECT * FROM admin_sessions WHERE token_hash=${hash} LIMIT 1`) as AdminSessionRecord[];

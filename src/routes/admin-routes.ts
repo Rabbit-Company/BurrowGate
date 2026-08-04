@@ -38,6 +38,7 @@ import { adminPage, loginPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { sha256Hex, timingSafeEqualText } from "../utils/crypto.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { flushBandwidthMetrics } from "../services/bandwidth-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -377,6 +378,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
+		await flushBandwidthMetrics();
 		const metrics = await repository.geoMetrics(selection.site?.id, range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
@@ -386,6 +388,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			status: geoIpStatus(),
 			requests: metrics.requests,
 			sessions: metrics.sessions,
+			bandwidth: metrics.bandwidth,
 		});
 	});
 
@@ -408,7 +411,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
 		const url = new URL(ctx.req.url);
-		const section = enumParam(url, "section", ["traffic", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
+		const section = enumParam(url, "section", ["traffic", "bandwidth", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
 		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
@@ -426,6 +429,42 @@ export function registerAdminRoutes(app: Web<any>): void {
 			bucketMs,
 			bucketCount,
 		};
+
+		if (section === "bandwidth") {
+			await flushBandwidthMetrics();
+			const metrics = await repository.bandwidthMetrics(selection.site?.id, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Client-side bandwidth",
+					subtitle: "Payload bytes crossing between users and BurrowGate",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bytes",
+					emptyMessage: "No client bandwidth in this range.",
+					datasets: [
+						{ key: "clientDownload", label: "Sent to clients" },
+						{ key: "clientUpload", label: "Received from clients" },
+					],
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Upstream bandwidth",
+					subtitle: "Payload bytes crossing between BurrowGate and origin servers",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bytes",
+					emptyMessage: "No upstream bandwidth in this range.",
+					datasets: [
+						{ key: "upstreamDownload", label: "Received from origins" },
+						{ key: "upstreamUpload", label: "Sent to origins" },
+					],
+					data: metrics.series,
+				},
+				breakdown: [],
+				protocols: metrics.protocols,
+			});
+		}
 
 		if (section === "sessions") {
 			const metrics = await repository.sessionMetrics(selection.site?.id, since, until, bucketMs);
@@ -658,6 +697,48 @@ export function registerAdminRoutes(app: Web<any>): void {
 				since: range.since,
 				until: range.until,
 				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "country_code", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
+				sortDirection: sortDirection(url),
+			}),
+		);
+	});
+
+	app.get("/_burrowgate/api/admin/bandwidth", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedSite(url);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const range = requestedDateRange(url);
+		const search = stringParam(url, "search");
+		const countryCode = stringParam(url, "country")?.toUpperCase();
+		const protocol = enumParam(url, "protocol", ["http", "websocket"] as const);
+		await flushBandwidthMetrics();
+		return jsonResponse(
+			await repository.pagedBandwidthIps({
+				siteId: selection.site.id,
+				page: integerParam(url, "page", 1, 1, 1_000_000),
+				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
+				...(search ? { search } : {}),
+				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
+				...(protocol ? { protocol } : {}),
+				since: range.since,
+				until: range.until,
+				sortBy: enumParam(
+					url,
+					"sortBy",
+					[
+						"ip",
+						"country_code",
+						"client_received_bytes",
+						"client_sent_bytes",
+						"upstream_sent_bytes",
+						"upstream_received_bytes",
+						"client_total_bytes",
+						"upstream_total_bytes",
+					] as const,
+					"client_total_bytes",
+				)!,
 				sortDirection: sortDirection(url),
 			}),
 		);

@@ -3,6 +3,7 @@ const mutationHeaders = { "x-burrowgate-admin": "1" };
 
 const tableState = {
 	traffic: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
+	bandwidth: { page: 1, pageSize: 50, sortBy: "client_total_bytes", sortDirection: "desc" },
 	sessions: { page: 1, pageSize: 50, sortBy: "last_seen_at", sortDirection: "desc" },
 	rules: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
@@ -47,6 +48,15 @@ const escapeHtml = (value) =>
 
 function formatNumber(value) {
 	return Number(value ?? 0).toLocaleString();
+}
+
+function formatBytes(value) {
+	const bytes = Math.max(0, Number(value ?? 0));
+	if (!Number.isFinite(bytes) || bytes === 0) return "0 B";
+	const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+	const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+	const scaled = bytes / 1024 ** index;
+	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
 function formatDate(value) {
@@ -246,11 +256,12 @@ async function loadOverview() {
 		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} -> ${overview.site.originUrl}`;
 	}
 	const defaultSize = String(overview.defaultPageSize ?? 50);
-	for (const id of ["eventPageSize", "sessionPageSize", "rulePageSize"]) {
+	for (const id of ["eventPageSize", "bandwidthPageSize", "sessionPageSize", "rulePageSize"]) {
 		const select = byId(id);
 		if ([...select.options].some((option) => option.value === defaultSize)) select.value = defaultSize;
 	}
 	tableState.traffic.pageSize = Number(byId("eventPageSize").value);
+	tableState.bandwidth.pageSize = Number(byId("bandwidthPageSize").value);
 	tableState.sessions.pageSize = Number(byId("sessionPageSize").value);
 	tableState.rules.pageSize = Number(byId("rulePageSize").value);
 }
@@ -330,6 +341,51 @@ async function loadTraffic() {
 		updatePagination("events", result, loadTraffic);
 	} catch (error) {
 		setTableError("events", 8, error);
+	}
+}
+
+async function loadBandwidth() {
+	const state = tableState.bandwidth;
+	setTableLoading("bandwidthIps", 9);
+	updateSortIndicators("panel-bandwidth", state);
+	try {
+		const result = await api(
+			`/bandwidth?${queryString({
+				page: state.page,
+				pageSize: state.pageSize,
+				sortBy: state.sortBy,
+				sortDirection: state.sortDirection,
+				search: byId("bandwidthSearch").value.trim(),
+				protocol: byId("bandwidthProtocol").value,
+				country: byId("bandwidthCountry").value,
+				...rangeQuery(),
+			})}`,
+		);
+		if (result.page > result.totalPages) {
+			state.page = result.totalPages;
+			return await loadBandwidth();
+		}
+		byId("bandwidthIps").innerHTML =
+			result.items.length === 0
+				? '<tr><td colspan="9" class="empty-cell">No client bandwidth matches these filters.</td></tr>'
+				: result.items
+						.map(
+							(item) => `<tr>
+          <td><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td>
+          <td>${countryBadge(item.country_code)}</td>
+          <td>${formatBytes(item.client_sent_bytes)}</td>
+          <td>${formatBytes(item.client_received_bytes)}</td>
+          <td>${formatBytes(item.upstream_received_bytes)}</td>
+          <td>${formatBytes(item.upstream_sent_bytes)}</td>
+          <td><strong>${formatBytes(item.client_total_bytes)}</strong></td>
+          <td>${formatBytes(item.upstream_total_bytes)}</td>
+          <td><button class="button danger compact" type="button" data-bandwidth-block="${escapeHtml(item.ip)}">Block IP</button></td>
+        </tr>`,
+						)
+						.join("");
+		updatePagination("bandwidth", result, loadBandwidth);
+	} catch (error) {
+		setTableError("bandwidthIps", 9, error);
 	}
 }
 
@@ -693,6 +749,7 @@ async function loadSites() {
 
 function resetSiteScopedPages() {
 	tableState.traffic.page = 1;
+	tableState.bandwidth.page = 1;
 	tableState.sessions.page = 1;
 	tableState.rules.page = 1;
 	latestMetrics = null;
@@ -704,8 +761,12 @@ function resetSiteScopedPages() {
 
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
-	for (const name of ["sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
+	for (const name of ["bandwidth", "sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadTraffic()];
+	if (activeTab === "bandwidth") {
+		loadedTabs.add("bandwidth");
+		tasks.push(loadBandwidth());
+	}
 	if (activeTab === "sessions") {
 		loadedTabs.add("sessions");
 		tasks.push(loadSessions());
@@ -1266,6 +1327,7 @@ function metricLabel(bucket, rangeDurationMs, detailed = false) {
 
 function metricValueFormatter(format) {
 	if (format === "duration") return (value) => formatDuration(Number(value));
+	if (format === "bytes") return (value) => formatBytes(Number(value));
 	return (value) => formatNumber(Math.round(Number(value)));
 }
 
@@ -1581,6 +1643,32 @@ function renderMetrics() {
 	trafficChart = createChart("trafficChart", primary);
 	latencyChart = createChart("latencyChart", secondary);
 	renderBreakdown(latestMetrics.breakdown ?? []);
+	if (latestMetrics.section === "bandwidth") renderBandwidthDetails(latestMetrics);
+}
+
+function renderBandwidthDetails(metrics) {
+	const totals = (metrics.primary?.data ?? []).reduce(
+		(result, point) => {
+			for (const key of ["clientUpload", "clientDownload", "upstreamUpload", "upstreamDownload"]) result[key] += Number(point[key] ?? 0);
+			return result;
+		},
+		{ clientUpload: 0, clientDownload: 0, upstreamUpload: 0, upstreamDownload: 0 },
+	);
+	byId("bandwidthClientDownload").textContent = formatBytes(totals.clientDownload);
+	byId("bandwidthClientUpload").textContent = formatBytes(totals.clientUpload);
+	byId("bandwidthUpstreamDownload").textContent = formatBytes(totals.upstreamDownload);
+	byId("bandwidthUpstreamUpload").textContent = formatBytes(totals.upstreamUpload);
+
+	const protocols = metrics.protocols ?? [];
+	byId("bandwidthProtocols").innerHTML =
+		protocols.length === 0
+			? ""
+			: protocols
+					.map(
+						(item) =>
+							`<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.protocol === "websocket" ? "WebSocket" : "HTTP")}</span><strong>${formatBytes(item.clientBytes)} client / ${formatBytes(item.upstreamBytes)} upstream</strong></div></div>`,
+					)
+					.join("");
 }
 
 async function loadMetrics() {
@@ -1660,9 +1748,12 @@ function renderGeoMap() {
 	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const rangeLabel = rangeDurationLabel(geoMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
-	const unit = mode === "sessions" ? "sessions" : "requests";
-	byId("geoSubtitle").textContent = `${mode === "sessions" ? "Sessions created" : "Requests"} by country (${rangeLabel})`;
-	byId("geoTotal").textContent = `${formatNumber(total)} ${unit}`;
+	const isBandwidth = mode === "bandwidth";
+	const unit = isBandwidth ? "bytes" : mode === "sessions" ? "sessions" : "requests";
+	const metricTitle = isBandwidth ? "Client bandwidth" : mode === "sessions" ? "Sessions created" : "Requests";
+	const formatValue = isBandwidth ? formatBytes : formatNumber;
+	byId("geoSubtitle").textContent = `${metricTitle} by country (${rangeLabel})`;
+	byId("geoTotal").textContent = isBandwidth ? formatBytes(total) : `${formatNumber(total)} ${unit}`;
 
 	const svg = byId("geoMap");
 	svg.setAttribute("aria-label", `World map showing ${unit} by country`);
@@ -1671,7 +1762,7 @@ function renderGeoMap() {
 		const name = path.dataset.name ?? countryDisplayName(code);
 		path.setAttribute("class", `geo-country geo-level-${geoLevel(value, maximum)}`);
 		path.setAttribute("tabindex", value > 0 ? "0" : "-1");
-		path.setAttribute("aria-label", `${name}: ${formatNumber(value)} ${unit}`);
+		path.setAttribute("aria-label", `${name}: ${formatValue(value)}${isBandwidth ? "" : ` ${unit}`}`);
 		path.dataset.value = String(value);
 		path.dataset.unit = unit;
 	}
@@ -1686,7 +1777,7 @@ function renderGeoMap() {
 						const code = String(item.countryCode).toUpperCase();
 						const name = countryDisplayName(code);
 						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
-						return `<div class="geo-country-row"><div class="row between"><span><code>${escapeHtml(code)}</code> ${escapeHtml(name)}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+						return `<div class="geo-country-row"><div class="row between"><span><code>${escapeHtml(code)}</code> ${escapeHtml(name)}</span><strong>${formatValue(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
 					})
 					.join("");
 
@@ -1731,7 +1822,7 @@ async function loadGeoMapGeometry() {
 		const show = (event) =>
 			positionGeoTooltip(
 				event,
-				`<strong>${escapeHtml(path.dataset.name)}</strong><span>${formatNumber(path.dataset.value)} ${escapeHtml(path.dataset.unit)}</span>`,
+				`<strong>${escapeHtml(path.dataset.name)}</strong><span>${path.dataset.unit === "bytes" ? formatBytes(path.dataset.value) : `${formatNumber(path.dataset.value)} ${escapeHtml(path.dataset.unit)}`}</span>`,
 			);
 		path.addEventListener("pointerenter", show);
 		path.addEventListener("pointermove", show);
@@ -1756,9 +1847,11 @@ async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated")
 	setDateRangeInputs(from, to);
 	persistDateRange();
 	tableState.traffic.page = 1;
+	tableState.bandwidth.page = 1;
 	tableState.sessions.page = 1;
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
 	if (loadedTabs.has("traffic")) tasks.push(loadTraffic());
+	if (loadedTabs.has("bandwidth")) tasks.push(loadBandwidth());
 	if (loadedTabs.has("sessions")) tasks.push(loadSessions());
 	await Promise.all(tasks);
 	markUpdated(updateLabel);
@@ -1780,6 +1873,7 @@ async function runWithButton(button, task) {
 async function refreshDashboard() {
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
+	if (activeTab === "bandwidth") tasks.push(loadBandwidth());
 	if (activeTab === "sessions") tasks.push(loadSessions());
 	if (activeTab === "rules") tasks.push(loadRules());
 	if (activeTab === "routes") tasks.push(loadRoutePolicies());
@@ -1794,10 +1888,16 @@ function setActiveTab(name) {
 	document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
 	document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
 	byId(`panel-${name}`).classList.remove("hidden");
+	const geoMode = { traffic: "requests", bandwidth: "bandwidth", sessions: "sessions" }[name];
+	if (geoMode) {
+		byId("geoMetricMode").value = geoMode;
+		renderGeoMap();
+	}
 	void loadMetrics();
 	if (loadedTabs.has(name)) return;
 	loadedTabs.add(name);
 	if (name === "traffic") void loadTraffic();
+	if (name === "bandwidth") void loadBandwidth();
 	if (name === "sessions") void loadSessions();
 	if (name === "rules") void loadRules();
 	if (name === "routes") void loadRoutePolicies();
@@ -1815,10 +1915,11 @@ function bindSortButtons() {
 			if (state.sortBy === sortBy) state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
 			else {
 				state.sortBy = sortBy;
-				state.sortDirection = sortBy === "network_cidr" || sortBy === "action" || sortBy === "last_ip" ? "asc" : "desc";
+				state.sortDirection = ["network_cidr", "action", "last_ip", "ip", "country_code"].includes(sortBy) ? "asc" : "desc";
 			}
 			state.page = 1;
 			if (name === "traffic") void loadTraffic();
+			if (name === "bandwidth") void loadBandwidth();
 			if (name === "sessions") void loadSessions();
 			if (name === "rules") void loadRules();
 		});
@@ -1841,6 +1942,23 @@ function bindFilters() {
 		tableState.traffic.page = 1;
 		tableState.traffic.pageSize = Number(byId("eventPageSize").value);
 		void loadTraffic();
+	});
+
+	const bandwidthSearch = debounce(() => {
+		tableState.bandwidth.page = 1;
+		void loadBandwidth();
+	});
+	byId("bandwidthSearch").addEventListener("input", bandwidthSearch);
+	for (const id of ["bandwidthProtocol", "bandwidthCountry"]) {
+		byId(id).addEventListener("change", () => {
+			tableState.bandwidth.page = 1;
+			void loadBandwidth();
+		});
+	}
+	byId("bandwidthPageSize").addEventListener("change", () => {
+		tableState.bandwidth.page = 1;
+		tableState.bandwidth.pageSize = Number(byId("bandwidthPageSize").value);
+		void loadBandwidth();
 	});
 
 	const sessionSearch = debounce(() => {
@@ -1878,6 +1996,26 @@ function bindFilters() {
 }
 
 async function handleBodyClick(event) {
+	const bandwidthBlockButton = event.target.closest("button[data-bandwidth-block]");
+	if (bandwidthBlockButton) {
+		const ip = bandwidthBlockButton.dataset.bandwidthBlock;
+		if (!confirm(`Block ${ip} from the selected site?`)) return;
+		bandwidthBlockButton.disabled = true;
+		try {
+			await api("/rules", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ networkCidr: ip, action: "block", reason: "Blocked from bandwidth monitor", expiresAt: null }),
+			});
+			showToast(`${ip} is now blocked for this site.`);
+			await Promise.all([loadOverview(), loadMetrics()]);
+		} catch (error) {
+			bandwidthBlockButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
 	const selectSiteButton = event.target.closest("button[data-site-select]");
 	if (selectSiteButton) {
 		await chooseSite(selectSiteButton.dataset.siteSelect);
@@ -2099,6 +2237,14 @@ function bindActions() {
 			void runWithButton(event.currentTarget, async () => {
 				await Promise.all([loadTraffic(), loadOverview(), loadMetrics()]);
 				markUpdated("Traffic updated");
+			}),
+	);
+	byId("refreshBandwidth").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				await Promise.all([loadBandwidth(), loadMetrics(), loadGeoMetrics()]);
+				markUpdated("Bandwidth updated");
 			}),
 	);
 	byId("refreshSessions").addEventListener(

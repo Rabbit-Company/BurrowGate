@@ -7,6 +7,7 @@ import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders } from "../utils/http.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
+import { meteredBody, type BandwidthContext } from "./bandwidth-service.ts";
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
 	const incoming = new URL(request.url);
@@ -134,6 +135,7 @@ export async function proxyRequest(
 	accessStatus: OriginAccessStatus = session ? "verified" : "allowlisted",
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
+	countryCode: string | null = null,
 ): Promise<Response> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
@@ -158,11 +160,13 @@ export async function proxyRequest(
 	const target = upstreamUrl(site, request);
 	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
 	const hasBody = !["GET", "HEAD"].includes(request.method);
+	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
+	const requestBody = hasBody ? meteredBody(request.body, bandwidth, (bytes) => ({ clientReceivedBytes: bytes, upstreamSentBytes: bytes })) : null;
 
 	const response = await fetch(target, {
 		method: request.method,
 		headers,
-		body: hasBody ? request.body : null,
+		body: requestBody,
 		redirect: "manual",
 		signal: AbortSignal.timeout(config.originTimeoutMs),
 
@@ -174,7 +178,8 @@ export async function proxyRequest(
 		decompress: false,
 	});
 
-	return new Response(response.body, {
+	const responseBody = meteredBody(response.body, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
+	return new Response(responseBody, {
 		status: response.status,
 		statusText: response.statusText,
 		headers: downstreamHeaders(response, target, incoming, transport),

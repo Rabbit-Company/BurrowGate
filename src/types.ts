@@ -164,6 +164,20 @@ export interface SiteAccessUserRecord {
 	created_at: number;
 }
 
+export type BandwidthProtocol = "http" | "websocket";
+
+export interface BandwidthMinuteRecord {
+	site_id: string;
+	bucket_start: number;
+	ip: string;
+	country_code: string;
+	protocol: BandwidthProtocol;
+	client_received_bytes: number;
+	client_sent_bytes: number;
+	upstream_sent_bytes: number;
+	upstream_received_bytes: number;
+}
+
 export interface ChallengeFlowRecord {
 	id: string;
 	site_id: string;

@@ -55,7 +55,7 @@ export function adminPage(): string {
 <section class="card geo-card">
   <div class="pad row between responsive">
     <div><h2>Geographic distribution</h2><p id="geoSubtitle" class="muted">Requests by country for the selected range</p></div>
-    <select id="geoMetricMode" class="select select-small"><option value="requests">Requests</option><option value="sessions">Sessions</option></select>
+    <select id="geoMetricMode" class="select select-small"><option value="requests">Requests</option><option value="sessions">Sessions</option><option value="bandwidth">Client bandwidth</option></select>
   </div>
   <div class="geo-layout">
     <div class="geo-map-wrap">
@@ -74,6 +74,7 @@ export function adminPage(): string {
 
 <nav class="tabs" aria-label="Dashboard sections">
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
+  <button class="tab" data-tab="bandwidth" type="button">Bandwidth</button>
   <button class="tab" data-tab="sessions" type="button">Sessions</button>
   <button class="tab" data-tab="rules" type="button">Network rules</button>
   <button class="tab" data-tab="routes" type="button">Routes</button>
@@ -94,6 +95,27 @@ export function adminPage(): string {
     </div>
     <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
+  </article>
+</section>
+
+<section id="panel-bandwidth" class="tab-panel hidden">
+  <section class="grid stats bandwidth-stats">
+    <article class="card pad stat"><span class="muted">Sent to clients</span><strong id="bandwidthClientDownload">0 B</strong></article>
+    <article class="card pad stat"><span class="muted">Received from clients</span><strong id="bandwidthClientUpload">0 B</strong></article>
+    <article class="card pad stat"><span class="muted">Received from origins</span><strong id="bandwidthUpstreamDownload">0 B</strong></article>
+    <article class="card pad stat"><span class="muted">Sent to origins</span><strong id="bandwidthUpstreamUpload">0 B</strong></article>
+  </section>
+  <article class="card">
+    <div class="pad section-heading"><div><h2>Client bandwidth by IP</h2><p class="muted">HTTP and WebSocket payload bytes are counted. HTTP/TLS headers and transport framing are intentionally excluded.</p></div><button id="refreshBandwidth" class="button secondary">Refresh</button></div>
+    <div class="toolbar bandwidth-toolbar">
+      <label class="search-field"><span>Search</span><input id="bandwidthSearch" class="input" placeholder="IP or country code..."></label>
+      <label><span>Protocol</span><select id="bandwidthProtocol" class="select"><option value="">All</option><option value="http">HTTP</option><option value="websocket">WebSocket</option></select></label>
+      <label><span>Country</span><select id="bandwidthCountry" class="select country-select"><option value="">All countries</option></select></label>
+      <label><span>Rows</span><select id="bandwidthPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
+    </div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("To client", "client_sent_bytes")}</th><th>${sortButton("From client", "client_received_bytes")}</th><th>${sortButton("From origin", "upstream_received_bytes")}</th><th>${sortButton("To origin", "upstream_sent_bytes")}</th><th>${sortButton("Client total", "client_total_bytes")}</th><th>${sortButton("Upstream total", "upstream_total_bytes")}</th><th></th></tr></thead><tbody id="bandwidthIps"><tr><td colspan="9" class="empty-cell">Open the tab to load bandwidth.</td></tr></tbody></table></div>
+    ${pagination("bandwidth")}
+    <div id="bandwidthProtocols" class="breakdown"></div>
   </article>
 </section>
 
@@ -226,7 +248,7 @@ export function adminPage(): string {
             <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
             <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
             <label><span>Session lifetime (seconds)</span><input id="siteSessionTtl" class="input" name="sessionTtlSeconds" type="number" min="60" max="2592000" step="1" value="43200" required></label>
-            <label><span>Traffic retention (days)</span><input id="siteEventRetentionDays" class="input" name="eventRetentionDays" type="number" min="1" max="365" step="1" value="7" required><small class="muted">Request events older than this are removed for this site.</small></label>
+            <label><span>Traffic retention (days)</span><input id="siteEventRetentionDays" class="input" name="eventRetentionDays" type="number" min="1" max="365" step="1" value="7" required><small class="muted">Request events and bandwidth buckets older than this are removed for this site.</small></label>
             <label><span>Default access mode</span><select id="siteDefaultAccessMode" class="select"><option value="challenge">Require challenge</option><option value="bypass">Disable browser verification</option></select><small class="muted">Route policies can override this per path.</small></label>
           </div>
           <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>

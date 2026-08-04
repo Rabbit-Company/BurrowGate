@@ -19,6 +19,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Site-wide default IP and country actions for allowlists and blocklists
 - Signed origin verification headers
 - Paginated traffic, session, route, rule, and site monitoring
+- Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
 - Per-site traffic retention
 - Country-level GeoIP analytics with an interactive SVG world map
 - Country codes, country filters, and country tooltips in traffic and session tables
@@ -105,6 +106,8 @@ docker compose up -d --build --force-recreate
 | `BG_COOKIE_SECURE`                  | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
 | `BG_MASTER_KEY`                     | generated                            | Encrypts certificate and ACME private keys                                                 |
 | `BG_EVENT_RETENTION_DAYS`           | `7`                                  | Default retention assigned to new sites                                                    |
+| `BG_BANDWIDTH_FLUSH_INTERVAL_MS`    | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
+| `BG_BANDWIDTH_MAX_PENDING_KEYS`     | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |
 | `BG_GEOIP_ENABLED`                  | `true`                               | Enable country-level GeoIP enrichment                                                      |
 | `BG_GEOIP_DATABASE_PATH`            | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
 | `BG_GEOIP_CACHE_ENTRIES`            | `4096`                               | Maximum GeoIP reader cache entries                                                         |
@@ -158,7 +161,7 @@ Environment settings only seed an empty database. Existing sites are managed fro
 
 ## GeoIP Analytics
 
-BurrowGate can store an ISO country code with each request event and visitor session. The dashboard renders an interactive SVG world map for request volume and newly created sessions.
+BurrowGate can store an ISO country code with each request event, visitor session, and bandwidth bucket. The dashboard renders an interactive SVG world map for request volume, newly created sessions, and client bandwidth.
 
 Lookups use a local `GeoLite2-Country.mmdb` file. BurrowGate reuses one database reader, keeps a bounded LRU cache, and stores only the two-letter country code. It does not call an external GeoIP API for each request.
 
@@ -176,6 +179,12 @@ docker compose --profile geoip up -d --build
 See [`docs/GEOIP.md`](docs/GEOIP.md).
 
 Third-party map and data attribution is documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## Bandwidth Monitoring
+
+The **Bandwidth** tab separates payload traffic between users and BurrowGate from traffic between BurrowGate and origin servers. It provides time-series charts, HTTP/WebSocket totals, the busiest client IPs, one-click site blocking, and client bandwidth by country. Counters are streamed without buffering bodies and persisted as efficient one-minute aggregates.
+
+See [`docs/BANDWIDTH.md`](docs/BANDWIDTH.md).
 
 ## Network Policies
 

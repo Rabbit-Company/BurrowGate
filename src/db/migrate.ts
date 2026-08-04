@@ -149,6 +149,18 @@ CREATE TABLE IF NOT EXISTS request_events (
   country_code VARCHAR(2) NULL,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bandwidth_minutes (
+  site_id VARCHAR(64) NOT NULL,
+  bucket_start BIGINT NOT NULL,
+  ip VARCHAR(128) NOT NULL,
+  country_code VARCHAR(2) NOT NULL DEFAULT 'ZZ',
+  protocol VARCHAR(16) NOT NULL,
+  client_received_bytes BIGINT NOT NULL DEFAULT 0,
+  client_sent_bytes BIGINT NOT NULL DEFAULT 0,
+  upstream_sent_bytes BIGINT NOT NULL DEFAULT 0,
+  upstream_received_bytes BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (site_id, bucket_start, ip, country_code, protocol)
+);
 CREATE TABLE IF NOT EXISTS admin_sessions (
   id VARCHAR(64) PRIMARY KEY,
   token_hash VARCHAR(64) NOT NULL UNIQUE,
@@ -225,6 +237,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_method_created ON request_events (site_id, method, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_created ON access_sessions (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_last_seen ON access_sessions (site_id, last_seen_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_revoked ON access_sessions (site_id, revoked_at)",

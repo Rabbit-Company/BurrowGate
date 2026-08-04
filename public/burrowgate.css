@@ -24,6 +24,26 @@
 
 * {
 	box-sizing: border-box;
+	scrollbar-width: thin;
+	scrollbar-color: #56647a #0b1220;
+}
+*::-webkit-scrollbar {
+	width: 11px;
+	height: 11px;
+}
+*::-webkit-scrollbar-track {
+	background: #0b1220;
+}
+*::-webkit-scrollbar-thumb {
+	background: linear-gradient(180deg, #64748b, #3f4c63);
+	border: 3px solid #0b1220;
+	border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: linear-gradient(180deg, #8b9ab0, #56647a);
+}
+*::-webkit-scrollbar-corner {
+	background: #0b1220;
 }
 html,
 body {
@@ -254,6 +274,9 @@ button:disabled {
 }
 .compact-toolbar {
 	grid-template-columns: minmax(260px, 2fr) minmax(140px, 0.8fr) minmax(90px, 0.5fr);
+}
+.bandwidth-toolbar {
+	grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(140px, 0.8fr)) minmax(90px, 0.5fr);
 }
 .toolbar label,
 .rule-form label,

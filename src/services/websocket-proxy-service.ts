@@ -22,6 +22,7 @@ import {
 import { resolveSiteForHost } from "./site-service.ts";
 import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
+import { recordBandwidth } from "./bandwidth-service.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -30,6 +31,7 @@ export interface WebSocketBridgeData {
 	siteId: string;
 	sessionId: string | null;
 	clientIp: string;
+	countryCode: string | null;
 	targetUrl: string;
 	openedAt: number;
 	upstream: WebSocket;
@@ -160,6 +162,12 @@ function forwardToDownstream(bridge: WebSocketBridgeData, message: ProxiedWebSoc
 	// Bun returns 0 when a message was dropped. A -1 return value means the
 	// message was accepted but backpressure is active, so it must not be resent.
 	if (result === 0) closeBridge(bridge, 1011, "WebSocket downstream send failed", "proxy");
+	else {
+		recordBandwidth(
+			{ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" },
+			{ clientSentBytes: messageByteLength(message) },
+		);
+	}
 }
 
 function flushPreOpenQueue(bridge: WebSocketBridgeData): void {
@@ -248,17 +256,32 @@ function attachUpstreamBridgeEvents(bridge: WebSocketBridgeData): void {
 	bridge.upstream.addEventListener("message", (event: MessageEvent) => {
 		const value = event.data;
 		if (typeof value === "string" || value instanceof ArrayBuffer) {
+			recordBandwidth(
+				{ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" },
+				{ upstreamReceivedBytes: messageByteLength(value) },
+			);
 			forwardToDownstream(bridge, value);
 			return;
 		}
 		if (ArrayBuffer.isView(value)) {
-			forwardToDownstream(bridge, new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+			const message = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+			recordBandwidth(
+				{ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" },
+				{ upstreamReceivedBytes: message.byteLength },
+			);
+			forwardToDownstream(bridge, message);
 			return;
 		}
 		if (value instanceof Blob) {
 			void value
 				.arrayBuffer()
-				.then((buffer) => forwardToDownstream(bridge, buffer))
+				.then((buffer) => {
+					recordBandwidth(
+						{ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" },
+						{ upstreamReceivedBytes: buffer.byteLength },
+					);
+					forwardToDownstream(bridge, buffer);
+				})
 				.catch(() => closeBridge(bridge, 1011, "Unable to read upstream WebSocket message", "proxy"));
 		}
 	});
@@ -489,6 +512,7 @@ export async function handleWebSocketUpgrade(
 			siteId: site.id,
 			sessionId: session?.id ?? null,
 			clientIp: ip,
+			countryCode: eventBase.countryCode ?? null,
 			targetUrl: target.toString(),
 			openedAt: Date.now(),
 			upstream,
@@ -594,12 +618,14 @@ export const websocketProxyHandler: Bun.WebSocketHandler<WebSocketBridgeData> = 
 			return;
 		}
 		const size = messageByteLength(message);
+		recordBandwidth({ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" }, { clientReceivedBytes: size });
 		if (bridge.upstream.bufferedAmount + size > config.websocket.upstreamBufferLimitBytes) {
 			closeBridge(bridge, 1013, "WebSocket origin is receiving data too slowly", "proxy");
 			return;
 		}
 		try {
 			bridge.upstream.send(message);
+			recordBandwidth({ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" }, { upstreamSentBytes: size });
 		} catch {
 			closeBridge(bridge, 1011, "Unable to forward WebSocket message", "proxy");
 		}
