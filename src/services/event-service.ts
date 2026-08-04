@@ -1,4 +1,5 @@
 import { repository } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 
@@ -28,6 +29,6 @@ export async function recordEvent(input: {
 			created_at: Date.now(),
 		});
 	} catch (error) {
-		console.error("Failed to record request event", error);
+		Logger.error("Failed to record request event", { error });
 	}
 }

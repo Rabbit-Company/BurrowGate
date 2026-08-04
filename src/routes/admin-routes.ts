@@ -118,7 +118,7 @@ async function parseRoutePolicyInput(request: Request): Promise<RoutePolicyInput
 export function registerAdminRoutes(app: Web<any>): void {
 	app.get("/_burrowgate/admin/login", async (ctx) =>
 		(await getAdminSession(ctx.req))
-			? Response.redirect(new URL("/_burrowgate/admin", ctx.req.url), 302)
+			? Response.redirect(new URL("/_burrowgate/admin", ctx.req.url).href, 302)
 			: htmlResponse(loginPage(cookieCanBeIssuedForRequest(ctx.req) ? undefined : insecureCookieConfigurationMessage())),
 	);
 
@@ -137,7 +137,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/admin", async (ctx) =>
-		(await getAdminSession(ctx.req)) ? htmlResponse(adminPage()) : Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url), 302),
+		(await getAdminSession(ctx.req)) ? htmlResponse(adminPage()) : Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url).href, 302),
 	);
 
 	app.get(

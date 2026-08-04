@@ -3,6 +3,7 @@ import { config, withRequestTransport, type RequestTransport } from "../config.t
 import { bootstrapTlsOption, type TlsCertificateOption } from "./bootstrap-tls-service.ts";
 import { certificateTlsOptions } from "./certificate-service.ts";
 import { handleWebSocketUpgrade, isWebSocketUpgrade, websocketProxyHandler, type WebSocketUpgradeServer } from "./websocket-proxy-service.ts";
+import { Logger } from "../logger.ts";
 
 interface StoppableServer {
 	stop(closeActiveConnections?: boolean): Promise<void>;
@@ -66,7 +67,7 @@ export class TlsListenerManager {
 		}
 		if (config.http.enabled) {
 			this.httpServer = this.serve({ port: config.http.port });
-			console.log(`[BurrowGate] HTTP listening on http://${config.host}:${config.http.port}`);
+			Logger.info(`[BurrowGate] HTTP listening on http://${config.host}:${config.http.port}`);
 		}
 		if (config.https.enabled) await this.reloadHttps();
 	}
@@ -86,7 +87,7 @@ export class TlsListenerManager {
 		const timeout = setTimeout(() => {
 			if (completed) return;
 			void server.stop(true).catch((error) => {
-				console.error("[BurrowGate] Unable to force-close the previous HTTPS listener", error);
+				Logger.error("[BurrowGate] Unable to force-close the previous HTTPS listener", error);
 			});
 		}, config.https.listenerDrainTimeoutMs);
 		(timeout as unknown as { unref?: () => void }).unref?.();
@@ -102,7 +103,7 @@ export class TlsListenerManager {
 				completed = true;
 				clearTimeout(timeout);
 				this.drainingServers.delete(server);
-				console.error("[BurrowGate] Unable to drain the previous HTTPS listener", error);
+				Logger.error("[BurrowGate] Unable to drain the previous HTTPS listener", error);
 			});
 	}
 
@@ -117,7 +118,7 @@ export class TlsListenerManager {
 				this.httpsServer = null;
 				this.drainServer(previous);
 			}
-			console.warn("[BurrowGate] HTTPS is enabled, but no certificate is available.");
+			Logger.warn("[BurrowGate] HTTPS is enabled, but no certificate is available.");
 			return;
 		}
 
@@ -132,14 +133,14 @@ export class TlsListenerManager {
 				reusePort: true,
 			});
 		} catch (error) {
-			console.error("[BurrowGate] Unable to start the replacement HTTPS listener. The current listener remains active.", error);
+			Logger.error("[BurrowGate] Unable to start the replacement HTTPS listener. The current listener remains active.", { error });
 			throw new Error("The certificate was stored, but BurrowGate could not activate the replacement HTTPS listener. The existing listener remains active.", {
 				cause: error,
 			});
 		}
 
 		this.httpsServer = replacement;
-		console.log(
+		Logger.info(
 			`[BurrowGate] HTTPS listening on https://${config.host}:${config.https.port} with ${managedCertificates.length} managed certificate(s)${bootstrap ? " plus bootstrap fallback" : ""}`,
 		);
 

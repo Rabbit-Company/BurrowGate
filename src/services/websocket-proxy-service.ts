@@ -13,6 +13,8 @@ import { resolveRoutePolicy } from "./route-policy-service.ts";
 import { applyRouteRateLimit } from "./rate-limit-service.ts";
 import { findAccessSession, userAgentHash } from "./session-service.ts";
 import { resolveSiteForHost } from "./site-service.ts";
+import type { HeadersInit } from "bun";
+import { Logger } from "../logger.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -171,7 +173,7 @@ async function clientIpForUpgrade(request: Request, server: WebSocketUpgradeServ
 	try {
 		await websocketIpExtract(context, async () => {});
 	} catch (error) {
-		console.error("Failed to extract WebSocket client IP", error);
+		Logger.error("Failed to extract WebSocket client IP", { error });
 	}
 
 	return context.clientIp ?? directIp ?? "unknown";
@@ -483,7 +485,7 @@ export async function handleWebSocketUpgrade(
 			decision: "websocket-origin-error",
 			latencyMs: Math.round(performance.now() - started),
 		});
-		console.error(`WebSocket proxy failed for ${target}`, error);
+		Logger.error(`WebSocket proxy failed for ${target}`, { error });
 		return siteErrorResponse(
 			site,
 			request,
@@ -540,11 +542,6 @@ export const websocketProxyHandler: Bun.WebSocketHandler<WebSocketBridgeData> = 
 
 	close(ws, code, reason) {
 		closeBridge(ws.data, code, reason || "WebSocket client closed", "downstream");
-	},
-
-	error(ws, error) {
-		console.error("Downstream WebSocket error", error);
-		closeBridge(ws.data, 1011, "Downstream WebSocket error", "downstream");
 	},
 
 	drain(ws) {

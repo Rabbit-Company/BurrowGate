@@ -214,4 +214,5 @@ export interface GatewayState {
 	site?: SiteRecord;
 	accessSession?: AccessSessionRecord;
 	clientIp?: string;
+	[key: string]: unknown;
 }

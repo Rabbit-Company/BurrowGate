@@ -1,6 +1,7 @@
 import { challengeRegistry } from "../challenges/index.ts";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 import type { ChallengePolicyStep, DefaultNetworkAction, ErrorResponseMode, SiteAccessMode, SiteRecord } from "../types.ts";
 import { randomId, randomToken } from "../utils/crypto.ts";
 import { normalizeHost } from "../utils/http.ts";
@@ -273,7 +274,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		try {
 			await repository.deleteEventsBeforeForSite(updated.id, Date.now() - updated.event_retention_days * 86_400_000);
 		} catch (error) {
-			console.error(`[BurrowGate] Immediate event-retention cleanup failed for ${updated.id}`, error);
+			Logger.error(`[BurrowGate] Immediate event-retention cleanup failed for ${updated.id}`, { error });
 		}
 	}
 	return updated;

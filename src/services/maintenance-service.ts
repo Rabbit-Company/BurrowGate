@@ -1,5 +1,6 @@
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 import { renewDueCertificates } from "./acme-service.ts";
 import { backfillGeoIp } from "./geoip-service.ts";
 
@@ -18,12 +19,12 @@ export async function runMaintenance(): Promise<void> {
 		await repository.deleteExpiredAcmeChallenges(now);
 		await backfillGeoIp();
 	} catch (error) {
-		console.error("[BurrowGate] Retention cleanup failed", error);
+		Logger.error("[BurrowGate] Retention cleanup failed", { error });
 	}
 	try {
 		await renewDueCertificates();
 	} catch (error) {
-		console.error("[BurrowGate] Certificate renewal maintenance failed", error);
+		Logger.error("[BurrowGate] Certificate renewal maintenance failed", { error });
 	} finally {
 		maintenanceRunning = false;
 	}

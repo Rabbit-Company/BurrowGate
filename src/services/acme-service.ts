@@ -6,6 +6,7 @@ import { randomId } from "../utils/crypto.ts";
 import { recordCertificateEvent, saveCertificate, updateTlsSettings } from "./certificate-service.ts";
 import { assertSecretEncryptionConfigured, decryptSecret, encryptSecret } from "./secret-encryption-service.ts";
 import { requestTlsReload } from "./tls-listener-service.ts";
+import { Logger } from "../logger.ts";
 
 const issuanceLocks = new Set<string>();
 
@@ -216,7 +217,7 @@ export async function renewDueCertificates(): Promise<void> {
 				renewal: true,
 			});
 		} catch (error) {
-			console.error(`[BurrowGate] ACME renewal failed for ${site.public_host}`, error);
+			Logger.error(`[BurrowGate] ACME renewal failed for ${site.public_host}`, { error });
 		}
 	}
 }

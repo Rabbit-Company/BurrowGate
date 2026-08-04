@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import maxmind, { type CountryResponse, type Reader } from "maxmind";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 
 let reader: Reader<CountryResponse> | null = null;
 let loadError: string | null = null;
@@ -21,7 +22,7 @@ export async function initializeGeoIp(): Promise<void> {
 	loading = (async () => {
 		if (!existsSync(config.geoip.databasePath)) {
 			const message = `GeoIP database not found at ${config.geoip.databasePath}`;
-			if (loadError !== message) console.warn(`[BurrowGate] ${message}`);
+			if (loadError !== message) Logger.warn(`[BurrowGate] ${message}`);
 			loadError = message;
 			return;
 		}
@@ -30,14 +31,14 @@ export async function initializeGeoIp(): Promise<void> {
 				cache: { max: config.geoip.cacheEntries },
 				watchForUpdates: true,
 				watchForUpdatesNonPersistent: true,
-				watchForUpdatesHook: () => console.info("[BurrowGate] Reloaded GeoIP database"),
+				watchForUpdatesHook: () => Logger.info("[BurrowGate] Reloaded GeoIP database"),
 			});
 			loadError = null;
-			console.info(`[BurrowGate] GeoIP database loaded from ${config.geoip.databasePath}`);
+			Logger.info(`[BurrowGate] GeoIP database loaded from ${config.geoip.databasePath}`);
 		} catch (error) {
 			reader = null;
 			const message = error instanceof Error ? error.message : String(error);
-			if (loadError !== message) console.error("[BurrowGate] Unable to load GeoIP database", error);
+			if (loadError !== message) Logger.error("[BurrowGate] Unable to load GeoIP database", { error });
 			loadError = message;
 		}
 	})();

@@ -26,7 +26,7 @@ export function registerChallengeRoutes(app: Web<any>): void {
 		}
 		let body: { flowId?: string; answer?: unknown };
 		try {
-			body = await ctx.req.json();
+			body = (await ctx.req.json()) as any;
 		} catch {
 			return jsonResponse({ reason: "Invalid JSON" }, 400);
 		}

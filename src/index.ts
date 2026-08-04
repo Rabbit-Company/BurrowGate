@@ -25,6 +25,7 @@ import { siteHostname } from "./services/certificate-service.ts";
 import { TlsListenerManager } from "./services/tls-listener-service.ts";
 import type { GatewayState } from "./types.ts";
 import { jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
+import { Logger } from "./logger.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -35,7 +36,7 @@ await runMaintenance();
 startMaintenance();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
-	console.warn(
+	Logger.warn(
 		"[BurrowGate] BG_COOKIE_SECURE=true/always disables admin and visitor sessions over HTTP. Use BG_COOKIE_SECURE=auto when any protected site must remain available through HTTP.",
 	);
 }
@@ -44,6 +45,7 @@ const app = new Web<GatewayState>();
 app.use(ipExtract(config.proxyPreset));
 app.use(
 	logger({
+		logger: Logger,
 		preset: "standard",
 		excludePaths: [
 			"/_burrowgate/static/favicon.svg",
@@ -55,7 +57,7 @@ app.use(
 );
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
 app.onError((error) => {
-	console.error(error);
+	Logger.error("Error", error);
 	return jsonResponse({ error: "BurrowGate internal error" }, 500);
 });
 
@@ -215,7 +217,7 @@ async function gateway(ctx: any): Promise<Response> {
 			decision: "origin-error",
 			latencyMs: Math.round(performance.now() - started),
 		});
-		console.error("Origin proxy failed", error);
+		Logger.error("Origin proxy failed", { error });
 		return siteErrorResponse(
 			site,
 			request,

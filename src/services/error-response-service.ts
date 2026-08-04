@@ -1,3 +1,4 @@
+import type { HeadersInit } from "bun";
 import type { ErrorResponseMode, SiteRecord } from "../types.ts";
 import { requestHost } from "../utils/http.ts";
 

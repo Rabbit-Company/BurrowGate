@@ -3,7 +3,7 @@ import { sha256Bytes, toBase64Url } from "../utils/crypto.ts";
 
 let keyPromise: Promise<CryptoKey> | null = null;
 
-function fromBase64Url(value: string): Uint8Array {
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
 	const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
 	const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
 	const binary = atob(padded);

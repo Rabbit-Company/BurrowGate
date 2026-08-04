@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import { randomToken } from "../utils/crypto.ts";
+import { Logger } from "../logger.ts";
 
 async function readNonEmpty(path: string): Promise<string | null> {
 	try {
@@ -27,7 +28,7 @@ export async function initializeRuntimeSecrets(): Promise<void> {
 		if (!value) {
 			value = randomToken(48);
 			await writePrivateFile(path, value);
-			console.log(`[BurrowGate] Generated persistent master key at ${path}`);
+			Logger.info(`[BurrowGate] Generated persistent master key at ${path}`);
 		}
 		config.masterKeyFile = path;
 	}
@@ -42,12 +43,12 @@ export async function initializeRuntimeSecrets(): Promise<void> {
 		}
 		config.admin.password = password;
 		if (generated) {
-			console.log("[BurrowGate] Generated bootstrap dashboard credentials:");
-			console.log(`[BurrowGate]   Username: ${config.admin.username}`);
-			console.log(`[BurrowGate]   Password: ${password}`);
-			console.log(`[BurrowGate] Credentials were saved to ${path}; protect or remove this file after setting BG_ADMIN_PASSWORD.`);
+			Logger.info("[BurrowGate] Generated bootstrap dashboard credentials:");
+			Logger.info(`[BurrowGate]   Username: ${config.admin.username}`);
+			Logger.info(`[BurrowGate]   Password: ${password}`);
+			Logger.info(`[BurrowGate] Credentials were saved to ${path}; protect or remove this file after setting BG_ADMIN_PASSWORD.`);
 		} else {
-			console.log(`[BurrowGate] Using bootstrap dashboard password stored at ${path}`);
+			Logger.info(`[BurrowGate] Using bootstrap dashboard password stored at ${path}`);
 		}
 	}
 }

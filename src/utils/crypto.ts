@@ -9,12 +9,12 @@ export function randomId(prefix = "bg"): string {
 	return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-export async function sha256Bytes(value: string | Uint8Array): Promise<Uint8Array> {
+export async function sha256Bytes(value: string | Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
 	const input = typeof value === "string" ? encoder.encode(value) : value;
 	return new Uint8Array(await crypto.subtle.digest("SHA-256", input));
 }
 
-export async function sha256Hex(value: string | Uint8Array): Promise<string> {
+export async function sha256Hex(value: string | Uint8Array<ArrayBuffer>): Promise<string> {
 	return toHex(await sha256Bytes(value));
 }
 
