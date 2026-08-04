@@ -1707,6 +1707,7 @@ function populateCountrySelects() {
 	countries.push({ code: "ZZ", name: "Unknown / unmapped" });
 	const configurations = [
 		["eventCountry", "All countries"],
+		["bandwidthCountry", "All countries"],
 		["sessionCountry", "All countries"],
 		["countryRuleCountry", "Select country"],
 	];
