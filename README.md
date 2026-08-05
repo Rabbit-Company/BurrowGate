@@ -125,8 +125,7 @@ The default Compose configuration is production ready:
 
 - host port 80 maps to BurrowGate port 80
 - host port 443 maps to BurrowGate port 443
-- runtime data is stored in the `burrowgate-data` volume
-- the process runs as the unprivileged `bun` user
+- runtime data is stored in the `./data` directory
 - only `NET_BIND_SERVICE` is added for low-port binding
 
 An `.env` file is optional. Copy the example file only when overriding defaults:
