@@ -30,6 +30,7 @@ let currentTls = null;
 let overviewRequestId = 0;
 let selectedRangeFrom = 0;
 let selectedRangeTo = 0;
+let dateRangeIsAutomatic = true;
 const loadedTabs = new Set(["traffic"]);
 
 const byId = (id) => document.getElementById(id);
@@ -118,10 +119,25 @@ function initializeDateRange() {
 	const now = Date.now();
 	const requestedTo = Number(url.searchParams.get("to"));
 	const requestedFrom = Number(url.searchParams.get("from"));
-	const to = Number.isFinite(requestedTo) && requestedTo > 0 ? requestedTo : now;
-	const from = Number.isFinite(requestedFrom) && requestedFrom >= 0 && requestedFrom < to ? requestedFrom : to - 24 * 3_600_000;
+	const explicitRange = Number.isFinite(requestedTo) && requestedTo > 0 && Number.isFinite(requestedFrom) && requestedFrom >= 0 && requestedFrom < requestedTo;
+	dateRangeIsAutomatic = !explicitRange;
+	const to = explicitRange ? requestedTo : now;
+	const from = explicitRange ? requestedFrom : to - 24 * 3_600_000;
 	setDateRangeInputs(from, to);
-	persistDateRange();
+	if (explicitRange) persistDateRange();
+	else {
+		url.searchParams.delete("from");
+		url.searchParams.delete("to");
+		history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+	}
+}
+
+function applyAutomaticRetentionDateRange() {
+	if (!dateRangeIsAutomatic) return;
+	const retentionDays = Number(selectedSite()?.eventRetentionDays ?? defaultEventRetentionDays);
+	const normalizedDays = Number.isFinite(retentionDays) ? Math.min(365, Math.max(1, Math.floor(retentionDays))) : 7;
+	const to = Date.now();
+	setDateRangeInputs(to - normalizedDays * 24 * 3_600_000, to);
 }
 
 function readDateRangeInputs() {
@@ -736,6 +752,7 @@ async function loadSites() {
 	const requestedExists = sites.some((site) => site.id === requestedId);
 	if (!currentExists) selectedSiteId = requestedExists ? requestedId : (sites.find((site) => site.enabled)?.id ?? sites[0]?.id ?? null);
 	persistSiteSelection();
+	applyAutomaticRetentionDateRange();
 	renderSiteSelector();
 	renderSites();
 	if (loadedTabs.has("access")) renderAccessList();
@@ -792,6 +809,7 @@ async function chooseSite(id) {
 	if (!sites.some((site) => site.id === id) || selectedSiteId === id) return;
 	selectedSiteId = id;
 	persistSiteSelection();
+	applyAutomaticRetentionDateRange();
 	renderSiteSelector();
 	await reloadSelectedSite();
 }
@@ -1845,6 +1863,7 @@ async function loadGeoMetrics() {
 }
 
 async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated") {
+	dateRangeIsAutomatic = false;
 	setDateRangeInputs(from, to);
 	persistDateRange();
 	tableState.traffic.page = 1;
