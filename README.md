@@ -41,12 +41,57 @@ Requirements:
 - Public TCP ports 80 and 443
 - A domain pointing to the VPS for trusted TLS certificates
 
-Clone and start BurrowGate:
+Create a directory for BurrowGate and download only the Compose file:
 
 ```bash
-git clone https://github.com/Rabbit-Company/BurrowGate.git
-cd BurrowGate
-docker compose up -d --build
+mkdir burrowgate && cd burrowgate
+curl -fsSLO https://raw.githubusercontent.com/Rabbit-Company/BurrowGate/main/docker-compose.yml
+```
+
+Alternatively, create a `docker-compose.yml` file and copy the following content into it:
+
+```yaml
+services:
+  burrowgate:
+    image: rabbitcompany/burrowgate:latest
+    container_name: burrowgate
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${BG_HTTP_PUBLIC_PORT:-80}:${BG_HTTP_PORT:-80}"
+      - "${BG_HTTPS_PUBLIC_PORT:-443}:${BG_HTTPS_PORT:-443}"
+    env_file:
+      - path: .env
+        required: false
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const response = await fetch('http://127.0.0.1/_burrowgate/health'); if (!response.ok) process.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  geoipupdate:
+    image: ghcr.io/maxmind/geoipupdate
+    container_name: geoipupdate
+    restart: unless-stopped
+    profiles: ["geoip"]
+    environment:
+      GEOIPUPDATE_ACCOUNT_ID: "${MAXMIND_ACCOUNT_ID:-}"
+      GEOIPUPDATE_LICENSE_KEY: "${MAXMIND_LICENSE_KEY:-}"
+      GEOIPUPDATE_EDITION_IDS: GeoLite2-Country
+      GEOIPUPDATE_FREQUENCY: "${GEOIPUPDATE_FREQUENCY:-72}"
+    volumes:
+      - ./data/geoip:/usr/share/GeoIP
+```
+
+Start BurrowGate:
+
+```bash
+docker compose up -d
 docker compose logs burrowgate
 ```
 
