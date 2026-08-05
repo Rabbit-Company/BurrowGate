@@ -16,6 +16,9 @@ export async function runMaintenance(): Promise<void> {
 			const retentionDays = Number(site.event_retention_days ?? config.eventRetentionDays);
 			await repository.deleteEventsBeforeForSite(site.id, now - retentionDays * DAY_MS);
 		}
+		for (const stream of await repository.allStreams()) {
+			await repository.deleteStreamDataBefore(stream.id, now - Number(stream.event_retention_days) * DAY_MS);
+		}
 		await repository.deleteExpiredAcmeChallenges(now);
 		await backfillGeoIp();
 	} catch (error) {

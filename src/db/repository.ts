@@ -19,6 +19,11 @@ import type {
 	SiteAccessSettingsRecord,
 	SiteTlsSettingsRecord,
 	BandwidthMinuteRecord,
+	StreamRecord,
+	StreamEventRecord,
+	StreamBandwidthMinuteRecord,
+	StreamProtocol,
+	StreamEventType,
 } from "../types.ts";
 
 export type SortDirection = "asc" | "desc";
@@ -100,6 +105,53 @@ export interface BandwidthIpRow {
 	upstream_received_bytes: number | string;
 	client_total_bytes: number | string;
 	upstream_total_bytes: number | string;
+}
+
+export interface StreamEventQuery {
+	streamId?: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	protocol?: StreamProtocol;
+	eventType?: StreamEventType;
+	countryCode?: string;
+	since: number;
+	until: number;
+	sortBy:
+		| "created_at"
+		| "event_type"
+		| "protocol"
+		| "incoming_port"
+		| "client_ip"
+		| "country_code"
+		| "reason"
+		| "client_to_upstream_bytes"
+		| "upstream_to_client_bytes";
+	sortDirection: SortDirection;
+}
+
+export interface StreamBandwidthQuery {
+	streamId?: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	protocol?: StreamProtocol;
+	countryCode?: string;
+	since: number;
+	until: number;
+	sortBy: "protocol" | "incoming_port" | "ip" | "country_code" | "client_to_upstream_bytes" | "upstream_to_client_bytes" | "total_bytes";
+	sortDirection: SortDirection;
+}
+
+export interface StreamBandwidthRow {
+	stream_id: string;
+	incoming_port: number | string;
+	ip: string;
+	country_code: string;
+	protocol: StreamProtocol;
+	client_to_upstream_bytes: number | string;
+	upstream_to_client_bytes: number | string;
+	total_bytes: number | string;
 }
 
 export interface TrafficMetricPoint {
@@ -1166,7 +1218,7 @@ export const repository = {
 		await db`DELETE FROM certificates WHERE site_id=${siteId}`;
 	},
 	async dueAcmeCertificates(cutoff: number): Promise<CertificateRecord[]> {
-		return (await db`SELECT c.* FROM certificates c JOIN site_tls_settings t ON t.site_id=c.site_id JOIN sites s ON s.id=c.site_id WHERE c.source='letsencrypt' AND c.status='active' AND t.mode='letsencrypt' AND s.enabled=1 AND c.next_renewal_at IS NOT NULL AND c.next_renewal_at <= ${cutoff} ORDER BY c.next_renewal_at ASC`) as CertificateRecord[];
+		return (await db`SELECT c.* FROM certificates c JOIN site_tls_settings t ON t.site_id=c.site_id JOIN sites s ON s.id=c.site_id WHERE c.source='letsencrypt' AND c.status='active' AND ((t.mode='letsencrypt' AND s.enabled=1) OR EXISTS (SELECT 1 FROM streams st WHERE st.certificate_id=c.id AND st.tcp_enabled=1)) AND c.next_renewal_at IS NOT NULL AND c.next_renewal_at <= ${cutoff} ORDER BY c.next_renewal_at ASC`) as CertificateRecord[];
 	},
 	async acmeAccount(directoryUrl: string): Promise<AcmeAccountRecord | null> {
 		const rows = (await db`SELECT * FROM acme_accounts WHERE directory_url=${directoryUrl} LIMIT 1`) as AcmeAccountRecord[];
@@ -1211,6 +1263,238 @@ export const repository = {
 	async deleteEventsBefore(cutoff: number): Promise<void> {
 		await db`DELETE FROM request_events WHERE created_at < ${cutoff}`;
 		await db`DELETE FROM bandwidth_minutes WHERE bucket_start < ${cutoff}`;
+	},
+	async allStreams(): Promise<StreamRecord[]> {
+		return (await db`SELECT * FROM streams ORDER BY incoming_port ASC`) as StreamRecord[];
+	},
+	async streamById(id: string): Promise<StreamRecord | null> {
+		const rows = (await db`SELECT * FROM streams WHERE id=${id} LIMIT 1`) as StreamRecord[];
+		return rows[0] ?? null;
+	},
+	async saveStream(stream: StreamRecord): Promise<void> {
+		const existing = await this.streamById(stream.id);
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
+			if (existing) {
+				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+			} else {
+				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,certificate_id,event_retention_days,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.certificate_id},${stream.event_retention_days},${stream.created_at},${stream.updated_at})`;
+			}
+			if (stream.tcp_enabled === 1) {
+				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;
+			}
+			if (stream.udp_enabled === 1) {
+				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'udp',${stream.incoming_port})`;
+			}
+		});
+	},
+	async deleteStream(id: string): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM stream_bindings WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_events WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${id}`;
+			await transaction`DELETE FROM streams WHERE id=${id}`;
+		});
+	},
+	async certificateById(id: string): Promise<CertificateRecord | null> {
+		const rows = (await db`SELECT * FROM certificates WHERE id=${id} LIMIT 1`) as CertificateRecord[];
+		return rows[0] ?? null;
+	},
+	async streamCertificateOptions(): Promise<Array<CertificateRecord & { site_name: string; public_host: string }>> {
+		return (await db`SELECT c.*,s.name AS site_name,s.public_host FROM certificates c JOIN sites s ON s.id=c.site_id WHERE c.status='active' AND c.expires_at > ${Date.now()} AND c.certificate_pem IS NOT NULL AND c.encrypted_private_key IS NOT NULL ORDER BY c.primary_domain ASC`) as Array<
+			CertificateRecord & { site_name: string; public_host: string }
+		>;
+	},
+	async streamsUsingCertificate(certificateId: string): Promise<StreamRecord[]> {
+		return (await db`SELECT * FROM streams WHERE certificate_id=${certificateId} ORDER BY incoming_port ASC`) as StreamRecord[];
+	},
+	async insertStreamEvents(events: StreamEventRecord[]): Promise<void> {
+		if (events.length === 0) return;
+		await db.begin(async (transaction) => {
+			for (const event of events) {
+				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,client_to_upstream_bytes,upstream_to_client_bytes,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.created_at})`;
+			}
+		});
+	},
+	async addStreamBandwidthDeltas(records: StreamBandwidthMinuteRecord[]): Promise<void> {
+		if (records.length === 0) return;
+		const mysql = config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://");
+		await db.begin(async (transaction) => {
+			for (const record of records) {
+				if (mysql) {
+					await transaction`INSERT INTO stream_bandwidth_minutes (stream_id,incoming_port,bucket_start,ip,country_code,protocol,client_to_upstream_bytes,upstream_to_client_bytes) VALUES (${record.stream_id},${record.incoming_port},${record.bucket_start},${record.ip},${record.country_code},${record.protocol},${record.client_to_upstream_bytes},${record.upstream_to_client_bytes}) ON DUPLICATE KEY UPDATE client_to_upstream_bytes=client_to_upstream_bytes+${record.client_to_upstream_bytes},upstream_to_client_bytes=upstream_to_client_bytes+${record.upstream_to_client_bytes}`;
+				} else {
+					await transaction`INSERT INTO stream_bandwidth_minutes (stream_id,incoming_port,bucket_start,ip,country_code,protocol,client_to_upstream_bytes,upstream_to_client_bytes) VALUES (${record.stream_id},${record.incoming_port},${record.bucket_start},${record.ip},${record.country_code},${record.protocol},${record.client_to_upstream_bytes},${record.upstream_to_client_bytes}) ON CONFLICT (stream_id,incoming_port,bucket_start,ip,country_code,protocol) DO UPDATE SET client_to_upstream_bytes=stream_bandwidth_minutes.client_to_upstream_bytes+EXCLUDED.client_to_upstream_bytes,upstream_to_client_bytes=stream_bandwidth_minutes.upstream_to_client_bytes+EXCLUDED.upstream_to_client_bytes`;
+				}
+			}
+		});
+	},
+	async pagedStreamEvents(query: StreamEventQuery): Promise<PageResult<StreamEventRecord>> {
+		const pattern = searchPattern(query.search);
+		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
+		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
+		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
+		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
+		const searchFilter = pattern
+			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR LOWER(COALESCE(connection_id,'')) LIKE ${pattern})`
+			: db``;
+		const offset = (query.page - 1) * query.pageSize;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const [countRow] =
+			(await db`SELECT COUNT(*) AS count FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${searchFilter}`) as Array<{
+				count: number | string;
+			}>;
+		const items =
+			(await db`SELECT * FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${searchFilter} ORDER BY ${order} LIMIT ${query.pageSize} OFFSET ${offset}`) as StreamEventRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async pagedStreamBandwidth(query: StreamBandwidthQuery): Promise<PageResult<StreamBandwidthRow>> {
+		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
+		const pattern = searchPattern(query.search);
+		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
+		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
+		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
+		const searchFilter = pattern ? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(country_code) LIKE ${pattern})` : db``;
+		const offset = (query.page - 1) * query.pageSize;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const [countRow] =
+			(await db`SELECT COUNT(*) AS count FROM (SELECT stream_id,incoming_port,ip,country_code,protocol FROM stream_bandwidth_minutes WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${query.until} AND ip <> '__other__' ${streamFilter} ${protocolFilter} ${countryFilter} ${searchFilter} GROUP BY stream_id,incoming_port,ip,country_code,protocol) AS stream_bandwidth_ips`) as Array<{
+				count: number | string;
+			}>;
+		const items =
+			(await db`SELECT stream_id,incoming_port,ip,country_code,protocol,COALESCE(SUM(client_to_upstream_bytes),0) AS client_to_upstream_bytes,COALESCE(SUM(upstream_to_client_bytes),0) AS upstream_to_client_bytes,COALESCE(SUM(client_to_upstream_bytes+upstream_to_client_bytes),0) AS total_bytes FROM stream_bandwidth_minutes WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${query.until} AND ip <> '__other__' ${streamFilter} ${protocolFilter} ${countryFilter} ${searchFilter} GROUP BY stream_id,incoming_port,ip,country_code,protocol ORDER BY ${order} LIMIT ${query.pageSize} OFFSET ${offset}`) as StreamBandwidthRow[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async streamOverview(
+		streamId: string | undefined,
+		since: number,
+		until: number,
+	): Promise<{
+		connections: number;
+		disconnections: number;
+		errors: number;
+		uniqueIps: number;
+		clientToUpstreamBytes: number;
+		upstreamToClientBytes: number;
+		countries: Array<{ countryCode: string; connections: number; bytes: number }>;
+	}> {
+		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const [events] =
+			(await db`SELECT SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connections,SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnections,SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors,COUNT(DISTINCT CASE WHEN event_type='connected' THEN client_ip ELSE NULL END) AS unique_ips FROM stream_events WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}`) as Array<
+				Record<string, number | string>
+			>;
+		const [bandwidth] =
+			(await db`SELECT COALESCE(SUM(client_to_upstream_bytes),0) AS client_to_upstream_bytes,COALESCE(SUM(upstream_to_client_bytes),0) AS upstream_to_client_bytes FROM stream_bandwidth_minutes WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${bandwidthStreamFilter}`) as Array<
+				Record<string, number | string>
+			>;
+		const countryRows =
+			(await db`SELECT country_code,COALESCE(SUM(client_to_upstream_bytes+upstream_to_client_bytes),0) AS bytes FROM stream_bandwidth_minutes WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${bandwidthStreamFilter} GROUP BY country_code ORDER BY bytes DESC`) as Array<{
+				country_code: string;
+				bytes: number | string;
+			}>;
+		const connectionCountries =
+			(await db`SELECT COALESCE(country_code,'ZZ') AS country_code,COUNT(*) AS connections FROM stream_events WHERE event_type='connected' AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter} GROUP BY COALESCE(country_code,'ZZ')`) as Array<{
+				country_code: string;
+				connections: number | string;
+			}>;
+		const connectionsByCountry = new Map(connectionCountries.map((row) => [row.country_code, toNumber(row.connections)]));
+		const countries = new Map<string, { countryCode: string; connections: number; bytes: number }>();
+		for (const row of countryRows)
+			countries.set(row.country_code, {
+				countryCode: row.country_code,
+				connections: connectionsByCountry.get(row.country_code) ?? 0,
+				bytes: toNumber(row.bytes),
+			});
+		for (const row of connectionCountries)
+			if (!countries.has(row.country_code))
+				countries.set(row.country_code, { countryCode: row.country_code, connections: toNumber(row.connections), bytes: 0 });
+		return {
+			connections: toNumber(events?.connections),
+			disconnections: toNumber(events?.disconnections),
+			errors: toNumber(events?.errors),
+			uniqueIps: toNumber(events?.unique_ips),
+			clientToUpstreamBytes: toNumber(bandwidth?.client_to_upstream_bytes),
+			upstreamToClientBytes: toNumber(bandwidth?.upstream_to_client_bytes),
+			countries: [...countries.values()].sort((a, b) => b.bytes - a.bytes || b.connections - a.connections),
+		};
+	},
+	async streamMetrics(
+		streamId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{
+			bucket: number;
+			connected: number;
+			disconnected: number;
+			errors: number;
+			clientToUpstreamBytes: number;
+			upstreamToClientBytes: number;
+		}>;
+	}> {
+		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const eventBucket = metricBucketExpression("created_at", bucketMs);
+		const bandwidthBucket = metricBucketExpression("bucket_start", bucketMs);
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const eventRows = (await db`
+      SELECT ${eventBucket} * ${bucketMs} AS bucket,
+        SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connected,
+        SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnected,
+        SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors
+      FROM stream_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}
+      GROUP BY ${eventBucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			connected: number | string;
+			disconnected: number | string;
+			errors: number | string;
+		}>;
+		const bandwidthRows = (await db`
+      SELECT ${bandwidthBucket} * ${bucketMs} AS bucket,
+        COALESCE(SUM(client_to_upstream_bytes),0) AS client_to_upstream_bytes,
+        COALESCE(SUM(upstream_to_client_bytes),0) AS upstream_to_client_bytes
+      FROM stream_bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${bandwidthStreamFilter}
+      GROUP BY ${bandwidthBucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			client_to_upstream_bytes: number | string;
+			upstream_to_client_bytes: number | string;
+		}>;
+		const series = emptyMetricPoints(since, until, bucketMs, (bucket) => ({
+			bucket,
+			connected: 0,
+			disconnected: 0,
+			errors: 0,
+			clientToUpstreamBytes: 0,
+			upstreamToClientBytes: 0,
+		}));
+		const byBucket = new Map(series.map((point) => [point.bucket, point]));
+		for (const row of eventRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.connected = toNumber(row.connected);
+			point.disconnected = toNumber(row.disconnected);
+			point.errors = toNumber(row.errors);
+		}
+		for (const row of bandwidthRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.clientToUpstreamBytes = toNumber(row.client_to_upstream_bytes);
+			point.upstreamToClientBytes = toNumber(row.upstream_to_client_bytes);
+		}
+		return { series };
+	},
+	async deleteStreamDataBefore(streamId: string, cutoff: number): Promise<void> {
+		await db`DELETE FROM stream_events WHERE stream_id=${streamId} AND created_at < ${cutoff}`;
+		await db`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff}`;
 	},
 	async adminByHash(hash: string): Promise<AdminSessionRecord | null> {
 		const rows = (await db`SELECT * FROM admin_sessions WHERE token_hash=${hash} LIMIT 1`) as AdminSessionRecord[];

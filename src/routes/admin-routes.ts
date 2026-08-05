@@ -998,6 +998,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const site = await repository.siteById(ctx.params.id);
 		if (!site) return jsonResponse({ error: "Site not found" }, 404);
 		const certificate = await repository.certificateBySite(site.id);
+		if (certificate) {
+			const streams = await repository.streamsUsingCertificate(certificate.id);
+			if (streams.length) {
+				return jsonResponse(
+					{ error: `This certificate is used by stream port${streams.length === 1 ? "" : "s"} ${streams.map((stream) => stream.incoming_port).join(", ")}` },
+					409,
+				);
+			}
+		}
 		await repository.deleteCertificate(site.id);
 		await updateTlsSettings(site, { mode: "disabled", forceHttps: false });
 		await recordCertificateEvent(site.id, certificate?.id ?? null, "warning", "Certificate removed");

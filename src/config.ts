@@ -87,6 +87,14 @@ export const config = {
 		flushIntervalMs: envNumber("BG_BANDWIDTH_FLUSH_INTERVAL_MS", 10_000, 1_000, 300_000),
 		maxPendingKeys: envNumber("BG_BANDWIDTH_MAX_PENDING_KEYS", 50_000, 100, 1_000_000),
 	},
+	streams: {
+		connectTimeoutSeconds: envNumber("BG_STREAM_CONNECT_TIMEOUT_SECONDS", 15, 1, 300),
+		idleTimeoutSeconds: envNumber("BG_STREAM_IDLE_TIMEOUT_SECONDS", 300, 10, 86_400),
+		udpPeerIdleTimeoutSeconds: envNumber("BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS", 60, 5, 3_600),
+		maxBufferedBytes: envNumber("BG_STREAM_MAX_BUFFERED_BYTES", 1 * 1_024 * 1_024, 1_024, 64 * 1_024 * 1_024),
+		maxUdpPeersPerStream: envNumber("BG_STREAM_MAX_UDP_PEERS", 10_000, 1, 1_000_000),
+		maxPendingDatagrams: envNumber("BG_STREAM_MAX_PENDING_DATAGRAMS", 256, 1, 65_536),
+	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
 		databasePath: process.env.BG_GEOIP_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-Country.mmdb`,

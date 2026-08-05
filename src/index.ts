@@ -35,6 +35,9 @@ import type { GatewayState } from "./types.ts";
 import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
 import { startBandwidthMetrics } from "./services/bandwidth-service.ts";
+import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
+import { streamProxyManager } from "./services/stream-proxy-service.ts";
+import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -44,6 +47,7 @@ await seedDefaultSite();
 await runMaintenance();
 startMaintenance();
 startBandwidthMetrics();
+startStreamMonitoring();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
 	Logger.warn(
@@ -75,6 +79,7 @@ registerAcmeRoutes(app);
 registerChallengeRoutes(app);
 registerAccessRoutes(app);
 registerAdminRoutes(app);
+registerStreamAdminRoutes(app);
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
 	return jsonResponse({
@@ -319,3 +324,4 @@ for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
 
 const listenerManager = new TlsListenerManager(app);
 await listenerManager.start();
+await streamProxyManager.start();

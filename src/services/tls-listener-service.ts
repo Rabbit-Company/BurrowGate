@@ -19,10 +19,15 @@ interface ListenerDependencies {
 	bootstrapCertificate?: () => Promise<TlsCertificateOption | null>;
 }
 
-let reloadHandler: (() => Promise<void>) | null = null;
+const reloadHandlers = new Set<() => Promise<void>>();
+
+export function registerTlsReloadHandler(handler: () => Promise<void>): () => void {
+	reloadHandlers.add(handler);
+	return () => reloadHandlers.delete(handler);
+}
 
 export function requestTlsReload(): Promise<void> {
-	return reloadHandler ? reloadHandler() : Promise.resolve();
+	return Promise.all([...reloadHandlers].map(async (handler) => await handler())).then(() => undefined);
 }
 
 export class TlsListenerManager {
@@ -35,7 +40,7 @@ export class TlsListenerManager {
 		private readonly app: Web<any>,
 		private readonly dependencies: ListenerDependencies = {},
 	) {
-		reloadHandler = async () => await this.reloadHttps();
+		registerTlsReloadHandler(async () => await this.reloadHttps());
 	}
 
 	private async dispatch(request: Request, server: WebSocketUpgradeServer, transport: RequestTransport): Promise<Response | undefined> {

@@ -10,6 +10,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Uploaded PEM certificate support
 - SNI certificate selection for multiple domains
 - Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying
+- Native TCP and UDP stream proxying, including optional incoming TCP TLS termination
 - Per-site and per-route access policies
 - Fixed-window, sliding-window, and token-bucket rate limits
 - Pluggable challenge providers and ordered challenge chains
@@ -20,6 +21,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Signed origin verification headers
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
+- Stream connection logs, live TCP/UDP peers, GeoIP enrichment, and bandwidth by IP and incoming port
 - Per-site traffic retention
 - Country-level GeoIP analytics with an interactive SVG world map
 - Country codes, country filters, and country tooltips in traffic and session tables
@@ -89,34 +91,38 @@ docker compose up -d --build --force-recreate
 
 ## Configuration
 
-| Variable                            | Default                              | Description                                                                                |
-| ----------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `BG_ENV`                            | `production`                         | Runtime environment                                                                        |
-| `BG_HOST`                           | `0.0.0.0`                            | Listener address                                                                           |
-| `BG_HTTP_ENABLED`                   | `true`                               | Enable the HTTP listener                                                                   |
-| `BG_HTTP_PORT`                      | `80`                                 | Internal HTTP port                                                                         |
-| `BG_HTTP_PUBLIC_PORT`               | `80`                                 | Public HTTP port used in redirects and ACME validation                                     |
-| `BG_HTTPS_ENABLED`                  | `true`                               | Enable the HTTPS listener                                                                  |
-| `BG_HTTPS_PORT`                     | `443`                                | Internal HTTPS port                                                                        |
-| `BG_HTTPS_PUBLIC_PORT`              | `443`                                | Public HTTPS port used in redirects                                                        |
-| `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`  | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload |
-| `DATABASE_URL`                      | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                       |
-| `BG_ADMIN_USERNAME`                 | `admin`                              | Dashboard username                                                                         |
-| `BG_ADMIN_PASSWORD`                 | generated                            | Dashboard password                                                                         |
-| `BG_COOKIE_SECURE`                  | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
-| `BG_MASTER_KEY`                     | generated                            | Encrypts certificate and ACME private keys                                                 |
-| `BG_EVENT_RETENTION_DAYS`           | `7`                                  | Default retention assigned to new sites                                                    |
-| `BG_BANDWIDTH_FLUSH_INTERVAL_MS`    | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
-| `BG_BANDWIDTH_MAX_PENDING_KEYS`     | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |
-| `BG_GEOIP_ENABLED`                  | `true`                               | Enable country-level GeoIP enrichment                                                      |
-| `BG_GEOIP_DATABASE_PATH`            | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
-| `BG_GEOIP_CACHE_ENTRIES`            | `4096`                               | Maximum GeoIP reader cache entries                                                         |
-| `BG_GEOIP_RETRY_SECONDS`            | `30`                                 | Retry interval when the MMDB file is not available yet                                     |
-| `BG_DEFAULT_POW_DIFFICULTY`         | `18`                                 | Default SHA-256 challenge difficulty                                                       |
-| `BG_WEBSOCKET_ENABLED`              | `true`                               | Enable WebSocket proxying                                                                  |
-| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS` | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
-| `BG_ACME_DIRECTORY_URL`             | Let's Encrypt production             | ACME directory URL                                                                         |
-| `BG_ACME_EMAIL`                     | empty                                | Default ACME contact email                                                                 |
+| Variable                                  | Default                              | Description                                                                                |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `BG_ENV`                                  | `production`                         | Runtime environment                                                                        |
+| `BG_HOST`                                 | `0.0.0.0`                            | Listener address                                                                           |
+| `BG_HTTP_ENABLED`                         | `true`                               | Enable the HTTP listener                                                                   |
+| `BG_HTTP_PORT`                            | `80`                                 | Internal HTTP port                                                                         |
+| `BG_HTTP_PUBLIC_PORT`                     | `80`                                 | Public HTTP port used in redirects and ACME validation                                     |
+| `BG_HTTPS_ENABLED`                        | `true`                               | Enable the HTTPS listener                                                                  |
+| `BG_HTTPS_PORT`                           | `443`                                | Internal HTTPS port                                                                        |
+| `BG_HTTPS_PUBLIC_PORT`                    | `443`                                | Public HTTPS port used in redirects                                                        |
+| `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`        | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload |
+| `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                       |
+| `BG_ADMIN_USERNAME`                       | `admin`                              | Dashboard username                                                                         |
+| `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                         |
+| `BG_COOKIE_SECURE`                        | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
+| `BG_MASTER_KEY`                           | generated                            | Encrypts certificate and ACME private keys                                                 |
+| `BG_EVENT_RETENTION_DAYS`                 | `7`                                  | Default monitoring retention assigned to new sites and streams                             |
+| `BG_BANDWIDTH_FLUSH_INTERVAL_MS`          | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
+| `BG_BANDWIDTH_MAX_PENDING_KEYS`           | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |
+| `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                      |
+| `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
+| `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP reader cache entries                                                         |
+| `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when the MMDB file is not available yet                                     |
+| `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                       |
+| `BG_WEBSOCKET_ENABLED`                    | `true`                               | Enable WebSocket proxying                                                                  |
+| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS`       | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
+| `BG_STREAM_IDLE_TIMEOUT_SECONDS`          | `300`                                | Idle timeout for established TCP streams                                                   |
+| `BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS` | `60`                                 | Inactivity interval used to close a synthetic UDP peer session                             |
+| `BG_STREAM_MAX_BUFFERED_BYTES`            | `1048576`                            | Maximum queued TCP data per proxied connection                                             |
+| `BG_STREAM_MAX_UDP_PEERS`                 | `10000`                              | Maximum tracked UDP peers per configured stream                                            |
+| `BG_ACME_DIRECTORY_URL`                   | Let's Encrypt production             | ACME directory URL                                                                         |
+| `BG_ACME_EMAIL`                           | empty                                | Default ACME contact email                                                                 |
 
 See [`.env.example`](.env.example) for every available setting.
 
@@ -281,6 +287,24 @@ Private keys are encrypted with AES-256-GCM before they are stored in SQL. The e
 Back up the database and master key together. Losing the master key makes stored private keys unusable.
 
 See [`docs/TLS.md`](docs/TLS.md).
+
+## TCP and UDP Streams
+
+Open the **Streams** dashboard from the switcher at the top of the control panel. Each stream configures an incoming port, forward host and port, TCP and/or UDP, optional TCP TLS termination, and its own monitoring-retention period.
+
+The dashboard provides live TCP connections and UDP peers, connect/disconnect and error logs, client country, and payload totals grouped by IP, incoming port, and protocol. Because UDP has no transport connection lifecycle, BurrowGate opens a synthetic peer session on the first datagram and closes it after the configured inactivity timeout.
+
+Docker bridge networking must publish each configured port. A TCP and UDP stream on port 25565 requires both mappings:
+
+```yaml
+ports:
+  - "25565:25565/tcp"
+  - "25565:25565/udp"
+```
+
+Selecting a certificate terminates incoming TCP TLS and forwards decrypted bytes. Leaving the certificate empty performs raw TCP forwarding and therefore supports TLS passthrough. TLS/DTLS termination is not available for UDP.
+
+See [`docs/STREAMS.md`](docs/STREAMS.md).
 
 ## WebSocket Proxying
 

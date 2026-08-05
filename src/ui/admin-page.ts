@@ -20,7 +20,7 @@ export function adminPage(): string {
 		"Dashboard",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate</div><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate</div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="refreshDashboard" class="button secondary" type="button">Refresh dashboard</button><button id="logout" class="button secondary">Log out</button></div>

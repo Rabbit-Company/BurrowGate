@@ -178,9 +178,9 @@ export async function issueLetsEncryptCertificate(
 		try {
 			await requestTlsReload();
 		} catch (error) {
-			const message = `Certificate was stored, but HTTPS listener activation failed: ${errorMessage(error)}`;
+			const message = `Certificate was stored, but TLS listener activation failed: ${errorMessage(error)}`;
 			await repository.updateCertificateAttempt(site.id, Date.now(), message);
-			await recordCertificateEvent(site.id, certificate.id, "error", "HTTPS listener activation failed", { error: message });
+			await recordCertificateEvent(site.id, certificate.id, "error", "TLS listener activation failed", { error: message });
 			throw new Error(message, { cause: error });
 		}
 	} catch (error) {

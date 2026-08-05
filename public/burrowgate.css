@@ -135,6 +135,57 @@ button:disabled {
 .dashboard-header {
 	margin-bottom: 24px;
 }
+.dashboard-switch {
+	display: inline-flex;
+	gap: 0.25rem;
+	margin-top: 0.65rem;
+	padding: 0.2rem;
+	border: 1px solid #263247;
+	border-radius: 0.6rem;
+	background: #0b1220;
+}
+.dashboard-switch a {
+	padding: 0.4rem 0.7rem;
+	border-radius: 0.45rem;
+	color: #94a3b8;
+	font-size: 0.85rem;
+	font-weight: 700;
+	text-decoration: none;
+}
+.dashboard-switch a.active {
+	background: #7c3aed;
+	color: #fff;
+}
+.streams-layout {
+	display: grid;
+	grid-template-columns: minmax(18rem, 0.8fr) minmax(24rem, 1.2fr);
+	gap: 1rem;
+}
+.stream-status-row {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+	font-size: 0.8rem;
+}
+.protocol-toggles {
+	gap: 1rem;
+}
+.compose-mapping {
+	padding: 0.8rem;
+	border: 1px solid #263247;
+	border-radius: 0.55rem;
+	background: #0b1220;
+	overflow: auto;
+}
+.country-code-input {
+	width: 5rem;
+}
+@media (max-width: 900px) {
+	.streams-layout {
+		grid-template-columns: 1fr;
+	}
+}
 .dashboard-actions {
 	flex-wrap: wrap;
 	justify-content: flex-end;

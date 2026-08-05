@@ -165,6 +165,8 @@ export interface SiteAccessUserRecord {
 }
 
 export type BandwidthProtocol = "http" | "websocket";
+export type StreamProtocol = "tcp" | "udp";
+export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error";
 
 export interface BandwidthMinuteRecord {
 	site_id: string;
@@ -176,6 +178,47 @@ export interface BandwidthMinuteRecord {
 	client_sent_bytes: number;
 	upstream_sent_bytes: number;
 	upstream_received_bytes: number;
+}
+
+export interface StreamRecord {
+	id: string;
+	incoming_port: number;
+	forward_host: string;
+	forward_port: number;
+	tcp_enabled: number;
+	udp_enabled: number;
+	certificate_id: string | null;
+	event_retention_days: number;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface StreamEventRecord {
+	id: string;
+	stream_id: string;
+	incoming_port: number;
+	connection_id: string | null;
+	protocol: StreamProtocol;
+	event_type: StreamEventType;
+	client_ip: string | null;
+	client_port: number | null;
+	country_code: string | null;
+	reason: string | null;
+	error: string | null;
+	client_to_upstream_bytes: number;
+	upstream_to_client_bytes: number;
+	created_at: number;
+}
+
+export interface StreamBandwidthMinuteRecord {
+	stream_id: string;
+	incoming_port: number;
+	bucket_start: number;
+	ip: string;
+	country_code: string;
+	protocol: StreamProtocol;
+	client_to_upstream_bytes: number;
+	upstream_to_client_bytes: number;
 }
 
 export interface ChallengeFlowRecord {

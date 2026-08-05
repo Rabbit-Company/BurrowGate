@@ -199,6 +199,14 @@ export async function certificateTlsOptions(): Promise<TlsCertificateOption[]> {
 	return result;
 }
 
+export async function streamCertificateTlsOption(certificateId: string): Promise<Bun.TLSOptions> {
+	const record = await repository.certificateById(certificateId);
+	if (!record || record.status !== "active" || Number(record.expires_at ?? 0) <= Date.now() || !record.certificate_pem || !record.encrypted_private_key) {
+		throw new Error("The stream TLS certificate is unavailable or expired");
+	}
+	return { cert: record.certificate_pem, key: await decryptSecret(record.encrypted_private_key) };
+}
+
 export async function tlsSettings(siteId: string): Promise<SiteTlsSettingsRecord> {
 	return await repository.ensureTlsSettings(siteId);
 }

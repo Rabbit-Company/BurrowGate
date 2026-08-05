@@ -224,6 +224,52 @@ CREATE TABLE IF NOT EXISTS certificate_events (
   details_json TEXT NOT NULL,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS streams (
+  id VARCHAR(64) PRIMARY KEY,
+  incoming_port INTEGER NOT NULL,
+  forward_host VARCHAR(255) NOT NULL,
+  forward_port INTEGER NOT NULL,
+  tcp_enabled INTEGER NOT NULL DEFAULT 1,
+  udp_enabled INTEGER NOT NULL DEFAULT 0,
+  certificate_id VARCHAR(64) NULL,
+  event_retention_days INTEGER NOT NULL DEFAULT 7,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stream_bindings (
+  stream_id VARCHAR(64) NOT NULL,
+  protocol VARCHAR(8) NOT NULL,
+  incoming_port INTEGER NOT NULL,
+  PRIMARY KEY (protocol, incoming_port),
+  UNIQUE (stream_id, protocol)
+);
+CREATE TABLE IF NOT EXISTS stream_events (
+  id VARCHAR(64) PRIMARY KEY,
+  stream_id VARCHAR(64) NOT NULL,
+  incoming_port INTEGER NOT NULL,
+  connection_id VARCHAR(64) NULL,
+  protocol VARCHAR(8) NOT NULL,
+  event_type VARCHAR(32) NOT NULL,
+  client_ip VARCHAR(128) NULL,
+  client_port INTEGER NULL,
+  country_code VARCHAR(2) NULL,
+  reason VARCHAR(255) NULL,
+  error TEXT NULL,
+  client_to_upstream_bytes BIGINT NOT NULL DEFAULT 0,
+  upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stream_bandwidth_minutes (
+  stream_id VARCHAR(64) NOT NULL,
+  incoming_port INTEGER NOT NULL,
+  bucket_start BIGINT NOT NULL,
+  ip VARCHAR(128) NOT NULL,
+  country_code VARCHAR(2) NOT NULL,
+  protocol VARCHAR(8) NOT NULL,
+  client_to_upstream_bytes BIGINT NOT NULL DEFAULT 0,
+  upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (stream_id, incoming_port, bucket_start, ip, country_code, protocol)
+);
 `;
 
 const indexes = [
@@ -262,6 +308,13 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_acme_challenges_site_expiry ON acme_http_challenges (site_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_acme_challenges_expiry ON acme_http_challenges (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_certificate_events_site_created ON certificate_events (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_streams_port ON streams (incoming_port)",
+	"CREATE INDEX IF NOT EXISTS idx_streams_certificate ON streams (certificate_id)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_events_stream_created ON stream_events (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_events_client_created ON stream_events (client_ip, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_events_port_created ON stream_events (incoming_port, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_stream_bucket ON stream_bandwidth_minutes (stream_id, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_ip_bucket ON stream_bandwidth_minutes (ip, bucket_start)",
 ];
 
 function isMySql(): boolean {
