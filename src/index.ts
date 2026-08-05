@@ -39,14 +39,17 @@ import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
+import { originHealthManager } from "./services/origin-health-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
 await initializeGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();
+await originHealthManager.initialize();
 await runMaintenance();
 startMaintenance();
+originHealthManager.start();
 startBandwidthMetrics();
 startStreamMonitoring();
 
@@ -127,6 +130,29 @@ async function gateway(ctx: any): Promise<Response> {
 				return new Response(null, { status: 308, headers: { location, "cache-control": "no-store" } });
 			}
 		}
+	}
+
+	if (originHealthManager.isMaintenanceMode(site.id)) {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: 503,
+			decision: "origin-unhealthy",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 503,
+				code: "origin_unhealthy",
+				error: "Protected origin is temporarily unavailable",
+				clientIp: ip,
+				reason: "BurrowGate is online, but the configured origin did not pass its health checks.",
+				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+			},
+			{ "retry-after": String(site.health_check_interval_seconds ?? 30), "x-burrowgate-error-code": "origin_unhealthy" },
+		);
 	}
 
 	const ipRule = await evaluateIp(site, ip);

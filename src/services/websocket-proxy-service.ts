@@ -23,6 +23,7 @@ import { resolveSiteForHost } from "./site-service.ts";
 import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
 import { recordBandwidth } from "./bandwidth-service.ts";
+import { originHealthManager } from "./origin-health-service.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -360,6 +361,29 @@ export async function handleWebSocketUpgrade(
 				return new Response(null, { status: 308, headers: { location, "cache-control": "no-store" } });
 			}
 		}
+	}
+
+	if (originHealthManager.isMaintenanceMode(site.id)) {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: 503,
+			decision: "origin-unhealthy",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 503,
+				code: "origin_unhealthy",
+				error: "Protected origin is temporarily unavailable",
+				clientIp: ip,
+				reason: "BurrowGate is online, but the configured origin did not pass its health checks.",
+				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+			},
+			{ "retry-after": String(site.health_check_interval_seconds ?? 30), "x-burrowgate-error-code": "origin_unhealthy" },
+		);
 	}
 
 	const ipRule = await evaluateIp(site, ip);

@@ -269,8 +269,9 @@ async function loadOverview() {
 	byId("retentionNote").textContent =
 		`Only the selected page is loaded. Request events are retained for ${overview.retentionDays} day${overview.retentionDays === 1 ? "" : "s"}.`;
 	if (overview.site) {
-		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} -> ${overview.site.originUrl}`;
+		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} to ${overview.site.originUrl}`;
 	}
+	renderOriginHealthBanner(overview.originHealth);
 	const defaultSize = String(overview.defaultPageSize ?? 50);
 	for (const id of ["eventPageSize", "bandwidthPageSize", "sessionPageSize", "rulePageSize"]) {
 		const select = byId(id);
@@ -650,6 +651,92 @@ function updateErrorResponseControls() {
 	byId("siteErrorJsonSettings").classList.toggle("hidden", htmlMode);
 }
 
+function healthBadgeClass(state) {
+	return state === "healthy" ? "ok" : state === "unhealthy" ? "bad" : state === "degraded" ? "warn" : "info";
+}
+
+function updateHealthControls() {
+	const clearingWebhook = byId("siteHealthClearWebhook").checked;
+	if (clearingWebhook) byId("siteHealthAlertsEnabled").checked = false;
+	byId("siteHealthSettings").classList.toggle("hidden", !byId("siteHealthEnabled").checked);
+	const webhookConfigured = !byId("siteHealthClearWebhookRow").classList.contains("hidden");
+	byId("siteHealthAlertSettings").classList.toggle("hidden", !byId("siteHealthAlertsEnabled").checked && !webhookConfigured && !clearingWebhook);
+}
+
+function renderOriginHealthBanner(status) {
+	const banner = byId("originHealthBanner");
+	if (!status || status.state === "disabled") {
+		banner.classList.add("hidden");
+		return;
+	}
+	const badge = byId("originHealthBannerBadge");
+	badge.className = `badge ${healthBadgeClass(status.state)}`;
+	badge.textContent = status.state;
+	byId("originHealthBannerTitle").textContent =
+		status.state === "unhealthy" ? "Origin unavailable" : status.state === "degraded" ? "Origin health degraded" : "Origin health";
+	byId("originHealthBannerMessage").textContent = status.lastCheckedAt
+		? `Last checked ${formatDate(status.lastCheckedAt)}${status.lastStatus ? `, HTTP ${status.lastStatus}` : ""}${status.lastError ? `: ${status.lastError}` : ""}`
+		: "Waiting for the first health check.";
+	banner.classList.toggle("hidden", status.state === "healthy");
+}
+
+function applySiteHealthStatus(status, events = []) {
+	const state = status?.state ?? "disabled";
+	const badge = byId("siteHealthStatusBadge");
+	badge.className = `badge ${healthBadgeClass(state)}`;
+	badge.textContent = state;
+	byId("siteHealthLastChecked").textContent = formatDate(status?.lastCheckedAt);
+	byId("siteHealthLastHealthy").textContent = formatDate(status?.lastHealthyAt);
+	byId("siteHealthLastResponse").textContent = status?.lastStatus
+		? `HTTP ${status.lastStatus}${status.lastLatencyMs !== null ? ` in ${formatDuration(status.lastLatencyMs)}` : ""}`
+		: status?.lastLatencyMs !== null && status?.lastLatencyMs !== undefined
+			? formatDuration(status.lastLatencyMs)
+			: "-";
+	byId("siteHealthFailures").textContent = formatNumber(status?.consecutiveFailures ?? 0);
+	byId("siteHealthError").textContent = status?.lastError ?? (status?.lastCheckedAt ? "Latest health check passed." : "No health check has run yet.");
+	byId("siteHealthEvents").innerHTML = events.length
+		? events
+				.map(
+					(event) =>
+						`<div class="health-event-item"><span>${formatDate(event.created_at)}</span><span class="badge ${healthBadgeClass(event.to_state)}">${escapeHtml(event.to_state)}</span><span>${escapeHtml(event.error ?? (event.status ? `HTTP ${event.status}` : `${event.from_state} to ${event.to_state}`))}</span></div>`,
+				)
+				.join("")
+		: '<p class="muted">No health state changes yet.</p>';
+}
+
+function applyHealthAlertDeliveries(alerts = []) {
+	byId("siteHealthAlertDeliveries").innerHTML = alerts.length
+		? alerts
+				.map(
+					(alert) =>
+						`<div class="health-event-item"><span>${formatDate(alert.createdAt)}</span><span class="badge ${alert.status === "delivered" ? "ok" : alert.status === "failed" ? "bad" : "warn"}">${escapeHtml(alert.status)}</span><span>${escapeHtml(alert.type)}${alert.attempts ? `, ${formatNumber(alert.attempts)} attempt${alert.attempts === 1 ? "" : "s"}` : ""}${alert.lastError ? `: ${escapeHtml(alert.lastError)}` : ""}</span></div>`,
+				)
+				.join("")
+		: '<p class="muted">No alerts have been queued.</p>';
+}
+
+async function loadSiteHealth(siteId) {
+	if (!siteId) return;
+	try {
+		const result = await api(`/sites/${encodeURIComponent(siteId)}/health`, {}, false);
+		applySiteHealthStatus(result.status, result.events ?? []);
+		applyHealthAlertDeliveries(result.alerts ?? []);
+		const site = sites.find((item) => item.id === siteId);
+		if (site) site.originHealth = result.status;
+		renderSites();
+		if (siteId === selectedSiteId) renderOriginHealthBanner(result.status);
+	} catch (error) {
+		byId("siteHealthError").textContent = error.message;
+	}
+}
+
+async function checkOriginNow(siteId = selectedSiteId) {
+	if (!siteId) throw new Error("Select a site first");
+	await api(`/sites/${encodeURIComponent(siteId)}/health/check`, { method: "POST" }, false);
+	await Promise.all([loadSiteHealth(siteId), loadOverview()]);
+	showToast("Origin health check completed.");
+}
+
 function renderSites() {
 	const container = byId("sitesList");
 	if (sites.length === 0) {
@@ -660,7 +747,7 @@ function renderSites() {
 		.map(
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
-      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span></div>
+      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span>${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
       <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
@@ -677,6 +764,25 @@ function resetSiteForm() {
 	byId("siteEventRetentionDays").value = String(defaultEventRetentionDays);
 	byId("siteEnabled").checked = true;
 	byId("siteDefaultAccessMode").value = "challenge";
+	byId("siteHealthEnabled").checked = false;
+	byId("siteHealthPath").value = "/health";
+	byId("siteHealthInterval").value = "30";
+	byId("siteHealthTimeout").value = "3000";
+	byId("siteHealthFailureThreshold").value = "3";
+	byId("siteHealthRecoveryThreshold").value = "2";
+	byId("siteHealthFailureMode").value = "monitor";
+	byId("siteHealthAlertsEnabled").checked = false;
+	byId("siteHealthAlertProvider").value = "generic";
+	byId("siteHealthWebhookUrl").value = "";
+	byId("siteHealthWebhookSecret").value = "";
+	byId("siteHealthClearWebhook").checked = false;
+	byId("siteHealthClearWebhookRow").classList.add("hidden");
+	byId("siteHealthWebhookConfigured").textContent = "No webhook is configured.";
+	byId("siteHealthRuntime").classList.add("hidden");
+	byId("siteHealthAlertRuntime").classList.add("hidden");
+	applySiteHealthStatus({ state: "disabled" }, []);
+	applyHealthAlertDeliveries([]);
+	updateHealthControls();
 	byId("siteChallengePolicy").value = JSON.stringify(defaultChallengePolicy(), null, 2);
 	byId("siteErrorResponseMode").value = errorResponseDefaults.mode ?? "json";
 	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
@@ -707,6 +813,27 @@ function editSite(id) {
 	byId("siteEventRetentionDays").value = String(site.eventRetentionDays ?? defaultEventRetentionDays);
 	byId("siteEnabled").checked = Boolean(site.enabled);
 	byId("siteDefaultAccessMode").value = site.defaultAccessMode ?? "challenge";
+	const health = site.healthCheck ?? {};
+	byId("siteHealthEnabled").checked = Boolean(health.enabled);
+	byId("siteHealthPath").value = health.path ?? "/health";
+	byId("siteHealthInterval").value = String(health.intervalSeconds ?? 30);
+	byId("siteHealthTimeout").value = String(health.timeoutMs ?? 3000);
+	byId("siteHealthFailureThreshold").value = String(health.failureThreshold ?? 3);
+	byId("siteHealthRecoveryThreshold").value = String(health.recoveryThreshold ?? 2);
+	byId("siteHealthFailureMode").value = health.failureMode ?? "monitor";
+	byId("siteHealthAlertsEnabled").checked = Boolean(health.alerts?.enabled);
+	byId("siteHealthAlertProvider").value = health.alerts?.provider ?? "generic";
+	byId("siteHealthWebhookUrl").value = "";
+	byId("siteHealthWebhookSecret").value = "";
+	byId("siteHealthClearWebhook").checked = false;
+	byId("siteHealthClearWebhookRow").classList.toggle("hidden", !health.alerts?.webhookConfigured);
+	byId("siteHealthWebhookConfigured").textContent = health.alerts?.webhookConfigured
+		? "An encrypted webhook destination is configured. Leave the URL blank to keep it."
+		: "No webhook is configured.";
+	byId("siteHealthRuntime").classList.remove("hidden");
+	byId("siteHealthAlertRuntime").classList.remove("hidden");
+	updateHealthControls();
+	applySiteHealthStatus(site.originHealth ?? { state: health.enabled ? "unknown" : "disabled" }, []);
 	byId("siteSigningSecret").value = "";
 	byId("siteChallengePolicy").value = JSON.stringify(site.challengePolicy, null, 2);
 	byId("siteErrorResponseMode").value = site.errorResponse?.mode ?? "json";
@@ -723,6 +850,7 @@ function editSite(id) {
 	byId("siteTlsPanel").classList.remove("hidden");
 	byId("siteName").focus();
 	void loadSiteTls(site.id);
+	void loadSiteHealth(site.id);
 }
 
 function randomSecret(bytes = 48) {
@@ -853,6 +981,22 @@ async function saveSite(event) {
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
 		errorJsonFields,
 		challengeHtmlTemplate: byId("siteChallengeHtmlTemplate").value,
+		healthCheck: {
+			enabled: byId("siteHealthEnabled").checked,
+			path: byId("siteHealthPath").value.trim(),
+			intervalSeconds: Number(byId("siteHealthInterval").value),
+			timeoutMs: Number(byId("siteHealthTimeout").value),
+			failureThreshold: Number(byId("siteHealthFailureThreshold").value),
+			recoveryThreshold: Number(byId("siteHealthRecoveryThreshold").value),
+			failureMode: byId("siteHealthFailureMode").value,
+			alerts: {
+				enabled: byId("siteHealthAlertsEnabled").checked,
+				provider: byId("siteHealthAlertProvider").value,
+				webhookUrl: byId("siteHealthWebhookUrl").value.trim(),
+				webhookSecret: byId("siteHealthWebhookSecret").value.trim(),
+				clearWebhook: byId("siteHealthClearWebhook").checked,
+			},
+		},
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -2231,6 +2375,17 @@ function bindActions() {
 		}
 	});
 	byId("siteForm").addEventListener("submit", saveSite);
+	byId("siteHealthEnabled").addEventListener("change", updateHealthControls);
+	byId("siteHealthAlertsEnabled").addEventListener("change", updateHealthControls);
+	byId("siteHealthClearWebhook").addEventListener("change", updateHealthControls);
+	byId("siteCheckOriginNow").addEventListener(
+		"click",
+		(event) => void runWithButton(event.currentTarget, () => checkOriginNow(editingSiteId)).catch((error) => showToast(error.message, "bad")),
+	);
+	byId("checkOriginNow").addEventListener(
+		"click",
+		(event) => void runWithButton(event.currentTarget, () => checkOriginNow(selectedSiteId)).catch((error) => showToast(error.message, "bad")),
+	);
 	byId("siteErrorResponseMode").addEventListener("change", updateErrorResponseControls);
 	byId("resetErrorHtmlTemplate").addEventListener("click", () => {
 		byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";

@@ -21,6 +21,17 @@ CREATE TABLE IF NOT EXISTS sites (
   error_html_template TEXT NULL,
   error_json_fields_json TEXT NULL,
 	challenge_html_template TEXT NULL,
+  health_check_enabled INTEGER NOT NULL DEFAULT 0,
+  health_check_path VARCHAR(2048) NOT NULL DEFAULT '/health',
+  health_check_interval_seconds INTEGER NOT NULL DEFAULT 30,
+  health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000,
+  health_check_failure_threshold INTEGER NOT NULL DEFAULT 3,
+  health_check_recovery_threshold INTEGER NOT NULL DEFAULT 2,
+  health_check_failure_mode VARCHAR(16) NOT NULL DEFAULT 'monitor',
+  health_alert_enabled INTEGER NOT NULL DEFAULT 0,
+  health_alert_provider VARCHAR(16) NOT NULL DEFAULT 'generic',
+  health_alert_webhook_url TEXT NULL,
+  health_alert_webhook_secret TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -270,6 +281,42 @@ CREATE TABLE IF NOT EXISTS stream_bandwidth_minutes (
   upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (stream_id, incoming_port, bucket_start, ip, country_code, protocol)
 );
+CREATE TABLE IF NOT EXISTS origin_health_status (
+  site_id VARCHAR(64) PRIMARY KEY,
+  state VARCHAR(16) NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_successes INTEGER NOT NULL DEFAULT 0,
+  last_checked_at BIGINT NULL,
+  last_healthy_at BIGINT NULL,
+  last_unhealthy_at BIGINT NULL,
+  last_status INTEGER NULL,
+  last_latency_ms INTEGER NULL,
+  last_error TEXT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS origin_health_events (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  from_state VARCHAR(16) NOT NULL,
+  to_state VARCHAR(16) NOT NULL,
+  status INTEGER NULL,
+  latency_ms INTEGER NULL,
+  error TEXT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS health_alert_outbox (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  event_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(32) NOT NULL,
+  payload_json TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at BIGINT NOT NULL,
+  last_error TEXT NULL,
+  created_at BIGINT NOT NULL,
+  delivered_at BIGINT NULL
+);
 `;
 
 const indexes = [
@@ -319,6 +366,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_port_created ON stream_events (incoming_port, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_stream_bucket ON stream_bandwidth_minutes (stream_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_ip_bucket ON stream_bandwidth_minutes (ip, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_origin_health_events_site_created ON origin_health_events (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_due ON health_alert_outbox (status, next_attempt_at)",
+	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_site_created ON health_alert_outbox (site_id, created_at)",
 ];
 
 function isMySql(): boolean {
@@ -340,6 +390,17 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN error_html_template TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN error_json_fields_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN challenge_html_template TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN health_check_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE sites ADD COLUMN health_check_path VARCHAR(2048) NOT NULL DEFAULT '/health'",
+		"ALTER TABLE sites ADD COLUMN health_check_interval_seconds INTEGER NOT NULL DEFAULT 30",
+		"ALTER TABLE sites ADD COLUMN health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000",
+		"ALTER TABLE sites ADD COLUMN health_check_failure_threshold INTEGER NOT NULL DEFAULT 3",
+		"ALTER TABLE sites ADD COLUMN health_check_recovery_threshold INTEGER NOT NULL DEFAULT 2",
+		"ALTER TABLE sites ADD COLUMN health_check_failure_mode VARCHAR(16) NOT NULL DEFAULT 'monitor'",
+		"ALTER TABLE sites ADD COLUMN health_alert_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE sites ADD COLUMN health_alert_provider VARCHAR(16) NOT NULL DEFAULT 'generic'",
+		"ALTER TABLE sites ADD COLUMN health_alert_webhook_url TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN health_alert_webhook_secret TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {

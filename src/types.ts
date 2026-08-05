@@ -9,6 +9,9 @@ export type RateLimitKeyMode = "ip" | "session-or-ip" | "header-or-ip";
 export type RateLimitScope = "policy" | "path" | "method-path";
 
 export type ErrorResponseMode = "html" | "json";
+export type OriginHealthState = "unknown" | "healthy" | "degraded" | "unhealthy" | "disabled";
+export type OriginHealthFailureMode = "monitor" | "maintenance";
+export type HealthAlertProvider = "generic" | "slack" | "discord" | "ntfy";
 export type TlsMode = "disabled" | "uploaded" | "letsencrypt";
 export type CertificateSource = "uploaded" | "letsencrypt";
 export type CertificateStatus = "pending" | "active" | "renewal-failed" | "expired" | "invalid";
@@ -95,8 +98,60 @@ export interface SiteRecord {
 	error_html_template: string;
 	error_json_fields_json: string;
 	challenge_html_template: string;
+	health_check_enabled?: number;
+	health_check_path?: string;
+	health_check_interval_seconds?: number;
+	health_check_timeout_ms?: number;
+	health_check_failure_threshold?: number;
+	health_check_recovery_threshold?: number;
+	health_check_failure_mode?: OriginHealthFailureMode;
+	health_alert_enabled?: number;
+	health_alert_provider?: HealthAlertProvider;
+	health_alert_webhook_url?: string | null;
+	health_alert_webhook_secret?: string | null;
 	created_at: number;
 	updated_at: number;
+}
+
+export interface OriginHealthStatusRecord {
+	site_id: string;
+	state: OriginHealthState;
+	consecutive_failures: number;
+	consecutive_successes: number;
+	last_checked_at: number | null;
+	last_healthy_at: number | null;
+	last_unhealthy_at: number | null;
+	last_status: number | null;
+	last_latency_ms: number | null;
+	last_error: string | null;
+	updated_at: number;
+}
+
+export interface OriginHealthEventRecord {
+	id: string;
+	site_id: string;
+	from_state: OriginHealthState;
+	to_state: OriginHealthState;
+	status: number | null;
+	latency_ms: number | null;
+	error: string | null;
+	created_at: number;
+}
+
+export type HealthAlertOutboxStatus = "pending" | "delivered" | "failed";
+
+export interface HealthAlertOutboxRecord {
+	id: string;
+	site_id: string;
+	event_id: string;
+	event_type: "origin_unhealthy" | "origin_recovered";
+	payload_json: string;
+	status: HealthAlertOutboxStatus;
+	attempts: number;
+	next_attempt_at: number;
+	last_error: string | null;
+	created_at: number;
+	delivered_at: number | null;
 }
 
 export interface RoutePolicyRecord {

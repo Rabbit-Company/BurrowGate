@@ -65,6 +65,8 @@ Define the referenced `otlp` exporter elsewhere in the Collector configuration.
 - `burrowgate_stream_events_total` and `burrowgate_stream_transferred_bytes_total`
 - `burrowgate_stream_active_connections`
 - `burrowgate_stream_listener_configured` and `burrowgate_stream_listener_up`
+- `burrowgate_origin_health_state`, `burrowgate_origin_health_checks_total`, and `burrowgate_origin_health_check_duration_seconds`
+- `burrowgate_origin_health_alerts_total`
 - `burrowgate_monitoring_queue_records`, persistence failures, and dropped events
 - `burrowgate_retention_cleanup_*`
 - `burrowgate_database_up`, configured site and Stream counts, and GeoIP availability

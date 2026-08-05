@@ -39,6 +39,7 @@ import { serializeCookie } from "../utils/cookies.ts";
 import { sha256Hex, timingSafeEqualText } from "../utils/crypto.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { flushBandwidthMetrics } from "../services/bandwidth-service.ts";
+import { originHealthManager } from "../services/origin-health-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -183,7 +184,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
 		return jsonResponse({
-			items: (await repository.allSites()).map(siteView),
+			items: (await repository.allSites()).map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
 			errorResponseDefaults: {
@@ -205,6 +206,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		try {
 			const created = await createSite(await parseSiteInput(ctx.req));
+			await originHealthManager.refreshSite(created.site.id);
 			return jsonResponse(
 				{
 					site: siteView(created.site),
@@ -222,11 +224,43 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		try {
 			const site = await updateSite(ctx.params.id, await parseSiteInput(ctx.req));
+			await originHealthManager.refreshSite(site.id);
 			await requestTlsReload();
 			return jsonResponse({ site: siteView(site) });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update site";
 			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/sites/:id/health", async (ctx: any) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const site = await repository.siteById(ctx.params.id);
+		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		return jsonResponse({
+			status: originHealthManager.summary(site.id),
+			events: await originHealthManager.events(site.id, integerParam(new URL(ctx.req.url), "limit", 50, 1, 200)),
+			alerts: (await repository.healthAlerts(site.id, 25)).map((alert) => ({
+				id: alert.id,
+				type: alert.event_type,
+				status: alert.status,
+				attempts: Number(alert.attempts),
+				lastError: alert.last_error,
+				createdAt: Number(alert.created_at),
+				deliveredAt: alert.delivered_at === null ? null : Number(alert.delivered_at),
+			})),
+		});
+	});
+
+	app.post("/_burrowgate/api/admin/sites/:id/health/check", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			return jsonResponse({ status: await originHealthManager.checkNow(ctx.params.id) });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to run origin health check";
+			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 409);
 		}
 	});
 
@@ -404,6 +438,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			retentionDays: selection.site?.event_retention_days ?? config.eventRetentionDays,
 			defaultPageSize: config.adminPageSize,
 			site: selection.site ? siteView(selection.site) : null,
+			originHealth: selection.site ? originHealthManager.summary(selection.site.id) : null,
 		});
 	});
 

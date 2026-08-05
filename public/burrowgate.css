@@ -805,6 +805,55 @@ form.grid label {
 .site-form small {
 	line-height: 1.45;
 }
+.origin-health-banner {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 18px;
+	padding: 16px 20px;
+	border-color: #b45309;
+	background: rgba(58, 37, 8, 0.72);
+}
+.origin-health-banner > div {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	align-items: center;
+	gap: 5px 10px;
+}
+.origin-health-banner p {
+	grid-column: 1 / -1;
+	margin: 0;
+}
+.health-runtime {
+	display: grid;
+	gap: 14px;
+	padding: 14px;
+	border: 1px solid #2b3648;
+	border-radius: 12px;
+	background: rgba(11, 18, 32, 0.54);
+}
+.health-summary-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 12px;
+}
+.health-summary-grid > div {
+	display: grid;
+	gap: 5px;
+}
+.health-event-list {
+	display: grid;
+	gap: 8px;
+	margin-top: 10px;
+}
+.health-event-item {
+	display: grid;
+	grid-template-columns: minmax(145px, auto) auto 1fr;
+	gap: 10px;
+	align-items: center;
+	font-size: 12px;
+	color: #cbd5e1;
+}
 .code-input {
 	min-height: 210px;
 	resize: vertical;
@@ -888,6 +937,16 @@ form.grid label {
 	}
 }
 @media (max-width: 620px) {
+	.origin-health-banner {
+		align-items: stretch;
+		flex-direction: column;
+	}
+	.health-summary-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.health-event-item {
+		grid-template-columns: 1fr;
+	}
 	.site-form-grid {
 		grid-template-columns: 1fr;
 	}

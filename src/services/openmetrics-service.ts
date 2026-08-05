@@ -2,7 +2,7 @@ import { Counter, Gauge, Histogram, Info, Registry } from "@rabbit-company/openm
 import packageMetadata from "../../package.json" with { type: "json" };
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { StreamEventRecord, StreamProtocol } from "../types.ts";
+import type { OriginHealthState, StreamEventRecord, StreamProtocol } from "../types.ts";
 import { timingSafeEqualText } from "../utils/crypto.ts";
 import { geoIpStatus } from "./geoip-service.ts";
 import type { BandwidthContext, BandwidthDelta } from "./bandwidth-service.ts";
@@ -87,6 +87,10 @@ export class BurrowGateOpenMetrics {
 	private readonly configuredSites: Gauge;
 	private readonly configuredStreams: Gauge;
 	private readonly geoIp: Gauge;
+	private readonly originHealthState: Gauge;
+	private readonly originHealthChecks: Counter;
+	private readonly originHealthDuration: Histogram;
+	private readonly healthAlerts: Counter;
 	private readonly exporterScrapes: Counter;
 	private readonly exporterCollectionErrors: Counter;
 	private readonly exporterDuration: Histogram;
@@ -212,6 +216,32 @@ export class BurrowGateOpenMetrics {
 			labelNames: ["state"],
 			registry: this.registry,
 		});
+		this.originHealthState = new Gauge({
+			name: "origin_health_state",
+			help: "Current origin health state as a one-hot gauge",
+			labelNames: ["site_id", "state"],
+			registry: this.registry,
+		});
+		this.originHealthChecks = new Counter({
+			name: "origin_health_checks",
+			help: "Origin health checks by outcome",
+			labelNames: ["site_id", "outcome"],
+			registry: this.registry,
+		});
+		this.originHealthDuration = new Histogram({
+			name: "origin_health_check_duration",
+			help: "Origin health-check request duration",
+			unit: "seconds",
+			labelNames: ["site_id"],
+			buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+			registry: this.registry,
+		});
+		this.healthAlerts = new Counter({
+			name: "origin_health_alerts",
+			help: "Origin health alert delivery outcomes",
+			labelNames: ["site_id", "outcome"],
+			registry: this.registry,
+		});
 		this.exporterScrapes = new Counter({ name: "openmetrics_scrapes", help: "OpenMetrics scrape requests served", registry: this.registry });
 		this.exporterCollectionErrors = new Counter({
 			name: "openmetrics_collection_errors",
@@ -335,6 +365,30 @@ export class BurrowGateOpenMetrics {
 		if (!this.enabled) return;
 		this.geoIp.labels({ state: "enabled" }).set(enabled ? 1 : 0);
 		this.geoIp.labels({ state: "available" }).set(available ? 1 : 0);
+	}
+
+	setOriginHealth(siteId: string, state: OriginHealthState): void {
+		if (!this.enabled) return;
+		for (const candidate of ["unknown", "healthy", "degraded", "unhealthy", "disabled"] as OriginHealthState[]) {
+			this.originHealthState.labels({ site_id: siteId, state: candidate }).set(candidate === state ? 1 : 0);
+		}
+	}
+
+	clearOriginHealth(siteId: string): void {
+		if (!this.enabled) return;
+		for (const state of ["unknown", "healthy", "degraded", "unhealthy", "disabled"] as OriginHealthState[]) {
+			this.originHealthState.labels({ site_id: siteId, state }).set(0);
+		}
+	}
+
+	recordOriginHealthCheck(siteId: string, healthy: boolean, durationMs: number): void {
+		if (!this.enabled) return;
+		this.originHealthChecks.labels({ site_id: siteId, outcome: healthy ? "success" : "failure" }).inc();
+		this.originHealthDuration.labels({ site_id: siteId }).observe(Math.max(0, durationMs) / 1_000);
+	}
+
+	recordHealthAlert(siteId: string, outcome: "delivered" | "retry" | "failed"): void {
+		if (this.enabled) this.healthAlerts.labels({ site_id: siteId, outcome }).inc();
 	}
 
 	beginScrape(): number {
