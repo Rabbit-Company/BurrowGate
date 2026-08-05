@@ -58,3 +58,4 @@ The stream editor generates the required Compose mapping. Linux deployments that
 | `BG_STREAM_MAX_BUFFERED_BYTES`            | `1048576` | Per-TCP-connection backpressure queue limit        |
 | `BG_STREAM_MAX_UDP_PEERS`                 |   `10000` | Maximum live UDP peers per stream                  |
 | `BG_STREAM_MAX_PENDING_DATAGRAMS`         |     `256` | Datagram queue limit during UDP backpressure       |
+| `BG_STREAM_MAX_PENDING_EVENTS`            |  `100000` | Lifecycle-event queue limit during SQL outages     |

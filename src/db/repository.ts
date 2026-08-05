@@ -201,6 +201,19 @@ function toNumber(value: unknown): number {
 	return Number.isFinite(converted) ? converted : 0;
 }
 
+function isMySqlDatabase(): boolean {
+	return config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://");
+}
+
+function isSqliteDatabase(): boolean {
+	return config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:";
+}
+
+function deletedRowCount(result: unknown): number {
+	const metadata = result as { count?: number | null; affectedRows?: number | null };
+	return toNumber(metadata.count ?? metadata.affectedRows);
+}
+
 function pageResult<T>(items: T[], totalValue: unknown, page: number, pageSize: number): PageResult<T> {
 	const total = toNumber(totalValue);
 	return {
@@ -1247,8 +1260,13 @@ export const repository = {
 	async deleteAcmeChallengesForSite(siteId: string): Promise<void> {
 		await db`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
 	},
-	async deleteExpiredAcmeChallenges(now: number): Promise<void> {
-		await db`DELETE FROM acme_http_challenges WHERE expires_at <= ${now}`;
+	async deleteExpiredAcmeChallengesBatch(now: number, limit: number): Promise<number> {
+		const rows = (await db`SELECT token FROM acme_http_challenges WHERE expires_at <= ${now} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{
+			token: string;
+		}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM acme_http_challenges WHERE token IN ${db(rows.map((row) => row.token))}`;
+		return rows.length;
 	},
 	async insertCertificateEvent(event: CertificateEventRecord): Promise<void> {
 		await db`INSERT INTO certificate_events (id,site_id,certificate_id,level,message,details_json,created_at) VALUES (${event.id},${event.site_id},${event.certificate_id},${event.level},${event.message},${event.details_json},${event.created_at})`;
@@ -1256,13 +1274,88 @@ export const repository = {
 	async certificateEvents(siteId: string, limit = 30): Promise<CertificateEventRecord[]> {
 		return (await db`SELECT * FROM certificate_events WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as CertificateEventRecord[];
 	},
-	async deleteEventsBeforeForSite(siteId: string, cutoff: number): Promise<void> {
-		await db`DELETE FROM request_events WHERE site_id=${siteId} AND created_at < ${cutoff}`;
-		await db`DELETE FROM bandwidth_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff}`;
+	async deleteRequestEventsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows = (await db`SELECT id FROM request_events WHERE site_id=${siteId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+			id: string;
+		}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM request_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
 	},
-	async deleteEventsBefore(cutoff: number): Promise<void> {
-		await db`DELETE FROM request_events WHERE created_at < ${cutoff}`;
-		await db`DELETE FROM bandwidth_minutes WHERE bucket_start < ${cutoff}`;
+	async deleteBandwidthBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM bandwidth_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`,
+			);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM bandwidth_minutes WHERE rowid IN (SELECT rowid FROM bandwidth_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM bandwidth_minutes WHERE ctid IN (SELECT ctid FROM bandwidth_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
+	},
+	async deleteSessionsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM access_sessions WHERE site_id=${siteId} AND (expires_at < ${cutoff} OR (revoked_at IS NOT NULL AND revoked_at < ${cutoff})) ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM access_sessions WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteExpiredChallengeArtifactsBatch(now: number, limit: number): Promise<number> {
+		const rows = (await db`SELECT id FROM challenge_steps WHERE expires_at < ${now} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{ id: string }>;
+		if (rows.length === 0) return 0;
+		const ids = rows.map((row) => row.id);
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM challenge_consumptions WHERE step_id IN ${transaction(ids)}`;
+			await transaction`DELETE FROM challenge_steps WHERE id IN ${transaction(ids)}`;
+		});
+		return rows.length;
+	},
+	async deleteChallengeFlowsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows = (await db`SELECT id FROM challenge_flows WHERE site_id=${siteId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+			id: string;
+		}>;
+		if (rows.length === 0) return 0;
+		const flowIds = rows.map((row) => row.id);
+		const stepRows = (await db`SELECT id FROM challenge_steps WHERE flow_id IN ${db(flowIds)}`) as Array<{ id: string }>;
+		await db.begin(async (transaction) => {
+			if (stepRows.length > 0) {
+				const stepIds = stepRows.map((row) => row.id);
+				await transaction`DELETE FROM challenge_consumptions WHERE step_id IN ${transaction(stepIds)}`;
+				await transaction`DELETE FROM challenge_steps WHERE id IN ${transaction(stepIds)}`;
+			}
+			await transaction`DELETE FROM challenge_flows WHERE id IN ${transaction(flowIds)}`;
+		});
+		return rows.length;
+	},
+	async deleteExpiredRulesBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM ip_rules WHERE site_id=${siteId} AND expires_at IS NOT NULL AND expires_at < ${cutoff} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM ip_rules WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteCertificateEventsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM certificate_events WHERE site_id=${siteId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM certificate_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteExpiredAdminSessionsBatch(now: number, limit: number): Promise<number> {
+		const rows = (await db`SELECT id FROM admin_sessions WHERE expires_at <= ${now} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{ id: string }>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM admin_sessions WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
 	},
 	async allStreams(): Promise<StreamRecord[]> {
 		return (await db`SELECT * FROM streams ORDER BY incoming_port ASC`) as StreamRecord[];
@@ -1492,9 +1585,29 @@ export const repository = {
 		}
 		return { series };
 	},
-	async deleteStreamDataBefore(streamId: string, cutoff: number): Promise<void> {
-		await db`DELETE FROM stream_events WHERE stream_id=${streamId} AND created_at < ${cutoff}`;
-		await db`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff}`;
+	async deleteStreamEventsBeforeBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM stream_events WHERE stream_id=${streamId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM stream_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteStreamBandwidthBeforeBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`,
+			);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM stream_bandwidth_minutes WHERE rowid IN (SELECT rowid FROM stream_bandwidth_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM stream_bandwidth_minutes WHERE ctid IN (SELECT ctid FROM stream_bandwidth_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
 	},
 	async adminByHash(hash: string): Promise<AdminSessionRecord | null> {
 		const rows = (await db`SELECT * FROM admin_sessions WHERE token_hash=${hash} LIMIT 1`) as AdminSessionRecord[];

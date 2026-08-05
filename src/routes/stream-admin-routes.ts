@@ -179,9 +179,6 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		try {
 			const stream = await buildStream(await body(ctx.req), previous);
 			await saveAndActivate(stream, previous);
-			if (stream.event_retention_days < previous.event_retention_days) {
-				await repository.deleteStreamDataBefore(stream.id, Date.now() - stream.event_retention_days * 86_400_000);
-			}
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() });
 		} catch (error) {
 			return mutationError(error, "Unable to update stream");

@@ -110,6 +110,12 @@ docker compose up -d --build --force-recreate
 | `BG_EVENT_RETENTION_DAYS`                 | `7`                                  | Default monitoring retention assigned to new sites and streams                             |
 | `BG_BANDWIDTH_FLUSH_INTERVAL_MS`          | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
 | `BG_BANDWIDTH_MAX_PENDING_KEYS`           | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |
+| `BG_ACCESS_LOGIN_MAX_FAILURE_KEYS`        | `50000`                              | Maximum access-login failure keys retained in memory                                       |
+| `BG_MAINTENANCE_INTERVAL_SECONDS`         | `3600`                               | Interval between GeoIP and certificate housekeeping runs                                   |
+| `BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS` | `60`                                 | Interval between short incremental retention-cleanup runs                                  |
+| `BG_MAINTENANCE_CLEANUP_BATCH_SIZE`       | `250`                                | Maximum rows removed by one cleanup write                                                  |
+| `BG_MAINTENANCE_CLEANUP_PAUSE_MS`         | `25`                                 | Event-loop pause between cleanup writes                                                    |
+| `BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS`   | `5000`                               | Maximum incremental-cleanup time per maintenance run                                       |
 | `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                      |
 | `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
 | `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP reader cache entries                                                         |
@@ -121,6 +127,7 @@ docker compose up -d --build --force-recreate
 | `BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS` | `60`                                 | Inactivity interval used to close a synthetic UDP peer session                             |
 | `BG_STREAM_MAX_BUFFERED_BYTES`            | `1048576`                            | Maximum queued TCP data per proxied connection                                             |
 | `BG_STREAM_MAX_UDP_PEERS`                 | `10000`                              | Maximum tracked UDP peers per configured stream                                            |
+| `BG_STREAM_MAX_PENDING_EVENTS`            | `100000`                             | Maximum queued Stream lifecycle events during a database outage                            |
 | `BG_ACME_DIRECTORY_URL`                   | Let's Encrypt production             | ACME directory URL                                                                         |
 | `BG_ACME_EMAIL`                           | empty                                | Default ACME contact email                                                                 |
 
@@ -336,6 +343,8 @@ X-Burrow-Token: <token>
 ```
 
 Sessions can be monitored and revoked from the dashboard.
+
+Each website's monitoring-retention setting also governs expired/revoked sessions, challenge-flow history, expired network rules, and certificate activity. Challenge step secrets and expired admin sessions are removed as soon as incremental maintenance reaches them. Cleanup runs in small round-robin batches with pauses and a per-run time budget so retention work does not create a large database-latency spike.
 
 ## Origin Verification
 

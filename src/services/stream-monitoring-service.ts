@@ -38,14 +38,27 @@ export class StreamMonitoringAccumulator {
 	private events: StreamEventRecord[] = [];
 	private bandwidth = new Map<string, StreamBandwidthMinuteRecord>();
 	private flushing: Promise<void> | null = null;
+	private droppedEvents = 0;
+	private inFlightEventCount = 0;
 
 	constructor(
 		private readonly persist: MonitoringPersister,
 		private readonly maxPendingKeys = config.bandwidth.maxPendingKeys,
+		private readonly maxPendingEvents = config.streams.maxPendingEvents,
 	) {}
 
 	recordEvent(event: StreamEventRecord): void {
+		if (this.events.length + this.inFlightEventCount >= this.maxPendingEvents) {
+			this.droppedEvents += 1;
+			return;
+		}
 		this.events.push(event);
+	}
+
+	takeDroppedEventCount(): number {
+		const count = this.droppedEvents;
+		this.droppedEvents = 0;
+		return count;
 	}
 
 	recordTraffic(context: StreamTrafficContext, delta: StreamTrafficDelta, now = Date.now()): void {
@@ -84,14 +97,21 @@ export class StreamMonitoringAccumulator {
 		const bandwidth = this.bandwidth;
 		this.events = [];
 		this.bandwidth = new Map();
+		this.inFlightEventCount = events.length;
 		this.flushing = (async () => {
 			let eventsPersisted = false;
 			try {
 				await this.persist.events(events);
 				eventsPersisted = true;
+				this.inFlightEventCount = 0;
 				await this.persist.bandwidth([...bandwidth.values()]);
 			} catch (error) {
-				if (!eventsPersisted) this.events.unshift(...events);
+				if (!eventsPersisted) {
+					this.inFlightEventCount = 0;
+					const combined = [...events, ...this.events];
+					if (combined.length > this.maxPendingEvents) this.droppedEvents += combined.length - this.maxPendingEvents;
+					this.events = combined.slice(0, this.maxPendingEvents);
+				}
 				for (const record of bandwidth.values()) {
 					const key = bandwidthKey(record);
 					const current = this.bandwidth.get(key);
@@ -105,6 +125,7 @@ export class StreamMonitoringAccumulator {
 				throw error;
 			}
 		})().finally(() => {
+			this.inFlightEventCount = 0;
 			this.flushing = null;
 		});
 		return await this.flushing;
@@ -131,6 +152,9 @@ export async function flushStreamMonitoring(): Promise<void> {
 		await accumulator.flush();
 	} catch (error) {
 		Logger.error("[BurrowGate] Failed to persist stream monitoring data", { error });
+	} finally {
+		const dropped = accumulator.takeDroppedEventCount();
+		if (dropped > 0) Logger.warn(`[BurrowGate] Dropped ${dropped} stream monitoring event(s) after reaching the pending-event memory limit`);
 	}
 }
 

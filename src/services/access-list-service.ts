@@ -1,7 +1,7 @@
 import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, AccessUserRecord, SiteAccessSettingsRecord, SiteRecord } from "../types.ts";
 import { hmacSha256Hex, randomId } from "../utils/crypto.ts";
-import { secureCookieForRequest } from "../config.ts";
+import { config, secureCookieForRequest } from "../config.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 
 export interface AccessUserInput {
@@ -31,7 +31,69 @@ export interface AccessListView {
 
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_FAILURES = 8;
-const loginFailures = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_SWEEP_INTERVAL_MS = 10_000;
+
+export class LoginFailureTracker {
+	private readonly entries = new Map<string, { count: number; resetAt: number }>();
+	private lastSweepAt = 0;
+
+	constructor(
+		private readonly maxKeys: number,
+		private readonly windowMs = LOGIN_WINDOW_MS,
+		private readonly maxFailures = LOGIN_MAX_FAILURES,
+	) {}
+
+	get size(): number {
+		return this.entries.size;
+	}
+
+	status(keys: string[], now: number): number {
+		let retryAfter = 0;
+		for (const key of keys) {
+			const entry = this.entries.get(key);
+			if (!entry) continue;
+			if (entry.resetAt <= now) {
+				this.entries.delete(key);
+				continue;
+			}
+			if (entry.count >= this.maxFailures) retryAfter = Math.max(retryAfter, Math.ceil((entry.resetAt - now) / 1_000));
+		}
+		return retryAfter;
+	}
+
+	record(keys: string[], now: number): void {
+		this.sweep(now);
+		for (const key of keys) {
+			const entry = this.entries.get(key);
+			if (entry && entry.resetAt > now) {
+				entry.count += 1;
+				continue;
+			}
+			while (this.entries.size >= this.maxKeys) {
+				const oldest = this.entries.keys().next().value as string | undefined;
+				if (oldest === undefined) break;
+				this.entries.delete(oldest);
+			}
+			this.entries.set(key, { count: 1, resetAt: now + this.windowMs });
+		}
+	}
+
+	clear(keys?: string[]): void {
+		if (!keys) {
+			this.entries.clear();
+			return;
+		}
+		for (const key of keys) this.entries.delete(key);
+	}
+
+	private sweep(now: number): void {
+		if (now - this.lastSweepAt < LOGIN_SWEEP_INTERVAL_MS) return;
+		this.lastSweepAt = now;
+		for (const [key, entry] of this.entries) if (entry.resetAt <= now) this.entries.delete(key);
+	}
+}
+
+const loginFailures = new LoginFailureTracker(config.accessLoginMaxFailureKeys);
 const settingsCache = new Map<string, { settings: SiteAccessSettingsRecord; expiresAt: number }>();
 const SETTINGS_CACHE_TTL_MS = 5_000;
 export const accessIdentityCookieNames = ["bg_authenticated_user", "bg_identity_signature"] as const;
@@ -197,28 +259,6 @@ function failureKeys(siteId: string, ip: string, username: string): string[] {
 	return [`site:${siteId}:ip:${ip}`, `site:${siteId}:user:${username}`];
 }
 
-function rateLimitStatus(keys: string[], now: number): number {
-	let retryAfter = 0;
-	for (const key of keys) {
-		const entry = loginFailures.get(key);
-		if (!entry) continue;
-		if (entry.resetAt <= now) {
-			loginFailures.delete(key);
-			continue;
-		}
-		if (entry.count >= LOGIN_MAX_FAILURES) retryAfter = Math.max(retryAfter, Math.ceil((entry.resetAt - now) / 1000));
-	}
-	return retryAfter;
-}
-
-function recordFailure(keys: string[], now: number): void {
-	for (const key of keys) {
-		const entry = loginFailures.get(key);
-		if (!entry || entry.resetAt <= now) loginFailures.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
-		else entry.count += 1;
-	}
-}
-
 export async function authenticateAccessUser(
 	siteId: string,
 	ip: string,
@@ -235,16 +275,16 @@ export async function authenticateAccessUser(
 	const password = suppliedPassword.length <= 1024 ? suppliedPassword : "";
 	const now = Date.now();
 	const keys = failureKeys(siteId, ip, username);
-	const retryAfterSeconds = rateLimitStatus(keys, now);
+	const retryAfterSeconds = loginFailures.status(keys, now);
 	if (retryAfterSeconds > 0) return { user: null, retryAfterSeconds };
 	const user = await repository.accessUserForSiteByUsername(siteId, username);
 	dummyHash ??= Bun.password.hash("burrowgate-dummy-access-password", { algorithm: "argon2id" });
 	const valid = await Bun.password.verify(password, user?.password_hash ?? (await dummyHash));
 	if (!valid || !user || user.enabled !== 1) {
-		recordFailure(keys, now);
+		loginFailures.record(keys, now);
 		return { user: null, retryAfterSeconds: 0 };
 	}
-	for (const key of keys) loginFailures.delete(key);
+	loginFailures.clear(keys);
 	return { user, retryAfterSeconds: 0 };
 }
 

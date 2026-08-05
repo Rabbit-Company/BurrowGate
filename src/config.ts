@@ -87,6 +87,7 @@ export const config = {
 		flushIntervalMs: envNumber("BG_BANDWIDTH_FLUSH_INTERVAL_MS", 10_000, 1_000, 300_000),
 		maxPendingKeys: envNumber("BG_BANDWIDTH_MAX_PENDING_KEYS", 50_000, 100, 1_000_000),
 	},
+	accessLoginMaxFailureKeys: envNumber("BG_ACCESS_LOGIN_MAX_FAILURE_KEYS", 50_000, 100, 1_000_000),
 	streams: {
 		connectTimeoutSeconds: envNumber("BG_STREAM_CONNECT_TIMEOUT_SECONDS", 15, 1, 300),
 		idleTimeoutSeconds: envNumber("BG_STREAM_IDLE_TIMEOUT_SECONDS", 300, 10, 86_400),
@@ -94,6 +95,7 @@ export const config = {
 		maxBufferedBytes: envNumber("BG_STREAM_MAX_BUFFERED_BYTES", 1 * 1_024 * 1_024, 1_024, 64 * 1_024 * 1_024),
 		maxUdpPeersPerStream: envNumber("BG_STREAM_MAX_UDP_PEERS", 10_000, 1, 1_000_000),
 		maxPendingDatagrams: envNumber("BG_STREAM_MAX_PENDING_DATAGRAMS", 256, 1, 65_536),
+		maxPendingEvents: envNumber("BG_STREAM_MAX_PENDING_EVENTS", 100_000, 100, 1_000_000),
 	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
@@ -102,7 +104,13 @@ export const config = {
 		backfillBatchSize: envNumber("BG_GEOIP_BACKFILL_BATCH_SIZE", 500, 0, 10_000),
 		retrySeconds: envNumber("BG_GEOIP_RETRY_SECONDS", 30, 5, 3_600),
 	},
-	maintenanceIntervalSeconds: envNumber("BG_MAINTENANCE_INTERVAL_SECONDS", 3_600, 60, 86_400),
+	maintenance: {
+		intervalSeconds: envNumber("BG_MAINTENANCE_INTERVAL_SECONDS", 3_600, 60, 86_400),
+		cleanupIntervalSeconds: envNumber("BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS", 60, 10, 86_400),
+		cleanupBatchSize: envNumber("BG_MAINTENANCE_CLEANUP_BATCH_SIZE", 250, 10, 1_000),
+		cleanupPauseMs: envNumber("BG_MAINTENANCE_CLEANUP_PAUSE_MS", 25, 0, 5_000),
+		cleanupTimeBudgetMs: envNumber("BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS", 5_000, 100, 60_000),
+	},
 	adminPageSize: envNumber("BG_ADMIN_PAGE_SIZE", 50, 10, 200),
 	masterKey: process.env.BG_MASTER_KEY?.trim() || (null as string | null),
 	masterKeyFile: process.env.BG_MASTER_KEY_FILE?.trim() || (null as string | null),

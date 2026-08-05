@@ -278,13 +278,6 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		throw new Error("The active certificate does not cover the new public hostname. Replace or remove the certificate before changing this hostname.");
 	}
 	await repository.updateSite(updated);
-	if (updated.event_retention_days < (existing.event_retention_days ?? config.eventRetentionDays)) {
-		try {
-			await repository.deleteEventsBeforeForSite(updated.id, Date.now() - updated.event_retention_days * 86_400_000);
-		} catch (error) {
-			Logger.error(`[BurrowGate] Immediate event-retention cleanup failed for ${updated.id}`, { error });
-		}
-	}
 	return updated;
 }
 
