@@ -183,11 +183,11 @@ export function adminPage(): string {
         <form id="routePolicyForm" class="site-form">
           <input id="routePolicyId" type="hidden">
           <div class="site-form-grid">
-            <label><span>Name</span><input id="routePolicyName" class="input" maxlength="255" placeholder="JSON API" required></label>
+            <label><span>Name</span><input id="routePolicyName" class="input" maxlength="255" placeholder="JSON API" required><small class="muted">A descriptive label shown in the admin dashboard.</small></label>
             <label><span>Path pattern</span><input id="routePolicyPath" class="input" maxlength="2048" value="/api/**" placeholder="/api/**" required><small class="muted"><code>*</code> matches one path segment; <code>**</code> matches across segments.</small></label>
             <label><span>HTTP methods</span><input id="routePolicyMethods" class="input" placeholder="GET, POST - blank means all"><small class="muted">Comma-separated. WebSocket upgrades use GET.</small></label>
-            <label><span>Priority</span><input id="routePolicyPriority" class="input" type="number" min="-100000" max="100000" value="0"></label>
-            <label><span>Access mode</span><select id="routePolicyAccessMode" class="select"><option value="inherit">Inherit site default</option><option value="challenge">Require challenge</option><option value="bypass">Bypass browser verification</option><option value="block">Block route</option></select></label>
+            <label><span>Priority</span><input id="routePolicyPriority" class="input" type="number" min="-100000" max="100000" value="0"><small class="muted">Higher-priority matching policies are evaluated first.</small></label>
+            <label><span>Access mode</span><select id="routePolicyAccessMode" class="select"><option value="inherit">Inherit site default</option><option value="challenge">Require challenge</option><option value="bypass">Bypass browser verification</option><option value="block">Block route</option></select><small class="muted">Choose how BurrowGate handles requests matching this path.</small></label>
           </div>
           <label class="check-row"><input id="routePolicyEnabled" type="checkbox" checked><span><strong>Policy enabled</strong><small class="muted">Disabled policies remain stored but do not match requests.</small></span></label>
           <div id="routeChallengeSettings">
@@ -196,15 +196,15 @@ export function adminPage(): string {
           <div class="policy-subsection">
             <label class="check-row"><input id="routeRateEnabled" type="checkbox"><span><strong>Enable rate limiting</strong><small class="muted">Rate limiting is independent of browser verification and works for JSON APIs and WebSocket handshakes. Counters are currently in-memory per BurrowGate process.</small></span></label>
             <div id="routeRateSettings" class="site-form-grid hidden">
-              <label><span>Algorithm</span><select id="routeRateAlgorithm" class="select"><option value="sliding-window">Sliding window</option><option value="fixed-window">Fixed window</option><option value="token-bucket">Token bucket</option></select></label>
-              <label><span>Maximum / capacity</span><input id="routeRateMax" class="input" type="number" min="1" max="1000000" value="120"></label>
-              <label class="window-setting"><span>Window (milliseconds)</span><input id="routeRateWindow" class="input" type="number" min="100" max="86400000" value="60000"></label>
-              <label class="precision-setting"><span>Precision (milliseconds)</span><input id="routeRatePrecision" class="input" type="number" min="10" max="60000" value="100"></label>
-              <label class="token-setting hidden"><span>Refill tokens</span><input id="routeRateRefillRate" class="input" type="number" min="1" max="1000000" value="10"></label>
-              <label class="token-setting hidden"><span>Refill interval (milliseconds)</span><input id="routeRateRefillInterval" class="input" type="number" min="10" max="86400000" value="1000"></label>
-              <label><span>Client identity</span><select id="routeRateKeyMode" class="select"><option value="ip">IP address</option><option value="session-or-ip">Verified session, otherwise IP</option><option value="header-or-ip">Header value, otherwise IP</option></select></label>
+              <label><span>Algorithm</span><select id="routeRateAlgorithm" class="select"><option value="sliding-window">Sliding window</option><option value="fixed-window">Fixed window</option><option value="token-bucket">Token bucket</option></select><small class="muted">Controls how request capacity is measured over time.</small></label>
+              <label><span>Maximum / capacity</span><input id="routeRateMax" class="input" type="number" min="1" max="1000000" value="120"><small class="muted">Maximum requests per window, or token-bucket capacity.</small></label>
+              <label class="window-setting"><span>Window (milliseconds)</span><input id="routeRateWindow" class="input" type="number" min="100" max="86400000" value="60000"><small class="muted">Time period used by fixed- and sliding-window limits.</small></label>
+              <label class="precision-setting"><span>Precision (milliseconds)</span><input id="routeRatePrecision" class="input" type="number" min="10" max="60000" value="100"><small class="muted">Smaller buckets make sliding-window accounting more precise.</small></label>
+              <label class="token-setting hidden"><span>Refill tokens</span><input id="routeRateRefillRate" class="input" type="number" min="1" max="1000000" value="10"><small class="muted">Number of tokens restored during each refill.</small></label>
+              <label class="token-setting hidden"><span>Refill interval (milliseconds)</span><input id="routeRateRefillInterval" class="input" type="number" min="10" max="86400000" value="1000"><small class="muted">How often the configured tokens are restored.</small></label>
+              <label><span>Client identity</span><select id="routeRateKeyMode" class="select"><option value="ip">IP address</option><option value="session-or-ip">Verified session, otherwise IP</option><option value="header-or-ip">Header value, otherwise IP</option></select><small class="muted">Determines which requests share the same rate-limit counter.</small></label>
               <label id="routeRateHeaderField" class="hidden"><span>Identity header</span><input id="routeRateKeyHeader" class="input" placeholder="x-api-key"><small class="muted">The value is hashed before it becomes an in-memory key. Use only a stable credential that your application validates; clients can rotate arbitrary header values.</small></label>
-              <label><span>Counter scope</span><select id="routeRateScope" class="select"><option value="policy">Shared across this policy</option><option value="path">Separate per exact path</option><option value="method-path">Separate per method and path</option></select></label>
+              <label><span>Counter scope</span><select id="routeRateScope" class="select"><option value="policy">Shared across this policy</option><option value="path">Separate per exact path</option><option value="method-path">Separate per method and path</option></select><small class="muted">Controls whether matching paths and methods share capacity.</small></label>
             </div>
           </div>
           <div class="row site-form-actions"><button id="saveRoutePolicy" class="button" type="submit">Create</button><button id="resetRoutePolicyForm" class="button secondary" type="button">Reset</button></div>
@@ -226,7 +226,7 @@ export function adminPage(): string {
         </div>
       </article>
       <article class="card">
-        <div class="pad"><h2>Create user</h2><form id="accessUserForm" class="site-form"><div class="site-form-grid"><label><span>Username</span><input id="accessUsername" class="input" autocomplete="off" maxlength="255" placeholder="ziga" required><small class="muted">Usernames are lowercase and global across all sites.</small></label><label><span>Password</span><input id="accessPassword" class="input" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label></div><label class="check-row"><input id="accessUserEnabled" type="checkbox" checked><span><strong>User enabled</strong><small class="muted">Disabled shared users cannot sign in to any assigned site.</small></span></label><button class="button" type="submit">Create and assign</button></form></div>
+        <div class="pad"><h2>Create user</h2><form id="accessUserForm" class="site-form"><div class="site-form-grid"><label><span>Username</span><input id="accessUsername" class="input" autocomplete="off" maxlength="255" placeholder="ziga" required><small class="muted">Usernames are lowercase and global across all sites.</small></label><label><span>Password</span><input id="accessPassword" class="input" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required><small class="muted">Passwords are stored as secure hashes.</small></label></div><label class="check-row"><input id="accessUserEnabled" type="checkbox" checked><span><strong>User enabled</strong><small class="muted">Disabled shared users cannot sign in to any assigned site.</small></span></label><button class="button" type="submit">Create and assign</button></form></div>
       </article>
       <article class="card">
         <div class="pad"><h2>Add users from another site</h2><p class="muted">Users are linked to this site. Password changes continue to apply everywhere they are assigned.</p><div class="site-form"><label><span>Source site</span><select id="accessImportSite" class="select"><option value="">Select a site</option></select></label><label><span>Users</span><select id="accessImportUsers" class="select access-user-select" multiple size="6"></select></label><button id="importAccessUsers" class="button" type="button">Add selected users</button></div></div>
@@ -252,10 +252,10 @@ export function adminPage(): string {
         <form id="siteForm" class="site-form">
           <input id="siteId" type="hidden">
           <div class="site-form-grid">
-            <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required></label>
+            <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required><small class="muted">A friendly name used throughout the admin dashboard.</small></label>
             <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
             <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
-            <label><span>Session lifetime (seconds)</span><input id="siteSessionTtl" class="input" name="sessionTtlSeconds" type="number" min="60" max="2592000" step="1" value="43200" required></label>
+            <label><span>Session lifetime (seconds)</span><input id="siteSessionTtl" class="input" name="sessionTtlSeconds" type="number" min="60" max="2592000" step="1" value="43200" required><small class="muted">How long a verified visitor session remains valid.</small></label>
             <label><span>Traffic retention (days)</span><input id="siteEventRetentionDays" class="input" name="eventRetentionDays" type="number" min="1" max="365" step="1" value="7" required><small class="muted">Request events and bandwidth buckets older than this are removed for this site.</small></label>
             <label><span>Default access mode</span><select id="siteDefaultAccessMode" class="select"><option value="challenge">Require challenge</option><option value="bypass">Disable browser verification</option></select><small class="muted">Route policies can override this per path.</small></label>
           </div>
@@ -274,13 +274,13 @@ export function adminPage(): string {
               <div id="originForm" class="site-form hidden">
                 <input id="originId" type="hidden" form="originValidationForm">
                 <div class="site-form-grid">
-                  <label><span>Name</span><input id="originName" class="input" form="originValidationForm" maxlength="255" placeholder="Application node 2" required></label>
-                  <label class="site-origin-field"><span>Origin URL</span><input id="originUrl" class="input" form="originValidationForm" type="url" placeholder="http://10.0.0.21:3000" required></label>
+                  <label><span>Name</span><input id="originName" class="input" form="originValidationForm" maxlength="255" placeholder="Application node 2" required><small class="muted">Shown in monitoring, health history, and traffic tables.</small></label>
+                  <label class="site-origin-field"><span>Origin URL</span><input id="originUrl" class="input" form="originValidationForm" type="url" placeholder="http://10.0.0.21:3000" required><small class="muted">Base HTTP or HTTPS address for this backend server.</small></label>
                   <label><span>Priority</span><input id="originPriority" class="input" form="originValidationForm" type="number" min="0" max="10000" value="10" required><small class="muted">Lower values are preferred in failover mode.</small></label>
-                  <label><span>Weight</span><input id="originWeight" class="input" form="originValidationForm" type="number" min="1" max="1000" value="1" required></label>
+                  <label><span>Weight</span><input id="originWeight" class="input" form="originValidationForm" type="number" min="1" max="1000" value="1" required><small class="muted">Relative traffic share in weighted round-robin mode.</small></label>
                   <label class="site-origin-field"><span>Health path override</span><input id="originHealthPath" class="input" form="originValidationForm" maxlength="2048" placeholder="Use the site health path"><small class="muted">Leave blank to use the site-level health-check path.</small></label>
                 </div>
-                <label class="check-row"><input id="originEnabled" form="originValidationForm" type="checkbox" checked><span><strong>Origin enabled</strong></span></label>
+                <label class="check-row"><input id="originEnabled" form="originValidationForm" type="checkbox" checked><span><strong>Origin enabled</strong><small class="muted">Disabled origins remain configured but receive no traffic.</small></span></label>
                 <label class="check-row"><input id="originDraining" form="originValidationForm" type="checkbox"><span><strong>Drain origin</strong><small class="muted">Existing sticky sessions continue using it; new assignments avoid it.</small></span></label>
                 <div class="row site-form-actions"><button id="saveOrigin" class="button" type="button">Add origin</button><button id="cancelOriginEdit" class="button secondary" type="button">Cancel</button></div>
               </div>
@@ -291,10 +291,10 @@ export function adminPage(): string {
             <label class="check-row"><input id="siteHealthEnabled" type="checkbox"><span><strong>Enable origin health checks</strong><small class="muted">Checks run directly against the origin and do not pass through visitor access policies.</small></span></label>
             <div id="siteHealthSettings" class="site-form-grid hidden">
               <label class="site-origin-field"><span>Health-check path</span><input id="siteHealthPath" class="input" maxlength="2048" value="/health" placeholder="/health"><small class="muted">A GET request must return a 2xx response. Redirects are treated as failures.</small></label>
-              <label><span>Check interval (seconds)</span><input id="siteHealthInterval" class="input" type="number" min="10" max="3600" value="30" required></label>
-              <label><span>Timeout (milliseconds)</span><input id="siteHealthTimeout" class="input" type="number" min="250" max="60000" value="3000" required></label>
-              <label><span>Failures before unhealthy</span><input id="siteHealthFailureThreshold" class="input" type="number" min="1" max="20" value="3" required></label>
-              <label><span>Successes before recovery</span><input id="siteHealthRecoveryThreshold" class="input" type="number" min="1" max="20" value="2" required></label>
+              <label><span>Check interval (seconds)</span><input id="siteHealthInterval" class="input" type="number" min="10" max="3600" value="30" required><small class="muted">Delay between scheduled probes of each enabled origin.</small></label>
+              <label><span>Timeout (milliseconds)</span><input id="siteHealthTimeout" class="input" type="number" min="250" max="60000" value="3000" required><small class="muted">Maximum time allowed for one health-check response.</small></label>
+              <label><span>Failures before unhealthy</span><input id="siteHealthFailureThreshold" class="input" type="number" min="1" max="20" value="3" required><small class="muted">Consecutive failed probes required to open an incident.</small></label>
+              <label><span>Successes before recovery</span><input id="siteHealthRecoveryThreshold" class="input" type="number" min="1" max="20" value="2" required><small class="muted">Consecutive successful probes required to recover.</small></label>
               <label class="site-origin-field"><span>When unhealthy</span><select id="siteHealthFailureMode" class="select"><option value="monitor">Keep proxying and alert</option><option value="maintenance">Return the custom 503 maintenance page</option></select><small class="muted">Unknown and degraded states never block traffic.</small></label>
             </div>
             <div id="siteHealthRuntime" class="health-runtime hidden">
@@ -307,7 +307,7 @@ export function adminPage(): string {
             <div class="section-heading error-response-heading"><div><h3>Health alerts</h3><p class="muted">Send one alert when an incident opens and one when it recovers. Failed deliveries retry with backoff.</p></div></div>
             <label class="check-row"><input id="siteHealthAlertsEnabled" type="checkbox"><span><strong>Enable webhook alerts</strong><small id="siteHealthWebhookConfigured" class="muted">No webhook is configured.</small></span></label>
             <div id="siteHealthAlertSettings" class="site-form-grid hidden">
-              <label><span>Webhook type</span><select id="siteHealthAlertProvider" class="select"><option value="generic">Generic JSON</option><option value="slack">Slack</option><option value="discord">Discord</option><option value="ntfy">ntfy</option></select></label>
+              <label><span>Webhook type</span><select id="siteHealthAlertProvider" class="select"><option value="generic">Generic JSON</option><option value="slack">Slack</option><option value="discord">Discord</option><option value="ntfy">ntfy</option></select><small class="muted">Formats alert payloads for the selected destination.</small></label>
               <label><span>Webhook URL</span><input id="siteHealthWebhookUrl" class="input" type="url" autocomplete="off" placeholder="https://alerts.example/hooks/..."><small class="muted">Leave blank while editing to keep the encrypted destination.</small></label>
               <label><span>Generic webhook signing secret</span><input id="siteHealthWebhookSecret" class="input" type="password" autocomplete="new-password" maxlength="4096" placeholder="Optional"><small class="muted">Adds an HMAC SHA-256 signature header. Leave blank to keep the current secret.</small></label>
               <label id="siteHealthClearWebhookRow" class="check-row compact-check hidden"><input id="siteHealthClearWebhook" type="checkbox"><span><strong>Remove stored webhook</strong><small class="muted">Alerts will be disabled when this site is saved.</small></span></label>
