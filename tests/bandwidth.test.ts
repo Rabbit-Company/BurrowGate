@@ -48,6 +48,24 @@ describe("bandwidth accounting", () => {
 		expect(persisted.reduce((sum, record) => sum + record.client_sent_bytes, 0)).toBe(21);
 	});
 
+	test("discards pending data and rejects new records after a site is deleted", async () => {
+		let persisted: BandwidthMinuteRecord[] = [];
+		const accumulator = new BandwidthAccumulator(async (records) => {
+			persisted = records;
+		}, 100);
+		const deletedSite = { siteId: "site-deleted", ip: "192.0.2.10", countryCode: "SI", protocol: "http" as const };
+		const activeSite = { siteId: "site-active", ip: "192.0.2.11", countryCode: "SI", protocol: "http" as const };
+
+		accumulator.record(deletedSite, { clientSentBytes: 5 });
+		accumulator.record(activeSite, { clientSentBytes: 7 });
+		accumulator.blockSite(deletedSite.siteId);
+		accumulator.record(deletedSite, { clientSentBytes: 11 });
+		await accumulator.flush();
+
+		expect(persisted).toHaveLength(1);
+		expect(persisted[0]?.site_id).toBe(activeSite.siteId);
+	});
+
 	test("counts each stream chunk without changing its bytes", async () => {
 		const deltas: BandwidthDelta[] = [];
 		const source = new ReadableStream<Uint8Array>({

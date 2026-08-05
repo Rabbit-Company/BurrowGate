@@ -16,7 +16,8 @@ describe("OpenMetrics exporter", () => {
 			{ clientToUpstreamBytes: 42 },
 		);
 		metrics.setOriginHealth("site-1", "unhealthy");
-		metrics.recordOriginHealthCheck("site-1", false, 125);
+		metrics.setOriginBackendHealth("site-1", "origin-1", "unhealthy");
+		metrics.recordOriginHealthCheck("site-1", "origin-1", false, 125);
 		metrics.recordHealthAlert("site-1", "retry");
 
 		const output = metrics.metricsText();
@@ -24,7 +25,8 @@ describe("OpenMetrics exporter", () => {
 		expect(output).toContain('decision="proxied",method="OTHER",site_id="site-1",status_class="2xx"');
 		expect(output).toContain('direction="client_to_upstream",protocol="tcp",stream_id="stream-1"} 42');
 		expect(output).toContain('burrowgate_origin_health_state{site_id="site-1",state="unhealthy"} 1');
-		expect(output).toContain('burrowgate_origin_health_checks_total{outcome="failure",site_id="site-1"} 1');
+		expect(output).toContain('burrowgate_origin_backend_health_state{origin_id="origin-1",site_id="site-1",state="unhealthy"} 1');
+		expect(output).toContain('burrowgate_origin_health_checks_total{origin_id="origin-1",outcome="failure",site_id="site-1"} 1');
 		expect(output).toContain('burrowgate_origin_health_alerts_total{outcome="retry",site_id="site-1"} 1');
 		expect(output).not.toContain("203.0.113.10");
 		expect(output).not.toContain('country="SI"');

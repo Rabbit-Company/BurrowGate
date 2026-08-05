@@ -114,6 +114,10 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 				name: `origin health alerts for ${site.id}`,
 				run: async () => await repository.deleteHealthAlertsBeforeForSiteBatch(site.id, cutoff, batchSize),
 			},
+			{
+				name: `origin backend health events for ${site.id}`,
+				run: async () => await repository.deleteBackendHealthEventsBeforeForSiteBatch(site.id, cutoff, batchSize),
+			},
 		);
 	}
 	for (const stream of await repository.allStreams()) {

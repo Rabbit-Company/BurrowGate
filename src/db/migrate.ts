@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS sites (
   health_alert_provider VARCHAR(16) NOT NULL DEFAULT 'generic',
   health_alert_webhook_url TEXT NULL,
   health_alert_webhook_secret TEXT NULL,
+  load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover',
+  load_balancing_affinity INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -73,7 +75,8 @@ CREATE TABLE IF NOT EXISTS access_sessions (
   request_count BIGINT NOT NULL DEFAULT 0,
   country_code VARCHAR(2) NULL,
   access_user_id VARCHAR(64) NULL,
-  authenticated_at BIGINT NULL
+  authenticated_at BIGINT NULL,
+  origin_id VARCHAR(64) NULL
 );
 CREATE TABLE IF NOT EXISTS access_users (
   id VARCHAR(64) PRIMARY KEY,
@@ -158,6 +161,7 @@ CREATE TABLE IF NOT EXISTS request_events (
   decision VARCHAR(64) NOT NULL,
   latency_ms INTEGER NOT NULL,
   country_code VARCHAR(2) NULL,
+  origin_id VARCHAR(64) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -281,6 +285,46 @@ CREATE TABLE IF NOT EXISTS stream_bandwidth_minutes (
   upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (stream_id, incoming_port, bucket_start, ip, country_code, protocol)
 );
+CREATE TABLE IF NOT EXISTS site_origins (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  origin_url TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  draining INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,
+  weight INTEGER NOT NULL DEFAULT 1,
+  health_check_path VARCHAR(2048) NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE(site_id, name)
+);
+CREATE TABLE IF NOT EXISTS origin_backend_health_status (
+  origin_id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  state VARCHAR(16) NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_successes INTEGER NOT NULL DEFAULT 0,
+  last_checked_at BIGINT NULL,
+  last_healthy_at BIGINT NULL,
+  last_unhealthy_at BIGINT NULL,
+  last_status INTEGER NULL,
+  last_latency_ms INTEGER NULL,
+  last_error TEXT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS origin_backend_health_events (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  origin_id VARCHAR(64) NOT NULL,
+  from_state VARCHAR(16) NOT NULL,
+  to_state VARCHAR(16) NOT NULL,
+  status INTEGER NULL,
+  latency_ms INTEGER NULL,
+  error TEXT NULL,
+  created_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS origin_health_status (
   site_id VARCHAR(64) PRIMARY KEY,
   state VARCHAR(16) NOT NULL,
@@ -330,6 +374,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_method_created ON request_events (site_id, method, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_origin_created ON request_events (site_id, origin_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -369,6 +414,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_origin_health_events_site_created ON origin_health_events (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_due ON health_alert_outbox (status, next_attempt_at)",
 	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_site_created ON health_alert_outbox (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_site_origins_site_priority ON site_origins (site_id, enabled, priority)",
+	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_site_state ON origin_backend_health_status (site_id, state)",
+	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_events_origin_created ON origin_backend_health_events (origin_id, created_at)",
 ];
 
 function isMySql(): boolean {
@@ -401,6 +449,8 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN health_alert_provider VARCHAR(16) NOT NULL DEFAULT 'generic'",
 		"ALTER TABLE sites ADD COLUMN health_alert_webhook_url TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN health_alert_webhook_secret TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover'",
+		"ALTER TABLE sites ADD COLUMN load_balancing_affinity INTEGER NOT NULL DEFAULT 1",
 	];
 	for (const statement of statements) {
 		try {
@@ -433,6 +483,7 @@ async function ensureAccessSessionColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE access_sessions ADD COLUMN access_user_id VARCHAR(64) NULL",
 		"ALTER TABLE access_sessions ADD COLUMN authenticated_at BIGINT NULL",
+		"ALTER TABLE access_sessions ADD COLUMN origin_id VARCHAR(64) NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -440,6 +491,30 @@ async function ensureAccessSessionColumns(): Promise<void> {
 		} catch (error) {
 			if (!duplicateColumnError(error)) throw error;
 		}
+	}
+}
+
+async function ensureRequestEventColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
+}
+
+async function ensurePrimaryOrigins(): Promise<void> {
+	const sites = (await db`SELECT id,name,origin_url,created_at,updated_at FROM sites`) as Array<{
+		id: string;
+		name: string;
+		origin_url: string;
+		created_at: number;
+		updated_at: number;
+	}>;
+	for (const site of sites) {
+		const existing = (await db`SELECT id FROM site_origins WHERE site_id=${site.id} AND is_primary=1 LIMIT 1`) as Array<{ id: string }>;
+		if (existing.length > 0) continue;
+		const id = `origin_${crypto.randomUUID()}`;
+		await db`INSERT INTO site_origins (id,site_id,name,origin_url,enabled,draining,priority,weight,health_check_path,is_primary,created_at,updated_at) VALUES (${id},${site.id},${`${site.name} primary`},${site.origin_url},1,0,0,1,${null},1,${site.created_at},${site.updated_at})`;
 	}
 }
 
@@ -464,6 +539,8 @@ export async function migrate(): Promise<void> {
 	await ensureSiteColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
+	await ensureRequestEventColumns();
+	await ensurePrimaryOrigins();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 	}

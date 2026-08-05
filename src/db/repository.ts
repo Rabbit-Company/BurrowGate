@@ -27,6 +27,9 @@ import type {
 	OriginHealthStatusRecord,
 	OriginHealthEventRecord,
 	HealthAlertOutboxRecord,
+	SiteOriginRecord,
+	OriginBackendHealthStatusRecord,
+	OriginBackendHealthEventRecord,
 } from "../types.ts";
 
 export type SortDirection = "asc" | "desc";
@@ -41,6 +44,7 @@ export interface PageResult<T> {
 
 export interface EventQuery {
 	siteId?: string;
+	originId?: string;
 	page: number;
 	pageSize: number;
 	search?: string;
@@ -250,11 +254,66 @@ export const repository = {
 		return (await db`SELECT * FROM sites ORDER BY enabled DESC, name ASC`) as SiteRecord[];
 	},
 	async insertSite(site: SiteRecord): Promise<void> {
-		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,created_at,updated_at)
-		VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.created_at},${site.updated_at})`;
+		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,created_at,updated_at)
+		VALUES (${site.id},${site.name},${site.public_host},${site.origin_url},${site.origin_signing_secret},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.load_balancing_algorithm},${site.load_balancing_affinity},${site.created_at},${site.updated_at})`;
 	},
 	async updateSite(site: SiteRecord): Promise<void> {
-		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, load_balancing_algorithm=${site.load_balancing_algorithm}, load_balancing_affinity=${site.load_balancing_affinity}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+	},
+	async deleteSiteCascade(siteId: string): Promise<void> {
+		const flowRows = (await db`SELECT id FROM challenge_flows WHERE site_id=${siteId}`) as Array<{ id: string }>;
+		const flowIds = flowRows.map((row) => row.id);
+		const stepRows = flowIds.length ? ((await db`SELECT id FROM challenge_steps WHERE flow_id IN ${db(flowIds)}`) as Array<{ id: string }>) : [];
+		const stepIds = stepRows.map((row) => row.id);
+		await db.begin(async (transaction) => {
+			if (stepIds.length > 0) await transaction`DELETE FROM challenge_consumptions WHERE step_id IN ${transaction(stepIds)}`;
+			if (flowIds.length > 0) await transaction`DELETE FROM challenge_steps WHERE flow_id IN ${transaction(flowIds)}`;
+			await transaction`DELETE FROM challenge_flows WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM route_policies WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM access_sessions WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM site_access_users WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM site_access_settings WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM ip_rules WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM country_rules WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM request_events WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM bandwidth_minutes WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM certificate_events WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM health_alert_outbox WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM origin_backend_health_events WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM origin_backend_health_status WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM origin_health_events WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM origin_health_status WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM site_origins WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM certificates WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM site_tls_settings WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM sites WHERE id=${siteId}`;
+		});
+	},
+	async originsForSite(siteId: string): Promise<SiteOriginRecord[]> {
+		return (await db`SELECT * FROM site_origins WHERE site_id=${siteId} ORDER BY priority ASC, is_primary DESC, created_at ASC`) as SiteOriginRecord[];
+	},
+	async allOrigins(): Promise<SiteOriginRecord[]> {
+		return (await db`SELECT * FROM site_origins ORDER BY site_id ASC, priority ASC, is_primary DESC, created_at ASC`) as SiteOriginRecord[];
+	},
+	async originById(id: string, siteId?: string): Promise<SiteOriginRecord | null> {
+		const rows = siteId
+			? ((await db`SELECT * FROM site_origins WHERE id=${id} AND site_id=${siteId} LIMIT 1`) as SiteOriginRecord[])
+			: ((await db`SELECT * FROM site_origins WHERE id=${id} LIMIT 1`) as SiteOriginRecord[]);
+		return rows[0] ?? null;
+	},
+	async primaryOrigin(siteId: string): Promise<SiteOriginRecord | null> {
+		const rows = (await db`SELECT * FROM site_origins WHERE site_id=${siteId} AND is_primary=1 LIMIT 1`) as SiteOriginRecord[];
+		return rows[0] ?? null;
+	},
+	async insertOrigin(origin: SiteOriginRecord): Promise<void> {
+		await db`INSERT INTO site_origins (id,site_id,name,origin_url,enabled,draining,priority,weight,health_check_path,is_primary,created_at,updated_at) VALUES (${origin.id},${origin.site_id},${origin.name},${origin.origin_url},${origin.enabled},${origin.draining},${origin.priority},${origin.weight},${origin.health_check_path},${origin.is_primary},${origin.created_at},${origin.updated_at})`;
+	},
+	async updateOrigin(origin: SiteOriginRecord): Promise<void> {
+		await db`UPDATE site_origins SET name=${origin.name}, origin_url=${origin.origin_url}, enabled=${origin.enabled}, draining=${origin.draining}, priority=${origin.priority}, weight=${origin.weight}, health_check_path=${origin.health_check_path}, updated_at=${origin.updated_at} WHERE id=${origin.id} AND site_id=${origin.site_id}`;
+	},
+	async deleteOrigin(id: string, siteId: string): Promise<void> {
+		await db`DELETE FROM site_origins WHERE id=${id} AND site_id=${siteId} AND is_primary=0`;
 	},
 	async originHealthStatus(siteId: string): Promise<OriginHealthStatusRecord | null> {
 		const rows = (await db`SELECT * FROM origin_health_status WHERE site_id=${siteId} LIMIT 1`) as OriginHealthStatusRecord[];
@@ -296,6 +355,36 @@ export const repository = {
 	): Promise<void> {
 		await db`UPDATE health_alert_outbox SET status=${status}, attempts=${attempts}, next_attempt_at=${nextAttemptAt}, last_error=${error}, delivered_at=${deliveredAt} WHERE id=${id}`;
 	},
+	async backendHealthStatus(originId: string): Promise<OriginBackendHealthStatusRecord | null> {
+		const rows = (await db`SELECT * FROM origin_backend_health_status WHERE origin_id=${originId} LIMIT 1`) as OriginBackendHealthStatusRecord[];
+		return rows[0] ?? null;
+	},
+	async allBackendHealthStatuses(): Promise<OriginBackendHealthStatusRecord[]> {
+		return (await db`SELECT * FROM origin_backend_health_status`) as OriginBackendHealthStatusRecord[];
+	},
+	async saveBackendHealthStatus(status: OriginBackendHealthStatusRecord): Promise<void> {
+		const existing = await this.backendHealthStatus(status.origin_id);
+		if (existing) {
+			await db`UPDATE origin_backend_health_status SET site_id=${status.site_id}, state=${status.state}, consecutive_failures=${status.consecutive_failures}, consecutive_successes=${status.consecutive_successes}, last_checked_at=${status.last_checked_at}, last_healthy_at=${status.last_healthy_at}, last_unhealthy_at=${status.last_unhealthy_at}, last_status=${status.last_status}, last_latency_ms=${status.last_latency_ms}, last_error=${status.last_error}, updated_at=${status.updated_at} WHERE origin_id=${status.origin_id}`;
+			return;
+		}
+		await db`INSERT INTO origin_backend_health_status (origin_id,site_id,state,consecutive_failures,consecutive_successes,last_checked_at,last_healthy_at,last_unhealthy_at,last_status,last_latency_ms,last_error,updated_at) VALUES (${status.origin_id},${status.site_id},${status.state},${status.consecutive_failures},${status.consecutive_successes},${status.last_checked_at},${status.last_healthy_at},${status.last_unhealthy_at},${status.last_status},${status.last_latency_ms},${status.last_error},${status.updated_at})`;
+	},
+	async insertBackendHealthEvent(event: OriginBackendHealthEventRecord): Promise<void> {
+		await db`INSERT INTO origin_backend_health_events (id,site_id,origin_id,from_state,to_state,status,latency_ms,error,created_at) VALUES (${event.id},${event.site_id},${event.origin_id},${event.from_state},${event.to_state},${event.status},${event.latency_ms},${event.error},${event.created_at})`;
+	},
+	async backendHealthEvents(siteId: string, limit = 100): Promise<OriginBackendHealthEventRecord[]> {
+		return (await db`SELECT * FROM origin_backend_health_events WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as OriginBackendHealthEventRecord[];
+	},
+	async assignSessionOrigin(sessionId: string, siteId: string, originId: string | null): Promise<void> {
+		await db`UPDATE access_sessions SET origin_id=${originId} WHERE id=${sessionId} AND site_id=${siteId}`;
+	},
+	async assignSessionsFromOrigin(originId: string, replacementId: string | null): Promise<void> {
+		await db`UPDATE access_sessions SET origin_id=${replacementId} WHERE origin_id=${originId}`;
+	},
+	async deleteBackendHealthStatus(originId: string): Promise<void> {
+		await db`DELETE FROM origin_backend_health_status WHERE origin_id=${originId}`;
+	},
 	async routePolicies(siteId: string): Promise<RoutePolicyRecord[]> {
 		return (await db`SELECT * FROM route_policies WHERE site_id=${siteId} ORDER BY priority DESC, created_at ASC`) as RoutePolicyRecord[];
 	},
@@ -318,8 +407,8 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
-		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at)
-      VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at})`;
+		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at,origin_id)
+		VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null})`;
 	},
 	async authenticateSession(id: string, siteId: string, userId: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
@@ -534,7 +623,7 @@ export const repository = {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.created_at})`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -568,6 +657,7 @@ export const repository = {
 			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
+		const originFilter = query.originId ? db`AND origin_id=${query.originId}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
 		const statusFilter =
@@ -588,11 +678,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as RequestEventRecord[];
@@ -1401,6 +1491,15 @@ export const repository = {
 			}>;
 		if (rows.length === 0) return 0;
 		await db`DELETE FROM origin_health_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteBackendHealthEventsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM origin_backend_health_events WHERE site_id=${siteId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM origin_backend_health_events WHERE id IN ${db(rows.map((row) => row.id))}`;
 		return rows.length;
 	},
 	async deleteHealthAlertsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {

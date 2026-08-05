@@ -10,6 +10,10 @@ import { Logger } from "../logger.ts";
 
 const issuanceLocks = new Set<string>();
 
+export function siteCertificateIssuanceActive(siteId: string): boolean {
+	return issuanceLocks.has(siteId);
+}
+
 interface AcmeModule {
 	Client: new (options: Record<string, unknown>) => {
 		createAccount(data: Record<string, unknown>): Promise<unknown>;

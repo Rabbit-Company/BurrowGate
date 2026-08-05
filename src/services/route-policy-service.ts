@@ -276,6 +276,11 @@ export function invalidateRoutePolicyCache(siteId: string): void {
 	routePolicyCache.delete(siteId);
 }
 
+export function invalidateDeletedSiteRoutePolicies(siteId: string, patterns: string[]): void {
+	routePolicyCache.delete(siteId);
+	for (const pattern of patterns) matcherCache.delete(pattern);
+}
+
 async function policiesForSite(siteId: string): Promise<RoutePolicyRecord[]> {
 	const cached = routePolicyCache.get(siteId);
 	if (cached && cached.expiresAt > Date.now()) return cached.policies;

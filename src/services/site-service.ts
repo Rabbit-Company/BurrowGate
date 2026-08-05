@@ -8,6 +8,7 @@ import type {
 	ErrorResponseMode,
 	HealthAlertProvider,
 	OriginHealthFailureMode,
+	LoadBalancingAlgorithm,
 	SiteAccessMode,
 	SiteRecord,
 } from "../types.ts";
@@ -42,6 +43,7 @@ export interface SiteInput {
 	challengeHtmlTemplate?: unknown;
 	errorJsonFields?: unknown;
 	healthCheck?: unknown;
+	loadBalancer?: unknown;
 }
 
 export interface SiteView {
@@ -72,6 +74,7 @@ export interface SiteView {
 		failureMode: OriginHealthFailureMode;
 		alerts: { enabled: boolean; provider: HealthAlertProvider; webhookConfigured: boolean };
 	};
+	loadBalancer: { algorithm: LoadBalancingAlgorithm; affinity: boolean };
 	createdAt: number;
 	updatedAt: number;
 }
@@ -206,6 +209,21 @@ function healthAlertProvider(value: unknown, fallback: HealthAlertProvider): Hea
 	throw new Error("Health alert provider must be generic, slack, discord, or ntfy");
 }
 
+function loadBalancerSettings(value: unknown, existing?: SiteRecord): { algorithm: LoadBalancingAlgorithm; affinity: boolean } {
+	if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) throw new Error("Load-balancer settings must be an object");
+	const input = (value ?? {}) as Record<string, unknown>;
+	const algorithm = String(input.algorithm ?? existing?.load_balancing_algorithm ?? "failover")
+		.trim()
+		.toLowerCase();
+	if (!["failover", "round-robin", "weighted-round-robin"].includes(algorithm)) {
+		throw new Error("Load-balancing algorithm must be failover, round-robin, or weighted-round-robin");
+	}
+	return {
+		algorithm: algorithm as LoadBalancingAlgorithm,
+		affinity: enabledValue(input.affinity, existing?.load_balancing_affinity !== 0),
+	};
+}
+
 function webhookValue(value: unknown, label: string): string | undefined {
 	const raw = String(value ?? "").trim();
 	if (!raw) return undefined;
@@ -323,6 +341,10 @@ export function siteView(site: SiteRecord): SiteView {
 				webhookConfigured: Boolean(site.health_alert_webhook_url),
 			},
 		},
+		loadBalancer: {
+			algorithm: site.load_balancing_algorithm ?? "failover",
+			affinity: site.load_balancing_affinity !== 0,
+		},
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -335,6 +357,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 	const generatedSigningSecret = providedSecret ? null : randomToken(48);
 	const now = Date.now();
 	const health = parseHealthCheck(input.healthCheck);
+	const loadBalancer = loadBalancerSettings(input.loadBalancer);
 	if (health.alertEnabled && !health.webhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
 	const site: SiteRecord = {
 		id: randomId("site"),
@@ -365,11 +388,27 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		health_alert_provider: health.alertProvider,
 		health_alert_webhook_url: health.webhookUrl ? await encryptSecret(health.webhookUrl) : null,
 		health_alert_webhook_secret: health.webhookSecret ? await encryptSecret(health.webhookSecret) : null,
+		load_balancing_algorithm: loadBalancer.algorithm,
+		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
 	};
 	await repository.insertSite(site);
+	await repository.insertOrigin({
+		id: randomId("origin"),
+		site_id: site.id,
+		name: `${site.name} primary`,
+		origin_url: site.origin_url,
+		enabled: 1,
+		draining: 0,
+		priority: 0,
+		weight: 1,
+		health_check_path: null,
+		is_primary: 1,
+		created_at: now,
+		updated_at: now,
+	});
 	await repository.ensureTlsSettings(site.id, now);
 	return { site, generatedSigningSecret };
 }
@@ -382,6 +421,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 	if (conflict && conflict.id !== id) throw new Error("A site with this public host already exists");
 	const existingPolicy = policyFromRecord(existing);
 	const health = parseHealthCheck(input.healthCheck, existing);
+	const loadBalancer = loadBalancerSettings(input.loadBalancer, existing);
 	const encryptedWebhookUrl = health.clearWebhook ? null : health.webhookUrl ? await encryptSecret(health.webhookUrl) : existing.health_alert_webhook_url;
 	if (health.alertEnabled && !encryptedWebhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
 	const updated: SiteRecord = {
@@ -415,6 +455,8 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 			: health.webhookSecret
 				? await encryptSecret(health.webhookSecret)
 				: existing.health_alert_webhook_secret,
+		load_balancing_algorithm: loadBalancer.algorithm,
+		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};
@@ -431,6 +473,15 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		throw new Error("The active certificate does not cover the new public hostname. Replace or remove the certificate before changing this hostname.");
 	}
 	await repository.updateSite(updated);
+	const primary = await repository.primaryOrigin(id);
+	if (primary && (primary.origin_url !== updated.origin_url || (primary.name.endsWith(" primary") && primary.name !== `${updated.name} primary`))) {
+		await repository.updateOrigin({
+			...primary,
+			name: primary.name.endsWith(" primary") ? `${updated.name} primary` : primary.name,
+			origin_url: updated.origin_url,
+			updated_at: updated.updated_at,
+		});
+	}
 	return updated;
 }
 

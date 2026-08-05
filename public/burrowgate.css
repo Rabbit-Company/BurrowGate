@@ -130,7 +130,7 @@ button:disabled {
 	justify-content: space-between;
 }
 .header-subtitle {
-	margin: 8px 0 0 46px;
+	margin: 8px 0 0 0;
 }
 .dashboard-header {
 	margin-bottom: 24px;
@@ -532,6 +532,18 @@ form.grid label {
 	padding: 7px 10px;
 	font-size: 12px;
 }
+.button.icon-button {
+	display: inline-grid;
+	width: 40px;
+	height: 40px;
+	padding: 0;
+	place-items: center;
+}
+.tabler-icon {
+	display: block;
+	width: 20px;
+	height: 20px;
+}
 .input,
 .select {
 	width: 100%;
@@ -854,6 +866,37 @@ form.grid label {
 	font-size: 12px;
 	color: #cbd5e1;
 }
+.origin-pool-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 14px;
+	align-items: center;
+	padding: 13px 14px;
+	border: 1px solid #2b3648;
+	border-radius: 12px;
+	background: rgba(15, 23, 42, 0.66);
+}
+.origin-pool-copy,
+.origin-pool-meta {
+	display: grid;
+	gap: 5px;
+}
+.origin-pool-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.origin-pool-meta {
+	color: #94a3b8;
+	font-size: 12px;
+}
+.origin-pool-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
 .code-input {
 	min-height: 210px;
 	resize: vertical;
@@ -946,6 +989,12 @@ form.grid label {
 	}
 	.health-event-item {
 		grid-template-columns: 1fr;
+	}
+	.origin-pool-item {
+		grid-template-columns: 1fr;
+	}
+	.origin-pool-actions {
+		justify-content: flex-start;
 	}
 	.site-form-grid {
 		grid-template-columns: 1fr;

@@ -40,12 +40,14 @@ import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
+import { loadBalancer } from "./services/load-balancer-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
 await initializeGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();
+await loadBalancer.initialize();
 await originHealthManager.initialize();
 await runMaintenance();
 startMaintenance();
@@ -186,7 +188,11 @@ async function gateway(ctx: any): Promise<Response> {
 	// A session is required for challenge-protected routes, access-list login,
 	// and optionally as the route rate-limit identity.
 	const needsSession =
-		accessAuthenticationEnabled || route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
+		accessAuthenticationEnabled ||
+		route.accessMode === "challenge" ||
+		ipRule.action === "challenge" ||
+		route.policy?.rate_limit_key_mode === "session-or-ip" ||
+		site.load_balancing_affinity !== 0;
 	const candidateSession = needsSession ? await findAccessSession(request, site, ip) : null;
 
 	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
@@ -305,31 +311,73 @@ async function gateway(ctx: any): Promise<Response> {
 			: accessStatus === "bypass"
 				? "proxied-unprotected"
 				: "proxied";
+	let selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip);
+	if (!selectedOrigin) {
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: 503,
+			decision: "origin-pool-unavailable",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: 503,
+			code: "origin_pool_unavailable",
+			error: "No origin is available",
+			clientIp: ip,
+			reason: "Every configured origin is unhealthy, disabled, or draining.",
+			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+		});
+	}
 
 	try {
-		let response = await proxyRequest(
-			request,
-			site,
-			ip,
-			session,
-			accessStatus,
-			accessUser?.username ?? null,
-			accessSettings.send_username_to_upstream === 1,
-			eventBase.countryCode ?? null,
-		);
+		const proxySelectedOrigin = async () =>
+			await proxyRequest(
+				request,
+				site,
+				ip,
+				session,
+				accessStatus,
+				accessUser?.username ?? null,
+				accessSettings.send_username_to_upstream === 1,
+				eventBase.countryCode ?? null,
+				selectedOrigin!.origin_url,
+			);
+		let response: Response;
+		try {
+			response = await proxySelectedOrigin();
+			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+		} catch (firstError) {
+			loadBalancer.reportPassiveFailure(selectedOrigin.id);
+			if (!["GET", "HEAD"].includes(request.method)) throw firstError;
+			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
+			if (!replacement) throw firstError;
+			selectedOrigin = replacement;
+			response = await proxySelectedOrigin();
+			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+		}
 		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
 			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));
 		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
 			response = appendSetCookies(response, clearAccessIdentityCookies(request));
 		}
-		await recordEvent({ ...eventBase, sessionId: session?.id ?? null, status: response.status, decision, latencyMs: Math.round(performance.now() - started) });
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: response.status,
+			decision,
+			originId: selectedOrigin.id,
+			latencyMs: Math.round(performance.now() - started),
+		});
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	} catch (error) {
+		loadBalancer.reportPassiveFailure(selectedOrigin.id);
 		await recordEvent({
 			...eventBase,
 			sessionId: session?.id ?? null,
 			status: 502,
 			decision: "origin-error",
+			originId: selectedOrigin.id,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		Logger.error("Origin proxy failed", { error });

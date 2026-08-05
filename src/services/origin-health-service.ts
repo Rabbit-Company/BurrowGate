@@ -1,6 +1,15 @@
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
-import type { HealthAlertOutboxRecord, OriginHealthEventRecord, OriginHealthState, OriginHealthStatusRecord, SiteRecord } from "../types.ts";
+import type {
+	HealthAlertOutboxRecord,
+	OriginBackendHealthEventRecord,
+	OriginBackendHealthStatusRecord,
+	OriginHealthEventRecord,
+	OriginHealthState,
+	OriginHealthStatusRecord,
+	SiteOriginRecord,
+	SiteRecord,
+} from "../types.ts";
 import { hmacSha256Hex, randomId } from "../utils/crypto.ts";
 import { decryptSecret } from "./secret-encryption-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
@@ -19,9 +28,10 @@ export interface HealthCheckResult {
 	checkedAt: number;
 }
 
-interface RuntimeHealth {
+interface RuntimeOriginHealth {
 	site: SiteRecord;
-	status: OriginHealthStatusRecord;
+	origin: SiteOriginRecord;
+	status: OriginBackendHealthStatusRecord;
 	nextCheckAt: number;
 	running: boolean;
 	lastPersistedAt: number;
@@ -82,11 +92,11 @@ function emptyStatus(siteId: string, state: OriginHealthState, now = Date.now())
 	};
 }
 
-/**
- * Preserve a confirmed outage across origin, path, and threshold changes.
- * Resetting an unhealthy site to unknown would discard the open incident and
- * prevent the successful replacement origin from producing a recovery alert.
- */
+function emptyBackendStatus(origin: SiteOriginRecord, state: OriginHealthState, now = Date.now()): OriginBackendHealthStatusRecord {
+	return { ...emptyStatus(origin.site_id, state, now), origin_id: origin.id };
+}
+
+/** Preserve a confirmed incident across origin configuration changes. */
 export function healthStatusAfterConfigurationChange(
 	siteId: string,
 	current: OriginHealthStatusRecord | undefined,
@@ -103,16 +113,18 @@ export function healthStatusAfterConfigurationChange(
 	};
 }
 
-function settingsKey(site: SiteRecord): string {
+function settingsKey(site: SiteRecord, origin: SiteOriginRecord): string {
 	return [
 		site.enabled,
-		site.origin_url,
 		site.health_check_enabled,
 		site.health_check_path,
 		site.health_check_interval_seconds,
 		site.health_check_timeout_ms,
 		site.health_check_failure_threshold,
 		site.health_check_recovery_threshold,
+		origin.enabled,
+		origin.origin_url,
+		origin.health_check_path,
 	].join("\n");
 }
 
@@ -139,28 +151,37 @@ function healthSummary(status: OriginHealthStatusRecord) {
 	};
 }
 
+function aggregateState(statuses: OriginBackendHealthStatusRecord[], healthEnabled: boolean): OriginHealthState {
+	if (!healthEnabled) return "disabled";
+	if (statuses.length === 0) return "unhealthy";
+	if (statuses.some((status) => status.state === "healthy")) return "healthy";
+	if (statuses.some((status) => status.state === "degraded")) return "degraded";
+	if (statuses.some((status) => status.state === "unknown" || status.state === "disabled")) return "unknown";
+	return "unhealthy";
+}
+
 export class OriginHealthManager {
-	private readonly runtime = new Map<string, RuntimeHealth>();
+	private readonly runtime = new Map<string, RuntimeOriginHealth>();
+	private readonly poolStatuses = new Map<string, OriginHealthStatusRecord>();
 	private activeChecks = 0;
 	private alertWorkerRunning = false;
 
 	async initialize(): Promise<void> {
-		const [sites, persisted] = await Promise.all([repository.allSites(), repository.allOriginHealthStatuses()]);
-		const statusBySite = new Map(persisted.map((status) => [status.site_id, status]));
-		for (const site of sites) {
-			const enabled = site.enabled === 1 && site.health_check_enabled === 1;
-			const previous = statusBySite.get(site.id);
-			const status = healthStatusAfterConfigurationChange(site.id, previous, enabled);
-			this.runtime.set(site.id, {
-				site,
-				status,
-				nextCheckAt: enabled ? Date.now() + Math.round(Math.random() * 1_000) : Number.POSITIVE_INFINITY,
-				running: false,
-				lastPersistedAt: Number(previous?.updated_at ?? 0),
-				settingsKey: settingsKey(site),
-			});
-			openMetrics.setOriginHealth(site.id, status.state);
+		const [sites, origins, persistedBackends, persistedPools] = await Promise.all([
+			repository.allSites(),
+			repository.allOrigins(),
+			repository.allBackendHealthStatuses(),
+			repository.allOriginHealthStatuses(),
+		]);
+		const sitesById = new Map(sites.map((site) => [site.id, site]));
+		const backendById = new Map(persistedBackends.map((status) => [status.origin_id, status]));
+		for (const origin of origins) {
+			const site = sitesById.get(origin.site_id);
+			if (!site) continue;
+			this.setRuntimeOrigin(site, origin, backendById.get(origin.id), false);
 		}
+		const persistedPoolBySite = new Map(persistedPools.map((status) => [status.site_id, status]));
+		for (const site of sites) this.recomputePool(site, persistedPoolBySite.get(site.id), true);
 	}
 
 	start(): void {
@@ -173,74 +194,148 @@ export class OriginHealthManager {
 	}
 
 	summary(siteId: string) {
-		const runtime = this.runtime.get(siteId);
-		return runtime ? healthSummary(runtime.status) : healthSummary(emptyStatus(siteId, "disabled"));
+		const status = this.poolStatuses.get(siteId) ?? emptyStatus(siteId, "disabled");
+		return {
+			...healthSummary(status),
+			origins: [...this.runtime.values()]
+				.filter((runtime) => runtime.site.id === siteId)
+				.map((runtime) => ({
+					id: runtime.origin.id,
+					name: runtime.origin.name,
+					...healthSummary(runtime.status),
+				})),
+		};
+	}
+
+	originState(originId: string): OriginHealthState {
+		return this.runtime.get(originId)?.status.state ?? "unknown";
 	}
 
 	isMaintenanceMode(siteId: string): boolean {
-		const runtime = this.runtime.get(siteId);
-		return Boolean(runtime && runtime.site.health_check_failure_mode === "maintenance" && runtime.status.state === "unhealthy");
+		const runtimes = [...this.runtime.values()].filter((runtime) => runtime.site.id === siteId && runtime.origin.enabled === 1);
+		const site = runtimes[0]?.site;
+		return Boolean(site && site.health_check_failure_mode === "maintenance" && this.poolStatuses.get(siteId)?.state === "unhealthy");
 	}
 
 	async events(siteId: string, limit = 50): Promise<OriginHealthEventRecord[]> {
 		return await repository.originHealthEvents(siteId, Math.min(200, Math.max(1, limit)));
 	}
 
+	async backendEvents(siteId: string, limit = 100): Promise<OriginBackendHealthEventRecord[]> {
+		return await repository.backendHealthEvents(siteId, Math.min(200, Math.max(1, limit)));
+	}
+
 	async refreshSite(siteId: string): Promise<void> {
 		const site = await repository.siteById(siteId);
 		if (!site) {
-			this.runtime.delete(siteId);
-			openMetrics.clearOriginHealth(siteId);
+			this.removeSite(siteId);
 			return;
 		}
-		const current = this.runtime.get(siteId);
-		const nextKey = settingsKey(site);
-		if (current && current.settingsKey === nextKey) {
-			current.site = site;
-			return;
+		const origins = await repository.originsForSite(siteId);
+		const originIds = new Set(origins.map((origin) => origin.id));
+		for (const [originId, runtime] of this.runtime) {
+			if (runtime.site.id !== siteId || originIds.has(originId)) continue;
+			this.runtime.delete(originId);
+			openMetrics.clearOriginBackendHealth(siteId, originId);
 		}
-		const enabled = site.enabled === 1 && site.health_check_enabled === 1;
-		const status = healthStatusAfterConfigurationChange(site.id, current?.status, enabled);
-		this.runtime.set(site.id, {
-			site,
-			status,
-			nextCheckAt: enabled ? Date.now() : Number.POSITIVE_INFINITY,
-			running: false,
-			lastPersistedAt: 0,
-			settingsKey: nextKey,
-		});
-		await repository.saveOriginHealthStatus(status);
-		openMetrics.setOriginHealth(site.id, status.state);
+		for (const origin of origins) this.setRuntimeOrigin(site, origin, this.runtime.get(origin.id)?.status, true);
+		this.recomputePool(site, this.poolStatuses.get(siteId), true);
+		await repository.saveOriginHealthStatus(this.poolStatuses.get(siteId)!);
 	}
 
-	async checkNow(siteId: string): Promise<ReturnType<typeof healthSummary>> {
+	removeSite(siteId: string): void {
+		for (const [originId, runtime] of this.runtime) {
+			if (runtime.site.id !== siteId) continue;
+			this.runtime.delete(originId);
+			openMetrics.clearOriginBackendHealth(siteId, originId);
+		}
+		this.poolStatuses.delete(siteId);
+		openMetrics.clearOriginHealth(siteId);
+	}
+
+	async checkNow(siteId: string, originId?: string): Promise<ReturnType<OriginHealthManager["summary"]>> {
 		await this.refreshSite(siteId);
-		const runtime = this.runtime.get(siteId);
-		if (!runtime) throw new Error("Site not found");
-		if (runtime.site.enabled !== 1 || runtime.site.health_check_enabled !== 1) throw new Error("Origin health checks are disabled for this site");
-		if (runtime.running) throw new Error("An origin health check is already running for this site");
-		await this.runCheck(runtime);
-		return healthSummary(runtime.status);
+		const targets = [...this.runtime.values()].filter(
+			(runtime) => runtime.site.id === siteId && runtime.origin.enabled === 1 && (!originId || runtime.origin.id === originId),
+		);
+		if (targets.length === 0) throw new Error(originId ? "Origin not found or disabled" : "No enabled origins are configured for this site");
+		if (targets.some((runtime) => runtime.running)) throw new Error("An origin health check is already running");
+		if (targets[0]!.site.health_check_enabled !== 1) throw new Error("Origin health checks are disabled for this site");
+		for (const runtime of targets) await this.runCheck(runtime);
+		return this.summary(siteId);
+	}
+
+	private setRuntimeOrigin(site: SiteRecord, origin: SiteOriginRecord, previous: OriginBackendHealthStatusRecord | undefined, immediate: boolean): void {
+		const existing = this.runtime.get(origin.id);
+		const key = settingsKey(site, origin);
+		if (existing && existing.settingsKey === key) {
+			existing.site = site;
+			existing.origin = origin;
+			return;
+		}
+		const enabled = site.enabled === 1 && site.health_check_enabled === 1 && origin.enabled === 1;
+		const base = healthStatusAfterConfigurationChange(site.id, previous, enabled);
+		const status: OriginBackendHealthStatusRecord = { ...base, origin_id: origin.id };
+		this.runtime.set(origin.id, {
+			site,
+			origin,
+			status,
+			nextCheckAt: enabled ? Date.now() + (immediate ? 0 : Math.round(Math.random() * 1_000)) : Number.POSITIVE_INFINITY,
+			running: false,
+			lastPersistedAt: Number(previous?.updated_at ?? 0),
+			settingsKey: key,
+		});
+		openMetrics.setOriginBackendHealth(site.id, origin.id, status.state);
+	}
+
+	private recomputePool(site: SiteRecord, previous: OriginHealthStatusRecord | undefined, preserveIncident: boolean): OriginHealthStatusRecord {
+		const statuses = [...this.runtime.values()]
+			.filter((runtime) => runtime.site.id === site.id && runtime.origin.enabled === 1)
+			.map((runtime) => runtime.status);
+		const state = aggregateState(statuses, site.enabled === 1 && site.health_check_enabled === 1);
+		const now = Date.now();
+		const latest = [...statuses].sort((left, right) => Number(right.last_checked_at ?? 0) - Number(left.last_checked_at ?? 0))[0];
+		const pool: OriginHealthStatusRecord = {
+			...(previous ?? emptyStatus(site.id, state, now)),
+			state:
+				preserveIncident && site.enabled === 1 && site.health_check_enabled === 1 && previous?.state === "unhealthy" && state !== "healthy"
+					? "unhealthy"
+					: state,
+			consecutive_failures: statuses.reduce((sum, status) => sum + Number(status.consecutive_failures), 0),
+			consecutive_successes: statuses.reduce((sum, status) => sum + Number(status.consecutive_successes), 0),
+			last_checked_at: latest?.last_checked_at ?? previous?.last_checked_at ?? null,
+			last_healthy_at: statuses.reduce<number | null>((latestAt, status) => Math.max(latestAt ?? 0, Number(status.last_healthy_at ?? 0)) || null, null),
+			last_unhealthy_at: state === "unhealthy" && previous?.state !== "unhealthy" ? now : (previous?.last_unhealthy_at ?? null),
+			last_status: latest?.last_status ?? null,
+			last_latency_ms: latest?.last_latency_ms ?? null,
+			last_error: state === "unhealthy" ? "No healthy origin is available" : null,
+			updated_at: now,
+		};
+		this.poolStatuses.set(site.id, pool);
+		openMetrics.setOriginHealth(site.id, pool.state);
+		return pool;
 	}
 
 	private async tick(): Promise<void> {
 		const now = Date.now();
 		for (const runtime of this.runtime.values()) {
 			if (this.activeChecks >= MAX_CONCURRENT_CHECKS) break;
-			if (runtime.running || runtime.nextCheckAt > now || runtime.site.enabled !== 1 || runtime.site.health_check_enabled !== 1) continue;
+			if (runtime.running || runtime.nextCheckAt > now || runtime.site.enabled !== 1 || runtime.site.health_check_enabled !== 1 || runtime.origin.enabled !== 1)
+				continue;
 			void this.runCheck(runtime);
 		}
 	}
 
-	private async performCheck(site: SiteRecord): Promise<HealthCheckResult> {
+	private async performCheck(runtime: RuntimeOriginHealth): Promise<HealthCheckResult> {
 		const started = performance.now();
 		const checkedAt = Date.now();
 		try {
-			const response = await fetch(originHealthTarget(site.origin_url, site.health_check_path ?? "/health"), {
+			const path = runtime.origin.health_check_path || runtime.site.health_check_path || "/health";
+			const response = await fetch(originHealthTarget(runtime.origin.origin_url, path), {
 				method: "GET",
 				headers: { accept: "*/*", "user-agent": "BurrowGate-HealthCheck/1.0" },
 				redirect: "manual",
-				signal: AbortSignal.timeout(Number(site.health_check_timeout_ms ?? 3_000)),
+				signal: AbortSignal.timeout(Number(runtime.site.health_check_timeout_ms ?? 3_000)),
 			});
 			await response.body?.cancel().catch(() => undefined);
 			const healthy = response.status >= 200 && response.status < 300;
@@ -256,29 +351,52 @@ export class OriginHealthManager {
 		}
 	}
 
-	private async runCheck(runtime: RuntimeHealth): Promise<void> {
+	private async runCheck(runtime: RuntimeOriginHealth): Promise<void> {
 		runtime.running = true;
 		this.activeChecks += 1;
 		try {
-			const result = await this.performCheck(runtime.site);
-			const previous = runtime.status;
-			const next = advanceOriginHealthState(
-				previous,
+			const result = await this.performCheck(runtime);
+			if (this.runtime.get(runtime.origin.id) !== runtime) return;
+			const previousBackend = runtime.status;
+			const previousPool = this.poolStatuses.get(runtime.site.id) ?? emptyStatus(runtime.site.id, "unknown");
+			const advanced = advanceOriginHealthState(
+				previousBackend,
 				result,
 				Number(runtime.site.health_check_failure_threshold ?? 3),
 				Number(runtime.site.health_check_recovery_threshold ?? 2),
 			);
-			runtime.status = next;
-			const transitioned = previous.state !== next.state;
-			openMetrics.recordOriginHealthCheck(runtime.site.id, result.healthy, result.latencyMs);
-			openMetrics.setOriginHealth(runtime.site.id, next.state);
-			if (transitioned || result.checkedAt - runtime.lastPersistedAt >= STATUS_PERSIST_INTERVAL_MS) {
-				await repository.saveOriginHealthStatus(next);
+			const nextBackend: OriginBackendHealthStatusRecord = { ...advanced, origin_id: runtime.origin.id };
+			runtime.status = nextBackend;
+			const backendTransitioned = previousBackend.state !== nextBackend.state;
+			openMetrics.recordOriginHealthCheck(runtime.site.id, runtime.origin.id, result.healthy, result.latencyMs);
+			openMetrics.setOriginBackendHealth(runtime.site.id, runtime.origin.id, nextBackend.state);
+			if (backendTransitioned || result.checkedAt - runtime.lastPersistedAt >= STATUS_PERSIST_INTERVAL_MS) {
+				await repository.saveBackendHealthStatus(nextBackend);
 				runtime.lastPersistedAt = result.checkedAt;
 			}
-			if (transitioned) await this.recordTransition(runtime.site, previous.state, next, result);
+			const backendEvent = backendTransitioned ? this.backendEvent(runtime, previousBackend.state, nextBackend, result) : null;
+			if (backendEvent) await repository.insertBackendHealthEvent(backendEvent);
+			const nextPool = this.recomputePool(runtime.site, previousPool, false);
+			const poolTransitioned = previousPool.state !== nextPool.state;
+			if (poolTransitioned) {
+				await repository.saveOriginHealthStatus(nextPool);
+				const event = this.poolEvent(runtime.site, previousPool.state, nextPool, result);
+				await repository.insertOriginHealthEvent(event);
+				if (nextPool.state === "unhealthy") await this.queueAlert(runtime.site, event.id, "pool_unhealthy", null, result, nextPool.state);
+				else if (previousPool.state === "unhealthy" && nextPool.state === "healthy")
+					await this.queueAlert(runtime.site, event.id, "pool_recovered", null, result, nextPool.state);
+			}
+			if (backendTransitioned && !poolTransitioned) {
+				const eventType =
+					nextBackend.state === "unhealthy"
+						? "origin_unhealthy"
+						: previousBackend.state === "unhealthy" && nextBackend.state === "healthy"
+							? "origin_recovered"
+							: null;
+				if (eventType && backendEvent) await this.queueAlert(runtime.site, backendEvent.id, eventType, runtime.origin, result, nextBackend.state);
+			}
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to persist origin health check", { siteId: runtime.site.id, error });
+			Logger.error("[BurrowGate] Unable to persist origin health check", { siteId: runtime.site.id, originId: runtime.origin.id, error });
 		} finally {
 			runtime.running = false;
 			this.activeChecks = Math.max(0, this.activeChecks - 1);
@@ -286,10 +404,16 @@ export class OriginHealthManager {
 		}
 	}
 
-	private async recordTransition(site: SiteRecord, fromState: OriginHealthState, status: OriginHealthStatusRecord, result: HealthCheckResult): Promise<void> {
-		const event: OriginHealthEventRecord = {
-			id: randomId("health_evt"),
-			site_id: site.id,
+	private backendEvent(
+		runtime: RuntimeOriginHealth,
+		fromState: OriginHealthState,
+		status: OriginBackendHealthStatusRecord,
+		result: HealthCheckResult,
+	): OriginBackendHealthEventRecord {
+		return {
+			id: randomId("backend_health_evt"),
+			site_id: runtime.site.id,
+			origin_id: runtime.origin.id,
 			from_state: fromState,
 			to_state: status.state,
 			status: result.status,
@@ -297,22 +421,36 @@ export class OriginHealthManager {
 			error: result.error,
 			created_at: result.checkedAt,
 		};
-		await repository.insertOriginHealthEvent(event);
-		const eventType =
-			status.state === "unhealthy" && fromState !== "unhealthy"
-				? "origin_unhealthy"
-				: fromState === "unhealthy" && status.state === "healthy"
-					? "origin_recovered"
-					: null;
-		if (!eventType || site.health_alert_enabled !== 1 || !site.health_alert_webhook_url) return;
+	}
+
+	private poolEvent(site: SiteRecord, fromState: OriginHealthState, status: OriginHealthStatusRecord, result: HealthCheckResult): OriginHealthEventRecord {
+		return {
+			id: randomId("health_evt"),
+			site_id: site.id,
+			from_state: fromState,
+			to_state: status.state,
+			status: result.status,
+			latency_ms: Math.round(result.latencyMs),
+			error: status.last_error,
+			created_at: result.checkedAt,
+		};
+	}
+
+	private async queueAlert(
+		site: SiteRecord,
+		eventId: string,
+		eventType: HealthAlertOutboxRecord["event_type"],
+		origin: SiteOriginRecord | null,
+		result: HealthCheckResult,
+		state: OriginHealthState,
+	): Promise<void> {
+		if (site.health_alert_enabled !== 1 || !site.health_alert_webhook_url) return;
 		const payload = {
-			id: event.id,
+			id: eventId,
 			type: eventType,
 			site: { id: site.id, name: site.name, publicHost: site.public_host },
-			origin: new URL(site.origin_url).origin,
-			state: status.state,
-			previousState: fromState,
-			healthPath: site.health_check_path ?? "/health",
+			origin: origin ? { id: origin.id, name: origin.name, url: new URL(origin.origin_url).origin } : null,
+			state,
 			status: result.status,
 			latencyMs: Math.round(result.latencyMs),
 			reason: result.error,
@@ -321,7 +459,7 @@ export class OriginHealthManager {
 		await repository.insertHealthAlert({
 			id: randomId("health_alert"),
 			site_id: site.id,
-			event_id: event.id,
+			event_id: eventId,
 			event_type: eventType,
 			payload_json: JSON.stringify(payload),
 			status: "pending",
@@ -356,11 +494,16 @@ export class OriginHealthManager {
 		try {
 			const url = await decryptSecret(site.health_alert_webhook_url);
 			const secret = site.health_alert_webhook_secret ? await decryptSecret(site.health_alert_webhook_secret) : null;
-			const payload = JSON.parse(alert.payload_json) as Record<string, unknown>;
-			const down = alert.event_type === "origin_unhealthy";
-			const message = down
-				? `BurrowGate: ${site.name} origin is unhealthy (${String(payload.reason ?? "health check failed")}).`
-				: `BurrowGate: ${site.name} origin recovered.`;
+			const payload = JSON.parse(alert.payload_json) as { origin?: { name?: string } | null; reason?: string };
+			const originName = payload.origin?.name ? ` ${payload.origin.name}` : "";
+			const messages: Record<HealthAlertOutboxRecord["event_type"], string> = {
+				origin_unhealthy: `BurrowGate:${originName} origin for ${site.name} is unhealthy (${payload.reason ?? "health check failed"}).`,
+				origin_recovered: `BurrowGate:${originName} origin for ${site.name} recovered.`,
+				pool_unhealthy: `BurrowGate: all origins for ${site.name} are unavailable.`,
+				pool_recovered: `BurrowGate: the origin pool for ${site.name} recovered.`,
+			};
+			const message = messages[alert.event_type];
+			const down = alert.event_type === "origin_unhealthy" || alert.event_type === "pool_unhealthy";
 			const headers = new Headers({ "x-burrowgate-event-id": alert.event_id, "user-agent": "BurrowGate-Alerts/1.0" });
 			let body: string;
 			if (site.health_alert_provider === "slack") {

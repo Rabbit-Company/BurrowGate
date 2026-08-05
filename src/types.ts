@@ -12,6 +12,7 @@ export type ErrorResponseMode = "html" | "json";
 export type OriginHealthState = "unknown" | "healthy" | "degraded" | "unhealthy" | "disabled";
 export type OriginHealthFailureMode = "monitor" | "maintenance";
 export type HealthAlertProvider = "generic" | "slack" | "discord" | "ntfy";
+export type LoadBalancingAlgorithm = "failover" | "round-robin" | "weighted-round-robin";
 export type TlsMode = "disabled" | "uploaded" | "letsencrypt";
 export type CertificateSource = "uploaded" | "letsencrypt";
 export type CertificateStatus = "pending" | "active" | "renewal-failed" | "expired" | "invalid";
@@ -109,8 +110,33 @@ export interface SiteRecord {
 	health_alert_provider?: HealthAlertProvider;
 	health_alert_webhook_url?: string | null;
 	health_alert_webhook_secret?: string | null;
+	load_balancing_algorithm?: LoadBalancingAlgorithm;
+	load_balancing_affinity?: number;
 	created_at: number;
 	updated_at: number;
+}
+
+export interface SiteOriginRecord {
+	id: string;
+	site_id: string;
+	name: string;
+	origin_url: string;
+	enabled: number;
+	draining: number;
+	priority: number;
+	weight: number;
+	health_check_path: string | null;
+	is_primary: number;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface OriginBackendHealthStatusRecord extends OriginHealthStatusRecord {
+	origin_id: string;
+}
+
+export interface OriginBackendHealthEventRecord extends OriginHealthEventRecord {
+	origin_id: string;
 }
 
 export interface OriginHealthStatusRecord {
@@ -144,7 +170,7 @@ export interface HealthAlertOutboxRecord {
 	id: string;
 	site_id: string;
 	event_id: string;
-	event_type: "origin_unhealthy" | "origin_recovered";
+	event_type: "origin_unhealthy" | "origin_recovered" | "pool_unhealthy" | "pool_recovered";
 	payload_json: string;
 	status: HealthAlertOutboxStatus;
 	attempts: number;
@@ -194,6 +220,7 @@ export interface AccessSessionRecord {
 	country_code: string | null;
 	access_user_id: string | null;
 	authenticated_at: number | null;
+	origin_id?: string | null;
 }
 
 export interface AccessUserRecord {
@@ -336,6 +363,7 @@ export interface RequestEventRecord {
 	decision: string;
 	latency_ms: number;
 	country_code: string | null;
+	origin_id?: string | null;
 	created_at: number;
 }
 

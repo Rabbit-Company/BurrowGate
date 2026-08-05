@@ -1,5 +1,7 @@
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
+const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
+const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
 const byId = (id) => document.getElementById(id);
 
 let streams = [];
@@ -19,6 +21,7 @@ let activeConnections = [];
 let latestStreamMetrics = null;
 let streamTrafficChart = null;
 let streamBandwidthChart = null;
+let dateTimeFormat = "iso-24";
 
 const tableState = {
 	connections: { sortBy: "connectedAt", sortDirection: "desc" },
@@ -42,9 +45,62 @@ function formatBytes(value) {
 	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
+function twoDigits(value) {
+	return String(value).padStart(2, "0");
+}
+
+function readDateTimeFormat() {
+	try {
+		const stored = localStorage.getItem(DATE_TIME_FORMAT_STORAGE_KEY);
+		return stored && DATE_TIME_FORMATS.has(stored) ? stored : "iso-24";
+	} catch {
+		return "iso-24";
+	}
+}
+
+function initializeDateTimeFormat() {
+	dateTimeFormat = readDateTimeFormat();
+	byId("dateTimeFormat").value = dateTimeFormat;
+}
+
+function saveDateTimeFormat(value) {
+	dateTimeFormat = DATE_TIME_FORMATS.has(value) ? value : "iso-24";
+	try {
+		localStorage.setItem(DATE_TIME_FORMAT_STORAGE_KEY, dateTimeFormat);
+	} catch {
+		// The preference still applies for this page when browser storage is unavailable.
+	}
+}
+
 function formatDate(value) {
-	const date = new Date(Number(value));
-	return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+	if (value === null || value === undefined) return "-";
+	const date = value instanceof Date ? value : new Date(Number(value));
+	if (Number.isNaN(date.getTime())) return "-";
+	if (dateTimeFormat === "browser") return date.toLocaleString();
+	const year = date.getFullYear();
+	const month = twoDigits(date.getMonth() + 1);
+	const day = twoDigits(date.getDate());
+	const minutes = twoDigits(date.getMinutes());
+	const seconds = twoDigits(date.getSeconds());
+	if (dateTimeFormat === "mdy-12") {
+		const suffix = date.getHours() >= 12 ? "PM" : "AM";
+		const hours = twoDigits(date.getHours() % 12 || 12);
+		return `${month}/${day}/${year} ${hours}:${minutes}:${seconds} ${suffix}`;
+	}
+	const time = `${twoDigits(date.getHours())}:${minutes}:${seconds}`;
+	return dateTimeFormat === "dmy-24" ? `${day}/${month}/${year} ${time}` : `${year}-${month}-${day} ${time}`;
+}
+
+function formatTime(value = Date.now()) {
+	const date = value instanceof Date ? value : new Date(Number(value));
+	if (Number.isNaN(date.getTime())) return "-";
+	if (dateTimeFormat === "browser") return date.toLocaleTimeString();
+	const minutes = twoDigits(date.getMinutes());
+	const seconds = twoDigits(date.getSeconds());
+	if (dateTimeFormat === "mdy-12") {
+		return `${twoDigits(date.getHours() % 12 || 12)}:${minutes}:${seconds} ${date.getHours() >= 12 ? "PM" : "AM"}`;
+	}
+	return `${twoDigits(date.getHours())}:${minutes}:${seconds}`;
 }
 
 function formatDuration(start, end = Date.now()) {
@@ -85,10 +141,17 @@ function chartTheme() {
 
 function metricLabel(bucket, detailed = false) {
 	const date = new Date(Number(bucket));
-	if (Number(latestStreamMetrics?.rangeDurationMs ?? rangeTo - rangeFrom) >= 24 * 3_600_000 || detailed) {
-		return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+	if (detailed) return formatDate(date);
+	if (Number(latestStreamMetrics?.rangeDurationMs ?? rangeTo - rangeFrom) >= 24 * 3_600_000) {
+		return date.toLocaleString([], {
+			month: "short",
+			day: "numeric",
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: dateTimeFormat === "browser" ? undefined : dateTimeFormat === "mdy-12",
+		});
 	}
-	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: dateTimeFormat === "browser" ? undefined : dateTimeFormat === "mdy-12" });
 }
 
 const dateRangeSelectionPlugin = {
@@ -822,7 +885,7 @@ async function refreshDashboard(updateLabel = "Updated") {
 		if (activeTab === "events") await loadEvents();
 		if (activeTab === "bandwidth") await loadBandwidth();
 		if (activeTab === "connections") await loadConnections();
-		byId("lastUpdated").textContent = `${updateLabel} ${new Date().toLocaleTimeString()}`;
+		byId("lastUpdated").textContent = `${updateLabel} ${formatTime()}`;
 	} catch (error) {
 		showToast(error.message, "bad");
 	}
@@ -836,6 +899,7 @@ function debounce(callback, delay = 300) {
 	};
 }
 
+initializeDateTimeFormat();
 initializeRange();
 resetForm();
 
@@ -875,6 +939,10 @@ byId("streamSelector").addEventListener("change", () => {
 	eventPage = 1;
 	bandwidthPage = 1;
 	void refreshDashboard();
+});
+byId("dateTimeFormat").addEventListener("change", (event) => {
+	saveDateTimeFormat(event.currentTarget.value);
+	void refreshDashboard("Date format updated");
 });
 byId("applyDateRange").addEventListener("click", () => {
 	const from = new Date(byId("dateFrom").value).getTime();

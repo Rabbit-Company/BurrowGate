@@ -10,8 +10,12 @@ import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-
 import { meteredBody, type BandwidthContext } from "./bandwidth-service.ts";
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
+	return upstreamUrlForOrigin(site.origin_url, request);
+}
+
+export function upstreamUrlForOrigin(originUrl: string, request: Request): URL {
 	const incoming = new URL(request.url);
-	const base = new URL(site.origin_url);
+	const base = new URL(originUrl);
 	const prefix = base.pathname.endsWith("/") ? base.pathname.slice(0, -1) : base.pathname;
 
 	base.pathname = `${prefix}${incoming.pathname}` || "/";
@@ -136,6 +140,7 @@ export async function proxyRequest(
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
 	countryCode: string | null = null,
+	originUrl: string = site.origin_url,
 ): Promise<Response> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
@@ -157,7 +162,7 @@ export async function proxyRequest(
 
 	const incoming = new URL(request.url);
 	const transport = requestTransport(request);
-	const target = upstreamUrl(site, request);
+	const target = upstreamUrlForOrigin(originUrl, request);
 	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
 	const hasBody = !["GET", "HEAD"].includes(request.method);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };

@@ -59,6 +59,7 @@ function hasBytes(delta: BandwidthDelta): boolean {
 export class BandwidthAccumulator {
 	private pending = new Map<string, BandwidthMinuteRecord>();
 	private flushPromise: Promise<void> | null = null;
+	private readonly blockedSiteIds = new Set<string>();
 
 	constructor(
 		private readonly persist: BandwidthPersister,
@@ -70,7 +71,7 @@ export class BandwidthAccumulator {
 	}
 
 	record(context: BandwidthContext, delta: BandwidthDelta, now = Date.now()): void {
-		if (!hasBytes(delta)) return;
+		if (this.blockedSiteIds.has(context.siteId) || !hasBytes(delta)) return;
 		const countryCode = storedCountryCode(context.countryCode);
 		const bucketStart = Math.floor(now / 60_000) * 60_000;
 		let ip = context.ip || "unknown";
@@ -95,6 +96,15 @@ export class BandwidthAccumulator {
 			this.pending.set(key, record);
 		}
 		addDelta(record, delta);
+	}
+
+	blockSite(siteId: string): void {
+		this.blockedSiteIds.add(siteId);
+		for (const [key, record] of this.pending) if (record.site_id === siteId) this.pending.delete(key);
+	}
+
+	resumeSite(siteId: string): void {
+		this.blockedSiteIds.delete(siteId);
 	}
 
 	async flush(): Promise<void> {
@@ -143,6 +153,15 @@ export async function flushBandwidthMetrics(): Promise<void> {
 	} finally {
 		openMetrics.setMonitoringQueue("http_bandwidth", accumulator.pendingRecordCount());
 	}
+}
+
+export function blockSiteBandwidth(siteId: string): void {
+	accumulator.blockSite(siteId);
+	openMetrics.setMonitoringQueue("http_bandwidth", accumulator.pendingRecordCount());
+}
+
+export function resumeSiteBandwidth(siteId: string): void {
+	accumulator.resumeSite(siteId);
 }
 
 export function startBandwidthMetrics(): void {

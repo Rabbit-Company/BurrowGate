@@ -4,6 +4,16 @@ import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 
+const blockedSiteIds = new Set<string>();
+
+export function blockSiteEvents(siteId: string): void {
+	blockedSiteIds.add(siteId);
+}
+
+export function resumeSiteEvents(siteId: string): void {
+	blockedSiteIds.delete(siteId);
+}
+
 export async function recordEvent(input: {
 	siteId: string;
 	sessionId: string | null;
@@ -14,7 +24,9 @@ export async function recordEvent(input: {
 	decision: string;
 	latencyMs: number;
 	countryCode?: string | null;
+	originId?: string | null;
 }): Promise<void> {
+	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
 	try {
 		await repository.insertEvent({
@@ -28,6 +40,7 @@ export async function recordEvent(input: {
 			decision: input.decision,
 			latency_ms: input.latencyMs,
 			country_code: input.countryCode === undefined ? countryCodeForStorage(input.ip) : input.countryCode,
+			origin_id: input.originId ?? null,
 			created_at: Date.now(),
 		});
 	} catch (error) {

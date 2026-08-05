@@ -88,6 +88,7 @@ export class BurrowGateOpenMetrics {
 	private readonly configuredStreams: Gauge;
 	private readonly geoIp: Gauge;
 	private readonly originHealthState: Gauge;
+	private readonly originBackendHealthState: Gauge;
 	private readonly originHealthChecks: Counter;
 	private readonly originHealthDuration: Histogram;
 	private readonly healthAlerts: Counter;
@@ -222,17 +223,23 @@ export class BurrowGateOpenMetrics {
 			labelNames: ["site_id", "state"],
 			registry: this.registry,
 		});
+		this.originBackendHealthState = new Gauge({
+			name: "origin_backend_health_state",
+			help: "Current load-balancer origin health state as a one-hot gauge",
+			labelNames: ["site_id", "origin_id", "state"],
+			registry: this.registry,
+		});
 		this.originHealthChecks = new Counter({
 			name: "origin_health_checks",
 			help: "Origin health checks by outcome",
-			labelNames: ["site_id", "outcome"],
+			labelNames: ["site_id", "origin_id", "outcome"],
 			registry: this.registry,
 		});
 		this.originHealthDuration = new Histogram({
 			name: "origin_health_check_duration",
 			help: "Origin health-check request duration",
 			unit: "seconds",
-			labelNames: ["site_id"],
+			labelNames: ["site_id", "origin_id"],
 			buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
 			registry: this.registry,
 		});
@@ -381,10 +388,24 @@ export class BurrowGateOpenMetrics {
 		}
 	}
 
-	recordOriginHealthCheck(siteId: string, healthy: boolean, durationMs: number): void {
+	setOriginBackendHealth(siteId: string, originId: string, state: OriginHealthState): void {
 		if (!this.enabled) return;
-		this.originHealthChecks.labels({ site_id: siteId, outcome: healthy ? "success" : "failure" }).inc();
-		this.originHealthDuration.labels({ site_id: siteId }).observe(Math.max(0, durationMs) / 1_000);
+		for (const candidate of ["unknown", "healthy", "degraded", "unhealthy", "disabled"] as OriginHealthState[]) {
+			this.originBackendHealthState.labels({ site_id: siteId, origin_id: originId, state: candidate }).set(candidate === state ? 1 : 0);
+		}
+	}
+
+	clearOriginBackendHealth(siteId: string, originId: string): void {
+		if (!this.enabled) return;
+		for (const state of ["unknown", "healthy", "degraded", "unhealthy", "disabled"] as OriginHealthState[]) {
+			this.originBackendHealthState.labels({ site_id: siteId, origin_id: originId, state }).set(0);
+		}
+	}
+
+	recordOriginHealthCheck(siteId: string, originId: string, healthy: boolean, durationMs: number): void {
+		if (!this.enabled) return;
+		this.originHealthChecks.labels({ site_id: siteId, origin_id: originId, outcome: healthy ? "success" : "failure" }).inc();
+		this.originHealthDuration.labels({ site_id: siteId, origin_id: originId }).observe(Math.max(0, durationMs) / 1_000);
 	}
 
 	recordHealthAlert(siteId: string, outcome: "delivered" | "retry" | "failed"): void {

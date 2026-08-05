@@ -26,7 +26,8 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Country-level GeoIP analytics with an interactive SVG world map
 - Country codes, country filters, and country tooltips in traffic and session tables
 - Per-site customizable HTML or JSON error responses
-- Per-site origin health checks, optional 503 maintenance mode, and durable webhook alerts
+- Multi-origin load balancing with priority failover, round robin, weighted round robin, session affinity, and deterministic IP fallback
+- Per-origin health checks, automatic unhealthy-origin removal, optional 503 maintenance mode, and durable webhook alerts
 - Per-site customizable HTML challenge pages
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
@@ -163,8 +164,11 @@ Each site contains:
 - TLS and force-HTTPS settings
 - HTML or JSON error-response settings
 - origin health-check thresholds, failure behavior, and webhook alerts
+- a load-balancing algorithm, sticky affinity behavior, and an origin pool with per-origin priority, weight, drain state, and health-path override
 
 The selected site is stored in the dashboard URL. Traffic, sessions, network rules, route policies, and actions are scoped to that site.
+
+Editing a site exposes a permanent delete action protected by typed-name confirmation. Deletion removes the site's request and bandwidth history, sessions, access memberships and settings, challenges, route and network policies, origins, health history and alerts, ACME challenges, TLS settings, certificate, and certificate events in one transaction. Global access users and ACME accounts are preserved because they may be shared. A site cannot be deleted while its certificate is assigned to a TCP Stream or while certificate issuance is active.
 
 Environment-based site seeding is disabled by default. It can be enabled for automated deployments:
 
@@ -257,11 +261,17 @@ Custom responses cover network blocks, route blocks, rate limits, verification-r
 
 ## Origin Health Checks and Alerts
 
-Each site can probe a path such as `/health` with a direct `GET` request to its configured origin. A response from 200 through 299 is healthy; redirects, timeouts, connection errors, and other status codes are failures. Checks use configurable intervals, timeouts, failure thresholds, and recovery thresholds.
+Each site can probe a path such as `/health` with a direct `GET` request to every enabled origin in its pool. A response from 200 through 299 is healthy; redirects, timeouts, connection errors, and other status codes are failures. Checks use configurable intervals, timeouts, failure thresholds, and recovery thresholds. Individual origins can override the site health path.
 
-The default **Keep proxying and alert** behavior treats the check as monitoring only. The optional maintenance behavior skips new HTTP and WebSocket origin connections after the failure threshold and returns the site's custom error response with status `503`, `Retry-After`, and error code `origin_unhealthy`. Unknown and degraded states never block traffic.
+Unhealthy origins are removed from normal selection while another usable origin exists. The default **Keep proxying and alert** behavior still attempts an origin if every health check is unhealthy. The optional maintenance behavior skips new HTTP and WebSocket origin connections when the complete pool is unhealthy and returns the site's custom error response with status `503`, `Retry-After`, and error code `origin_unhealthy`. Unknown and degraded states never activate maintenance mode.
 
-Alerts support generic signed JSON webhooks, Slack, Discord, and ntfy. BurrowGate sends one notification when an incident becomes unhealthy and one when it recovers. Deliveries use a durable outbox with exponential retry. Webhook URLs and signing secrets are encrypted at rest.
+Alerts support generic signed JSON webhooks, Slack, Discord, and ntfy. BurrowGate reports individual origin transitions while the pool remains available, and reports pool-down and pool-recovery transitions when availability changes. Deliveries use a durable outbox with exponential retry. Webhook URLs and signing secrets are encrypted at rest.
+
+## Load Balancing
+
+Every site keeps its original URL as the primary origin and can add more origins from the site editor. Available algorithms are priority failover, round robin, and smooth weighted round robin. Priority failover chooses the lowest healthy priority number; weight controls proportional selection in weighted mode. An origin can be drained to keep existing sticky sessions while preventing new assignments.
+
+With sticky affinity enabled, BurrowGate stores an origin ID on an existing visitor session. Requests without a valid session—including unprotected API calls—use a deterministic client-IP assignment without storing additional per-IP load-balancer state. If the assigned origin becomes unavailable, BurrowGate selects another origin and updates the session assignment. Safe `GET` and `HEAD` requests receive one connection-level failover retry; non-idempotent requests are never replayed automatically.
 
 See [`docs/ERROR_RESPONSES.md`](docs/ERROR_RESPONSES.md).
 

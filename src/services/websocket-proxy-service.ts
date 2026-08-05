@@ -24,6 +24,7 @@ import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
 import { recordBandwidth } from "./bandwidth-service.ts";
 import { originHealthManager } from "./origin-health-service.ts";
+import { loadBalancer } from "./load-balancer-service.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -58,8 +59,8 @@ export function isWebSocketUpgrade(request: Request): boolean {
 	return request.method === "GET" && request.headers.get("upgrade")?.trim().toLowerCase() === "websocket" && connectionHasUpgrade(request);
 }
 
-export function websocketUpstreamUrl(site: SiteRecord, request: Request): URL {
-	const target = upstreamUrl(site, request);
+export function websocketUpstreamUrl(site: SiteRecord, request: Request, originUrl = site.origin_url): URL {
+	const target = upstreamUrl({ ...site, origin_url: originUrl }, request);
 	if (target.protocol === "http:") target.protocol = "ws:";
 	else if (target.protocol === "https:") target.protocol = "wss:";
 	else throw new Error(`Unsupported WebSocket origin protocol: ${target.protocol}`);
@@ -415,7 +416,11 @@ export async function handleWebSocketUpgrade(
 	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
 	const needsSession =
-		accessAuthenticationEnabled || route.accessMode === "challenge" || ipRule.action === "challenge" || route.policy?.rate_limit_key_mode === "session-or-ip";
+		accessAuthenticationEnabled ||
+		route.accessMode === "challenge" ||
+		ipRule.action === "challenge" ||
+		route.policy?.rate_limit_key_mode === "session-or-ip" ||
+		site.load_balancing_affinity !== 0;
 	const candidateSession = needsSession ? await findAccessSession(request, site, ip) : null;
 
 	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
@@ -500,7 +505,25 @@ export async function handleWebSocketUpgrade(
 			: effectiveAccess === "bypass"
 				? "bypass"
 				: "verified";
-	const target = websocketUpstreamUrl(site, request);
+	let selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip);
+	if (!selectedOrigin) {
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: 503,
+			decision: "origin-pool-unavailable",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: 503,
+			code: "origin_pool_unavailable",
+			error: "No WebSocket origin is available",
+			clientIp: ip,
+			reason: "Every configured origin is unhealthy, disabled, or draining.",
+			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+		});
+	}
+	let target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
 	try {
 		const headers = await websocketUpstreamHeaders(
 			request,
@@ -512,7 +535,19 @@ export async function handleWebSocketUpgrade(
 			accessUser?.username ?? null,
 			accessSettings.send_username_to_upstream === 1,
 		);
-		const upstream = await openUpstreamWebSocket(target, headers, request);
+		let upstream: WebSocket;
+		try {
+			upstream = await openUpstreamWebSocket(target, headers, request);
+			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+		} catch (firstError) {
+			loadBalancer.reportPassiveFailure(selectedOrigin.id);
+			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
+			if (!replacement) throw firstError;
+			selectedOrigin = replacement;
+			target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
+			upstream = await openUpstreamWebSocket(target, headers, request);
+			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+		}
 		const offeredProtocols = offeredWebSocketProtocols(request);
 		if (offeredProtocols.length > 0 && !upstream.protocol) {
 			try {
@@ -564,6 +599,7 @@ export async function handleWebSocketUpgrade(
 				sessionId: session?.id ?? null,
 				status: 400,
 				decision: "websocket-upgrade-failed",
+				originId: selectedOrigin.id,
 				latencyMs: Math.round(performance.now() - started),
 			});
 			return siteErrorResponse(
@@ -588,14 +624,23 @@ export async function handleWebSocketUpgrade(
 				: accessStatus === "bypass"
 					? "websocket-unprotected"
 					: "websocket-proxied";
-		await recordEvent({ ...eventBase, sessionId: session?.id ?? null, status: 101, decision, latencyMs: Math.round(performance.now() - started) });
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: 101,
+			decision,
+			originId: selectedOrigin.id,
+			latencyMs: Math.round(performance.now() - started),
+		});
 		return undefined;
 	} catch (error) {
+		loadBalancer.reportPassiveFailure(selectedOrigin.id);
 		await recordEvent({
 			...eventBase,
 			sessionId: session?.id ?? null,
 			status: 502,
 			decision: "websocket-origin-error",
+			originId: selectedOrigin.id,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		Logger.error(`WebSocket proxy failed for ${target}`, { error });

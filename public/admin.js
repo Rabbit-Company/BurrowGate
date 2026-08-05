@@ -1,5 +1,7 @@
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
+const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
+const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
 
 const tableState = {
 	traffic: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
@@ -22,6 +24,8 @@ let challengeDefaults = { htmlTemplate: "", placeholders: [] };
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
+let siteOrigins = [];
+let editingOriginId = null;
 let routePolicies = [];
 let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
 let countryRules = [];
@@ -31,6 +35,7 @@ let overviewRequestId = 0;
 let selectedRangeFrom = 0;
 let selectedRangeTo = 0;
 let dateRangeIsAutomatic = true;
+let dateTimeFormat = "iso-24";
 const loadedTabs = new Set(["traffic"]);
 
 const byId = (id) => document.getElementById(id);
@@ -60,10 +65,62 @@ function formatBytes(value) {
 	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
+function twoDigits(value) {
+	return String(value).padStart(2, "0");
+}
+
+function readDateTimeFormat() {
+	try {
+		const stored = localStorage.getItem(DATE_TIME_FORMAT_STORAGE_KEY);
+		return stored && DATE_TIME_FORMATS.has(stored) ? stored : "iso-24";
+	} catch {
+		return "iso-24";
+	}
+}
+
+function initializeDateTimeFormat() {
+	dateTimeFormat = readDateTimeFormat();
+	byId("dateTimeFormat").value = dateTimeFormat;
+}
+
+function saveDateTimeFormat(value) {
+	dateTimeFormat = DATE_TIME_FORMATS.has(value) ? value : "iso-24";
+	try {
+		localStorage.setItem(DATE_TIME_FORMAT_STORAGE_KEY, dateTimeFormat);
+	} catch {
+		// The preference still applies for this page when browser storage is unavailable.
+	}
+}
+
 function formatDate(value) {
 	if (value === null || value === undefined) return "Never";
-	const date = new Date(Number(value));
-	return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+	const date = value instanceof Date ? value : new Date(Number(value));
+	if (Number.isNaN(date.getTime())) return "-";
+	if (dateTimeFormat === "browser") return date.toLocaleString();
+	const year = date.getFullYear();
+	const month = twoDigits(date.getMonth() + 1);
+	const day = twoDigits(date.getDate());
+	const minutes = twoDigits(date.getMinutes());
+	const seconds = twoDigits(date.getSeconds());
+	if (dateTimeFormat === "mdy-12") {
+		const suffix = date.getHours() >= 12 ? "PM" : "AM";
+		const hours = twoDigits(date.getHours() % 12 || 12);
+		return `${month}/${day}/${year} ${hours}:${minutes}:${seconds} ${suffix}`;
+	}
+	const time = `${twoDigits(date.getHours())}:${minutes}:${seconds}`;
+	return dateTimeFormat === "dmy-24" ? `${day}/${month}/${year} ${time}` : `${year}-${month}-${day} ${time}`;
+}
+
+function formatTime(value = Date.now()) {
+	const date = value instanceof Date ? value : new Date(Number(value));
+	if (Number.isNaN(date.getTime())) return "-";
+	if (dateTimeFormat === "browser") return date.toLocaleTimeString();
+	const minutes = twoDigits(date.getMinutes());
+	const seconds = twoDigits(date.getSeconds());
+	if (dateTimeFormat === "mdy-12") {
+		return `${twoDigits(date.getHours() % 12 || 12)}:${minutes}:${seconds} ${date.getHours() >= 12 ? "PM" : "AM"}`;
+	}
+	return `${twoDigits(date.getHours())}:${minutes}:${seconds}`;
 }
 
 function formatDuration(milliseconds) {
@@ -317,7 +374,7 @@ function countryBadge(codeInput) {
 
 async function loadTraffic() {
 	const state = tableState.traffic;
-	setTableLoading("events", 8);
+	setTableLoading("events", 9);
 	updateSortIndicators("panel-traffic", state);
 	try {
 		const result = await api(
@@ -330,6 +387,7 @@ async function loadTraffic() {
 				decision: byId("eventDecision").value,
 				method: byId("eventMethod").value,
 				status: byId("eventStatus").value,
+				origin: byId("eventOrigin").value,
 				country: byId("eventCountry").value,
 				...rangeQuery(),
 			})}`,
@@ -338,9 +396,15 @@ async function loadTraffic() {
 			state.page = result.totalPages;
 			return await loadTraffic();
 		}
+		const originSelect = byId("eventOrigin");
+		const selectedOriginId = originSelect.value;
+		originSelect.innerHTML = `<option value="">All origins</option>${(result.origins ?? [])
+			.map((origin) => `<option value="${escapeHtml(origin.id)}">${escapeHtml(origin.name)}</option>`)
+			.join("")}`;
+		if ([...originSelect.options].some((option) => option.value === selectedOriginId)) originSelect.value = selectedOriginId;
 		byId("events").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="8" class="empty-cell">No traffic matches these filters.</td></tr>'
+				? '<tr><td colspan="9" class="empty-cell">No traffic matches these filters.</td></tr>'
 				: result.items
 						.map(
 							(event) => `<tr>
@@ -349,6 +413,7 @@ async function loadTraffic() {
           <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
+          <td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
           <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
           <td>${formatDuration(event.latency_ms)}</td>
@@ -357,7 +422,7 @@ async function loadTraffic() {
 						.join("");
 		updatePagination("events", result, loadTraffic);
 	} catch (error) {
-		setTableError("events", 8, error);
+		setTableError("events", 9, error);
 	}
 }
 
@@ -680,7 +745,7 @@ function renderOriginHealthBanner(status) {
 	banner.classList.toggle("hidden", status.state === "healthy");
 }
 
-function applySiteHealthStatus(status, events = []) {
+function applySiteHealthStatus(status, events = [], backendEvents = []) {
 	const state = status?.state ?? "disabled";
 	const badge = byId("siteHealthStatusBadge");
 	badge.className = `badge ${healthBadgeClass(state)}`;
@@ -694,11 +759,15 @@ function applySiteHealthStatus(status, events = []) {
 			: "-";
 	byId("siteHealthFailures").textContent = formatNumber(status?.consecutiveFailures ?? 0);
 	byId("siteHealthError").textContent = status?.lastError ?? (status?.lastCheckedAt ? "Latest health check passed." : "No health check has run yet.");
-	byId("siteHealthEvents").innerHTML = events.length
-		? events
+	const timeline = [
+		...events.map((event) => ({ ...event, target: "Origin pool" })),
+		...backendEvents.map((event) => ({ ...event, target: event.originName ?? event.origin_id ?? "Origin" })),
+	].sort((left, right) => Number(right.created_at) - Number(left.created_at));
+	byId("siteHealthEvents").innerHTML = timeline.length
+		? timeline
 				.map(
 					(event) =>
-						`<div class="health-event-item"><span>${formatDate(event.created_at)}</span><span class="badge ${healthBadgeClass(event.to_state)}">${escapeHtml(event.to_state)}</span><span>${escapeHtml(event.error ?? (event.status ? `HTTP ${event.status}` : `${event.from_state} to ${event.to_state}`))}</span></div>`,
+						`<div class="health-event-item"><span>${formatDate(event.created_at)}</span><span class="badge ${healthBadgeClass(event.to_state)}">${escapeHtml(event.to_state)}</span><span><strong>${escapeHtml(event.target)}</strong>: ${escapeHtml(event.error ?? (event.status ? `HTTP ${event.status}` : `${event.from_state} to ${event.to_state}`))}</span></div>`,
 				)
 				.join("")
 		: '<p class="muted">No health state changes yet.</p>';
@@ -719,7 +788,7 @@ async function loadSiteHealth(siteId) {
 	if (!siteId) return;
 	try {
 		const result = await api(`/sites/${encodeURIComponent(siteId)}/health`, {}, false);
-		applySiteHealthStatus(result.status, result.events ?? []);
+		applySiteHealthStatus(result.status, result.events ?? [], result.backendEvents ?? []);
 		applyHealthAlertDeliveries(result.alerts ?? []);
 		const site = sites.find((item) => item.id === siteId);
 		if (site) site.originHealth = result.status;
@@ -737,6 +806,98 @@ async function checkOriginNow(siteId = selectedSiteId) {
 	showToast("Origin health check completed.");
 }
 
+function renderOriginPool() {
+	const container = byId("originPoolList");
+	container.innerHTML = siteOrigins.length
+		? siteOrigins
+				.map((origin) => {
+					const state = origin.health?.state ?? (origin.enabled ? "unknown" : "disabled");
+					return `<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(origin.name)}</strong>${origin.isPrimary ? '<span class="badge info">primary</span>' : ""}<span class="badge ${healthBadgeClass(state)}">${escapeHtml(state)}</span>${origin.draining ? '<span class="badge warn">draining</span>' : ""}${origin.enabled ? "" : '<span class="badge warn">disabled</span>'}</div><div class="origin-pool-meta"><code>${escapeHtml(origin.originUrl)}</code><span>Priority ${formatNumber(origin.priority)} | Weight ${formatNumber(origin.weight)} | Health path: ${escapeHtml(origin.healthCheckPath || "site default")}${origin.health?.lastLatencyMs !== null && origin.health?.lastLatencyMs !== undefined ? ` | ${formatDuration(origin.health.lastLatencyMs)}` : ""}</span></div></div><div class="origin-pool-actions"><button class="button secondary compact" type="button" data-origin-check="${escapeHtml(origin.id)}">Check</button><button class="button secondary compact" type="button" data-origin-edit="${escapeHtml(origin.id)}">Edit</button>${origin.isPrimary ? "" : `<button class="button danger compact" type="button" data-origin-delete="${escapeHtml(origin.id)}">Delete</button>`}</div></div>`;
+				})
+				.join("")
+		: '<p class="muted">No origins are configured.</p>';
+}
+
+function resetOriginForm() {
+	editingOriginId = null;
+	byId("originId").value = "";
+	byId("originName").value = "";
+	byId("originUrl").value = "";
+	byId("originPriority").value = "10";
+	byId("originWeight").value = "1";
+	byId("originHealthPath").value = "";
+	byId("originEnabled").checked = true;
+	byId("originDraining").checked = false;
+	for (const input of byId("originForm").querySelectorAll("input")) input.disabled = true;
+	byId("saveOrigin").textContent = "Add origin";
+	byId("originForm").classList.add("hidden");
+}
+
+function editOrigin(id) {
+	const origin = siteOrigins.find((item) => item.id === id);
+	if (!origin) return;
+	editingOriginId = origin.id;
+	byId("originId").value = origin.id;
+	byId("originName").value = origin.name;
+	byId("originUrl").value = origin.originUrl;
+	byId("originPriority").value = String(origin.priority);
+	byId("originWeight").value = String(origin.weight);
+	byId("originHealthPath").value = origin.healthCheckPath ?? "";
+	byId("originEnabled").checked = Boolean(origin.enabled);
+	byId("originDraining").checked = Boolean(origin.draining);
+	for (const input of byId("originForm").querySelectorAll("input")) input.disabled = false;
+	byId("saveOrigin").textContent = "Save origin";
+	byId("originForm").classList.remove("hidden");
+	byId("originName").focus();
+}
+
+async function loadOrigins(siteId) {
+	if (!siteId) return;
+	try {
+		const result = await api(`/sites/${encodeURIComponent(siteId)}/origins`, {}, false);
+		siteOrigins = result.items ?? [];
+		renderOriginPool();
+	} catch (error) {
+		byId("originPoolList").innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+	}
+}
+
+async function saveOrigin(event) {
+	event.preventDefault();
+	if (!editingSiteId) return;
+	for (const input of byId("originForm").querySelectorAll("input")) {
+		if (!input.reportValidity()) return;
+	}
+	const button = byId("saveOrigin");
+	button.disabled = true;
+	try {
+		const payload = {
+			name: byId("originName").value.trim(),
+			originUrl: byId("originUrl").value.trim(),
+			priority: Number(byId("originPriority").value),
+			weight: Number(byId("originWeight").value),
+			healthCheckPath: byId("originHealthPath").value.trim(),
+			enabled: byId("originEnabled").checked,
+			draining: byId("originDraining").checked,
+		};
+		await api(
+			editingOriginId ? `/origins/${encodeURIComponent(editingOriginId)}` : `/sites/${encodeURIComponent(editingSiteId)}/origins`,
+			{ method: editingOriginId ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) },
+			false,
+		);
+		const wasEditing = Boolean(editingOriginId);
+		resetOriginForm();
+		await Promise.all([loadOrigins(editingSiteId), loadSites(), loadSiteHealth(editingSiteId)]);
+		const refreshedSite = sites.find((site) => site.id === editingSiteId);
+		if (refreshedSite) byId("siteOriginUrl").value = refreshedSite.originUrl;
+		showToast(wasEditing ? "Origin updated." : "Origin added.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
 function renderSites() {
 	const container = byId("sitesList");
 	if (sites.length === 0) {
@@ -748,7 +909,7 @@ function renderSites() {
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span>${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Origin: ${escapeHtml(site.originUrl)}</span><span>Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
@@ -764,6 +925,11 @@ function resetSiteForm() {
 	byId("siteEventRetentionDays").value = String(defaultEventRetentionDays);
 	byId("siteEnabled").checked = true;
 	byId("siteDefaultAccessMode").value = "challenge";
+	byId("siteLoadBalancingAlgorithm").value = "failover";
+	byId("siteLoadBalancingAffinity").checked = true;
+	byId("originPoolRuntime").classList.add("hidden");
+	siteOrigins = [];
+	resetOriginForm();
 	byId("siteHealthEnabled").checked = false;
 	byId("siteHealthPath").value = "/health";
 	byId("siteHealthInterval").value = "30";
@@ -795,6 +961,7 @@ function resetSiteForm() {
 	byId("siteFormSubtitle").textContent = "Add another hostname and origin to BurrowGate.";
 	byId("siteSecretHelp").textContent = "Leave blank to generate a secure secret. The generated value is shown once after creation.";
 	byId("saveSite").textContent = "Create";
+	byId("deleteSite").classList.add("hidden");
 	byId("cancelSiteEdit").classList.add("hidden");
 	byId("generatedSecretPanel").classList.add("hidden");
 	byId("siteTlsPanel").classList.add("hidden");
@@ -813,6 +980,10 @@ function editSite(id) {
 	byId("siteEventRetentionDays").value = String(site.eventRetentionDays ?? defaultEventRetentionDays);
 	byId("siteEnabled").checked = Boolean(site.enabled);
 	byId("siteDefaultAccessMode").value = site.defaultAccessMode ?? "challenge";
+	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
+	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
+	byId("originPoolRuntime").classList.remove("hidden");
+	resetOriginForm();
 	const health = site.healthCheck ?? {};
 	byId("siteHealthEnabled").checked = Boolean(health.enabled);
 	byId("siteHealthPath").value = health.path ?? "/health";
@@ -845,12 +1016,14 @@ function editSite(id) {
 	byId("siteFormSubtitle").textContent = "Changes apply to new requests immediately. Existing session expiration timestamps are unchanged.";
 	byId("siteSecretHelp").textContent = "Leave blank to keep the current secret, or enter a new value to rotate it.";
 	byId("saveSite").textContent = "Save changes";
+	byId("deleteSite").classList.remove("hidden");
 	byId("cancelSiteEdit").classList.remove("hidden");
 	byId("generatedSecretPanel").classList.add("hidden");
 	byId("siteTlsPanel").classList.remove("hidden");
 	byId("siteName").focus();
 	void loadSiteTls(site.id);
 	void loadSiteHealth(site.id);
+	void loadOrigins(site.id);
 }
 
 function randomSecret(bytes = 48) {
@@ -897,6 +1070,7 @@ function resetSiteScopedPages() {
 	tableState.bandwidth.page = 1;
 	tableState.sessions.page = 1;
 	tableState.rules.page = 1;
+	byId("eventOrigin").value = "";
 	latestMetrics = null;
 	routePolicies = [];
 	accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
@@ -997,6 +1171,10 @@ async function saveSite(event) {
 				clearWebhook: byId("siteHealthClearWebhook").checked,
 			},
 		},
+		loadBalancer: {
+			algorithm: byId("siteLoadBalancingAlgorithm").value,
+			affinity: byId("siteLoadBalancingAffinity").checked,
+		},
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1023,6 +1201,33 @@ async function saveSite(event) {
 		showToast(error.message, "bad");
 	} finally {
 		submit.disabled = false;
+	}
+}
+
+async function deleteEditingSite() {
+	const site = sites.find((item) => item.id === editingSiteId);
+	if (!site) return;
+	const confirmation = prompt(
+		`Permanently delete ${site.name} and all of its traffic, bandwidth, sessions, policies, rules, origins, health history, alerts, challenges, and TLS data?\n\nType the site name to confirm:`,
+	);
+	if (confirmation === null) return;
+	if (confirmation !== site.name) {
+		showToast("The site name did not match. Nothing was deleted.", "bad");
+		return;
+	}
+	const button = byId("deleteSite");
+	button.disabled = true;
+	try {
+		const result = await api(`/sites/${encodeURIComponent(site.id)}`, { method: "DELETE" }, false);
+		if (selectedSiteId === site.id) selectedSiteId = null;
+		resetSiteForm();
+		await loadSites();
+		await reloadSelectedSite();
+		showToast(result.warning || `${site.name} and its associated data were deleted.`, result.warning ? "bad" : "ok");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
 	}
 }
 
@@ -1476,15 +1681,17 @@ function chartTheme() {
 
 function metricLabel(bucket, rangeDurationMs, detailed = false) {
 	const date = new Date(Number(bucket));
-	if (Number(rangeDurationMs) >= 24 * 3_600_000 || detailed) {
+	if (detailed) return formatDate(date);
+	if (Number(rangeDurationMs) >= 24 * 3_600_000) {
 		return date.toLocaleString([], {
 			month: "short",
 			day: "numeric",
 			hour: "2-digit",
 			minute: "2-digit",
+			hour12: dateTimeFormat === "browser" ? undefined : dateTimeFormat === "mdy-12",
 		});
 	}
-	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: dateTimeFormat === "browser" ? undefined : dateTimeFormat === "mdy-12" });
 }
 
 function metricValueFormatter(format) {
@@ -2022,7 +2229,7 @@ async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated")
 }
 
 function markUpdated(prefix = "Updated") {
-	byId("lastUpdated").textContent = `${prefix} ${new Date().toLocaleTimeString()}`;
+	byId("lastUpdated").textContent = `${prefix} ${formatTime()}`;
 }
 
 async function runWithButton(button, task) {
@@ -2096,7 +2303,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
-	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventCountry"]) {
+	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
 			void loadTraffic();
@@ -2188,6 +2395,40 @@ async function handleBodyClick(event) {
 	const editSiteButton = event.target.closest("button[data-site-edit]");
 	if (editSiteButton) {
 		editSite(editSiteButton.dataset.siteEdit);
+		return;
+	}
+	const editOriginButton = event.target.closest("button[data-origin-edit]");
+	if (editOriginButton) {
+		editOrigin(editOriginButton.dataset.originEdit);
+		return;
+	}
+	const checkOriginButton = event.target.closest("button[data-origin-check]");
+	if (checkOriginButton && editingSiteId) {
+		checkOriginButton.disabled = true;
+		try {
+			await api(`/origins/${encodeURIComponent(checkOriginButton.dataset.originCheck)}/check`, { method: "POST" }, false);
+			await Promise.all([loadOrigins(editingSiteId), loadSiteHealth(editingSiteId), loadOverview()]);
+			showToast("Origin health check completed.");
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			checkOriginButton.disabled = false;
+		}
+		return;
+	}
+	const deleteOriginButton = event.target.closest("button[data-origin-delete]");
+	if (deleteOriginButton && editingSiteId) {
+		if (!confirm("Delete this origin? Existing session assignments will select another healthy origin on their next request.")) return;
+		deleteOriginButton.disabled = true;
+		try {
+			await api(`/origins/${encodeURIComponent(deleteOriginButton.dataset.originDelete)}`, { method: "DELETE" }, false);
+			if (editingOriginId === deleteOriginButton.dataset.originDelete) resetOriginForm();
+			await Promise.all([loadOrigins(editingSiteId), loadSiteHealth(editingSiteId)]);
+			showToast("Origin deleted.");
+		} catch (error) {
+			deleteOriginButton.disabled = false;
+			showToast(error.message, "bad");
+		}
 		return;
 	}
 
@@ -2304,6 +2545,12 @@ async function handleBodyClick(event) {
 function bindActions() {
 	document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
 	byId("siteSelector").addEventListener("change", (event) => void chooseSite(event.currentTarget.value));
+	byId("dateTimeFormat").addEventListener("change", (event) => {
+		saveDateTimeFormat(event.currentTarget.value);
+		void refreshDashboard()
+			.then(() => showToast("Date format updated."))
+			.catch((error) => showToast(error.message, "bad"));
+	});
 	byId("newRoutePolicy").addEventListener("click", () => {
 		resetRoutePolicyForm();
 		byId("routePolicyName").focus();
@@ -2375,6 +2622,15 @@ function bindActions() {
 		}
 	});
 	byId("siteForm").addEventListener("submit", saveSite);
+	byId("deleteSite").addEventListener("click", deleteEditingSite);
+	byId("saveOrigin").addEventListener("click", saveOrigin);
+	byId("newOrigin").addEventListener("click", () => {
+		resetOriginForm();
+		for (const input of byId("originForm").querySelectorAll("input")) input.disabled = false;
+		byId("originForm").classList.remove("hidden");
+		byId("originName").focus();
+	});
+	byId("cancelOriginEdit").addEventListener("click", resetOriginForm);
 	byId("siteHealthEnabled").addEventListener("change", updateHealthControls);
 	byId("siteHealthAlertsEnabled").addEventListener("change", updateHealthControls);
 	byId("siteHealthClearWebhook").addEventListener("change", updateHealthControls);
@@ -2532,6 +2788,7 @@ function bindActions() {
 }
 
 async function start() {
+	initializeDateTimeFormat();
 	initializeDateRange();
 	bindSortButtons();
 	bindFilters();

@@ -1,4 +1,4 @@
-import { page } from "./layout.ts";
+import { page, tablerIcon } from "./layout.ts";
 
 export function loginPage(error = ""): string {
 	return page(
@@ -23,7 +23,8 @@ export function adminPage(): string {
   <div><div class="brand"><span class="mark"></span> BurrowGate</div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
-    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="refreshDashboard" class="button secondary" type="button">Refresh dashboard</button><button id="logout" class="button secondary">Log out</button></div>
+    <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>
+    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div>
   </div>
 </header>
 
@@ -92,13 +93,14 @@ export function adminPage(): string {
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar">
       <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session..."></label>
-      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
+      <label><span>Origin</span><select id="eventOrigin" class="select"><option value="">All origins</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="9" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>
@@ -246,6 +248,7 @@ export function adminPage(): string {
     <article class="card site-editor-card">
       <div class="pad">
         <div class="section-heading site-editor-heading"><div><h2 id="siteFormTitle">Create site</h2><p id="siteFormSubtitle" class="muted">Add another hostname and origin to BurrowGate.</p></div><button id="cancelSiteEdit" class="button secondary compact hidden" type="button">Cancel edit</button></div>
+        <form id="originValidationForm"></form>
         <form id="siteForm" class="site-form">
           <input id="siteId" type="hidden">
           <div class="site-form-grid">
@@ -259,6 +262,30 @@ export function adminPage(): string {
           <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
           <label><span>Origin signing secret</span><div class="secret-row"><input id="siteSigningSecret" class="input" name="originSigningSecret" type="password" autocomplete="new-password" placeholder="Generated automatically for new sites"><button id="generateSiteSecret" class="button secondary" type="button">Generate</button></div><small id="siteSecretHelp" class="muted">Leave blank to generate a secure secret. The generated value is shown once after creation.</small></label>
           <label><span>Challenge policy</span><textarea id="siteChallengePolicy" class="input code-input" name="challengePolicy" rows="11" spellcheck="false" required></textarea><small id="challengeProviderHelp" class="muted">Ordered JSON array. Each provider is completed before the visitor receives a session.</small></label>
+          <section class="error-response-editor">
+            <div class="section-heading error-response-heading"><div><h3>Load balancing</h3><p class="muted">Choose how BurrowGate selects from healthy origins.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Algorithm</span><select id="siteLoadBalancingAlgorithm" class="select"><option value="failover">Priority failover</option><option value="round-robin">Round robin</option><option value="weighted-round-robin">Weighted round robin</option></select><small class="muted">Priority failover uses the lowest healthy priority number.</small></label>
+              <label class="check-row compact-check"><input id="siteLoadBalancingAffinity" type="checkbox" checked><span><strong>Sticky origin affinity</strong><small class="muted">Use the stored session assignment when available, otherwise deterministically select by client IP.</small></span></label>
+            </div>
+            <div id="originPoolRuntime" class="health-runtime hidden">
+              <div class="section-heading compact-heading"><div><h4>Origin pool</h4><p class="muted">Unhealthy origins are excluded automatically. Draining origins keep existing sessions but receive no new assignments.</p></div><button id="newOrigin" class="button secondary compact" type="button">Add origin</button></div>
+              <div id="originPoolList" class="health-event-list"><p class="muted">Loading origins...</p></div>
+              <div id="originForm" class="site-form hidden">
+                <input id="originId" type="hidden" form="originValidationForm">
+                <div class="site-form-grid">
+                  <label><span>Name</span><input id="originName" class="input" form="originValidationForm" maxlength="255" placeholder="Application node 2" required></label>
+                  <label class="site-origin-field"><span>Origin URL</span><input id="originUrl" class="input" form="originValidationForm" type="url" placeholder="http://10.0.0.21:3000" required></label>
+                  <label><span>Priority</span><input id="originPriority" class="input" form="originValidationForm" type="number" min="0" max="10000" value="10" required><small class="muted">Lower values are preferred in failover mode.</small></label>
+                  <label><span>Weight</span><input id="originWeight" class="input" form="originValidationForm" type="number" min="1" max="1000" value="1" required></label>
+                  <label class="site-origin-field"><span>Health path override</span><input id="originHealthPath" class="input" form="originValidationForm" maxlength="2048" placeholder="Use the site health path"><small class="muted">Leave blank to use the site-level health-check path.</small></label>
+                </div>
+                <label class="check-row"><input id="originEnabled" form="originValidationForm" type="checkbox" checked><span><strong>Origin enabled</strong></span></label>
+                <label class="check-row"><input id="originDraining" form="originValidationForm" type="checkbox"><span><strong>Drain origin</strong><small class="muted">Existing sticky sessions continue using it; new assignments avoid it.</small></span></label>
+                <div class="row site-form-actions"><button id="saveOrigin" class="button" type="button">Add origin</button><button id="cancelOriginEdit" class="button secondary" type="button">Cancel</button></div>
+              </div>
+            </div>
+          </section>
           <section class="error-response-editor origin-health-editor">
             <div class="section-heading error-response-heading"><div><h3>Origin health</h3><p class="muted">Probe a path on the configured origin and optionally fail fast with the site error page.</p></div><span id="siteHealthStatusBadge" class="badge">Disabled</span></div>
             <label class="check-row"><input id="siteHealthEnabled" type="checkbox"><span><strong>Enable origin health checks</strong><small class="muted">Checks run directly against the origin and do not pass through visitor access policies.</small></span></label>
@@ -309,7 +336,7 @@ export function adminPage(): string {
 						</div>
 					</section>
           <div id="generatedSecretPanel" class="secret-panel hidden"><div><strong>Save this origin signing secret</strong><p class="muted">BurrowGate will not display it again. Configure it on the protected origin to verify signed headers.</p><code id="generatedSecretValue"></code></div><button id="copyGeneratedSecret" class="button secondary" type="button">Copy</button></div>
-          <div class="row site-form-actions"><button id="saveSite" class="button" type="submit">Create</button><button id="resetSiteForm" class="button secondary" type="button">Reset</button></div>
+          <div class="row site-form-actions"><button id="saveSite" class="button" type="submit">Create</button><button id="resetSiteForm" class="button secondary" type="button">Reset</button><button id="deleteSite" class="button danger hidden" type="button">Delete site</button></div>
         </form>
         <section id="siteTlsPanel" class="tls-panel hidden">
           <div class="section-heading tls-heading"><div><h2>TLS certificate</h2><p class="muted">Terminate HTTPS directly in BurrowGate using an uploaded certificate or ACME HTTP-01.</p></div><span id="tlsStatusBadge" class="badge">Not configured</span></div>

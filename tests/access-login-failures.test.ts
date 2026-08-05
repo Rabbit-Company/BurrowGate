@@ -20,4 +20,14 @@ describe("access login failure tracking", () => {
 		expect(tracker.status(["visitor"], 100)).toBe(0);
 		expect(tracker.size).toBe(0);
 	});
+
+	test("removes only entries belonging to a deleted site", () => {
+		const tracker = new LoginFailureTracker(10, 1_000, 1);
+		tracker.record(["site:one:ip:192.0.2.1", "site:two:ip:192.0.2.2"], 0);
+		tracker.clearPrefix("site:one:");
+
+		expect(tracker.status(["site:one:ip:192.0.2.1"], 1)).toBe(0);
+		expect(tracker.status(["site:two:ip:192.0.2.2"], 1)).toBe(1);
+		expect(tracker.size).toBe(1);
+	});
 });

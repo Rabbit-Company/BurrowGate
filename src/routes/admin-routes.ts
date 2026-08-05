@@ -12,9 +12,16 @@ import { repository, type SortDirection } from "../db/repository.ts";
 import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
 import { adminSessionTokens, createAdminSession, getAdminSession } from "../services/session-service.ts";
 import { createSite, parseDefaultNetworkAction, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
-import { createRoutePolicy, deleteRoutePolicy, routePolicyView, updateRoutePolicy, type RoutePolicyInput } from "../services/route-policy-service.ts";
+import {
+	createRoutePolicy,
+	deleteRoutePolicy,
+	invalidateDeletedSiteRoutePolicies,
+	routePolicyView,
+	updateRoutePolicy,
+	type RoutePolicyInput,
+} from "../services/route-policy-service.ts";
 import { invalidateRouteRateLimiter } from "../services/rate-limit-service.ts";
-import { issueLetsEncryptCertificate } from "../services/acme-service.ts";
+import { issueLetsEncryptCertificate, siteCertificateIssuanceActive } from "../services/acme-service.ts";
 import { recordCertificateEvent, saveCertificate, tlsView, updateTlsSettings } from "../services/certificate-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
 import {
@@ -29,6 +36,7 @@ import {
 	accessListView,
 	createAccessUser,
 	importAccessUsers,
+	invalidateAccessSite,
 	removeAccessUser,
 	updateAccessSettings,
 	updateAccessUser,
@@ -38,8 +46,11 @@ import { adminPage, loginPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { sha256Hex, timingSafeEqualText } from "../utils/crypto.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
-import { flushBandwidthMetrics } from "../services/bandwidth-service.ts";
+import { blockSiteBandwidth, flushBandwidthMetrics, resumeSiteBandwidth } from "../services/bandwidth-service.ts";
+import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts";
 import { originHealthManager } from "../services/origin-health-service.ts";
+import { loadBalancer } from "../services/load-balancer-service.ts";
+import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -126,6 +137,12 @@ async function parseRoutePolicyInput(request: Request): Promise<RoutePolicyInput
 	return body as RoutePolicyInput;
 }
 
+async function parseOriginInput(request: Request): Promise<OriginInput> {
+	const body = await request.json();
+	if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Origin payload must be an object");
+	return body as OriginInput;
+}
+
 export function registerAdminRoutes(app: Web<any>): void {
 	app.get("/_burrowgate/admin/login", async (ctx) =>
 		(await getAdminSession(ctx.req))
@@ -206,6 +223,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		try {
 			const created = await createSite(await parseSiteInput(ctx.req));
+			await loadBalancer.refreshSite(created.site.id);
 			await originHealthManager.refreshSite(created.site.id);
 			return jsonResponse(
 				{
@@ -224,6 +242,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		try {
 			const site = await updateSite(ctx.params.id, await parseSiteInput(ctx.req));
+			await loadBalancer.refreshSite(site.id);
 			await originHealthManager.refreshSite(site.id);
 			await requestTlsReload();
 			return jsonResponse({ site: siteView(site) });
@@ -233,14 +252,66 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 	});
 
+	app.delete("/_burrowgate/api/admin/sites/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const site = await repository.siteById(ctx.params.id);
+		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		if (siteCertificateIssuanceActive(site.id))
+			return jsonResponse({ error: "Wait for the active certificate issuance to finish before deleting this site." }, 409);
+		const certificate = await repository.certificateBySite(site.id);
+		if (certificate) {
+			const dependentStreams = await repository.streamsUsingCertificate(certificate.id);
+			if (dependentStreams.length > 0) {
+				const ports = dependentStreams.map((stream) => stream.incoming_port).join(", ");
+				return jsonResponse(
+					{
+						error: `This site's TLS certificate is used by Stream port${dependentStreams.length === 1 ? "" : "s"} ${ports}. Change or remove that certificate from the Stream before deleting the site.`,
+					},
+					409,
+				);
+			}
+		}
+		const policies = await repository.routePolicies(site.id);
+		await flushBandwidthMetrics();
+		blockSiteBandwidth(site.id);
+		blockSiteEvents(site.id);
+		try {
+			await repository.deleteSiteCascade(site.id);
+		} catch (error) {
+			resumeSiteBandwidth(site.id);
+			resumeSiteEvents(site.id);
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to delete site" }, 500);
+		}
+		invalidateNetworkPolicy(site.id);
+		invalidateAccessSite(site.id);
+		invalidateDeletedSiteRoutePolicies(
+			site.id,
+			policies.map((policy) => policy.path_pattern),
+		);
+		for (const policy of policies) invalidateRouteRateLimiter(policy.id);
+		loadBalancer.removeSite(site.id);
+		originHealthManager.removeSite(site.id);
+		const tlsReload = await Promise.allSettled([requestTlsReload()]);
+		const warning =
+			tlsReload[0]?.status === "rejected" ? "The site was deleted, but TLS listener reload failed. Restart BurrowGate to refresh active certificates." : null;
+		return jsonResponse({ deleted: true, warning });
+	});
+
 	app.get("/_burrowgate/api/admin/sites/:id/health", async (ctx: any) => {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
 		const site = await repository.siteById(ctx.params.id);
 		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const originNames = new Map((await repository.originsForSite(site.id)).map((origin) => [origin.id, origin.name]));
+		const limit = integerParam(new URL(ctx.req.url), "limit", 100, 1, 200);
 		return jsonResponse({
 			status: originHealthManager.summary(site.id),
-			events: await originHealthManager.events(site.id, integerParam(new URL(ctx.req.url), "limit", 50, 1, 200)),
+			events: await originHealthManager.events(site.id, Math.min(50, limit)),
+			backendEvents: (await originHealthManager.backendEvents(site.id, limit)).map((event) => ({
+				...event,
+				originName: originNames.get(event.origin_id) ?? event.origin_id,
+			})),
 			alerts: (await repository.healthAlerts(site.id, 25)).map((alert) => ({
 				id: alert.id,
 				type: alert.event_type,
@@ -251,6 +322,74 @@ export function registerAdminRoutes(app: Web<any>): void {
 				deliveredAt: alert.delivered_at === null ? null : Number(alert.delivered_at),
 			})),
 		});
+	});
+
+	app.get("/_burrowgate/api/admin/sites/:id/origins", async (ctx: any) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		if (!(await repository.siteById(ctx.params.id))) return jsonResponse({ error: "Site not found" }, 404);
+		const summaries = new Map((originHealthManager.summary(ctx.params.id).origins ?? []).map((origin) => [origin.id, origin]));
+		return jsonResponse({
+			items: (await repository.originsForSite(ctx.params.id)).map((origin) => ({ ...originView(origin), health: summaries.get(origin.id) ?? null })),
+		});
+	});
+
+	app.post("/_burrowgate/api/admin/sites/:id/origins", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			const origin = await createOrigin(ctx.params.id, await parseOriginInput(ctx.req));
+			await loadBalancer.refreshSite(ctx.params.id);
+			await originHealthManager.refreshSite(ctx.params.id);
+			return jsonResponse({ origin: originView(origin) }, 201);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to create origin";
+			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
+		}
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/origins/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			const existing = await repository.originById(ctx.params.id);
+			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			const origin = await updateOrigin(existing.site_id, ctx.params.id, await parseOriginInput(ctx.req));
+			await loadBalancer.refreshSite(existing.site_id);
+			await originHealthManager.refreshSite(existing.site_id);
+			return jsonResponse({ origin: originView(origin) });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to update origin";
+			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/origins/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			const existing = await repository.originById(ctx.params.id);
+			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			await deleteOrigin(existing.site_id, ctx.params.id);
+			await loadBalancer.refreshSite(existing.site_id);
+			await originHealthManager.refreshSite(existing.site_id);
+			return jsonResponse({ deleted: true });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to delete origin";
+			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/origins/:id/check", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			const origin = await repository.originById(ctx.params.id);
+			if (!origin) return jsonResponse({ error: "Origin not found" }, 404);
+			return jsonResponse({ status: await originHealthManager.checkNow(origin.site_id, origin.id) });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to check origin" }, 409);
+		}
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/health/check", async (ctx: any) => {
@@ -716,12 +855,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
+		const originId = stringParam(url, "origin");
 		const method = stringParam(url, "method");
 		const statusGroup = enumParam(url, "status", ["1xx", "2xx", "3xx", "4xx", "5xx"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
-		return jsonResponse(
-			await repository.pagedEvents({
+		const [page, origins] = await Promise.all([
+			repository.pagedEvents({
 				...(selection.site ? { siteId: selection.site.id } : {}),
+				...(originId ? { originId } : {}),
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				...(search ? { search } : {}),
@@ -734,7 +875,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "country_code", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
 				sortDirection: sortDirection(url),
 			}),
-		);
+			selection.site ? repository.originsForSite(selection.site.id) : Promise.resolve([]),
+		]);
+		const originNames = new Map(origins.map((origin) => [origin.id, origin.name]));
+		return jsonResponse({
+			...page,
+			items: page.items.map((event) => ({ ...event, origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null })),
+			origins: origins.map((origin) => ({ id: origin.id, name: origin.name })),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/bandwidth", async (ctx) => {

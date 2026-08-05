@@ -86,6 +86,10 @@ export class LoginFailureTracker {
 		for (const key of keys) this.entries.delete(key);
 	}
 
+	clearPrefix(prefix: string): void {
+		for (const key of this.entries.keys()) if (key.startsWith(prefix)) this.entries.delete(key);
+	}
+
 	private sweep(now: number): void {
 		if (now - this.lastSweepAt < LOGIN_SWEEP_INTERVAL_MS) return;
 		this.lastSweepAt = now;
@@ -321,4 +325,9 @@ export function clearAccessIdentityCookies(request: Request): string[] {
 
 export function resetAccessLoginRateLimits(): void {
 	loginFailures.clear();
+}
+
+export function invalidateAccessSite(siteId: string): void {
+	settingsCache.delete(siteId);
+	loginFailures.clearPrefix(`site:${siteId}:`);
 }
