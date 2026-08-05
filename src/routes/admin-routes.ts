@@ -136,7 +136,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const form = await ctx.req.formData();
 		const username = String(form.get("username") ?? "");
 		const password = String(form.get("password") ?? "");
-		if (!timingSafeEqualText(username, config.admin.username) || !timingSafeEqualText(password, config.admin.password)) {
+		if (!(await timingSafeEqualText(username, config.admin.username)) || !(await timingSafeEqualText(password, config.admin.password))) {
 			return htmlResponse(loginPage("Invalid username or password"), 401);
 		}
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {

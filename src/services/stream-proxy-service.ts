@@ -8,6 +8,7 @@ import { streamCertificateTlsOption } from "./certificate-service.ts";
 import { lookupCountryCode } from "./geoip-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
 import { registerTlsReloadHandler } from "./tls-listener-service.ts";
+import { openMetrics } from "./openmetrics-service.ts";
 
 type TcpSocket = Bun.Socket<TcpConnection>;
 
@@ -159,6 +160,7 @@ export class StreamProxyManager {
 		if (!status) return;
 		status.activeTcpConnections = [...this.tcpConnections.values()].filter((connection) => connection.record.id === streamId && !connection.closed).length;
 		status.activeUdpPeers = this.udpRuntimes.get(streamId)?.peers.size ?? 0;
+		openMetrics.setStreamRuntime(status);
 	}
 
 	async start(): Promise<void> {
@@ -241,6 +243,7 @@ export class StreamProxyManager {
 			}
 			this.stopUdp(streamId, "stream removed");
 			this.statuses.delete(streamId);
+			openMetrics.clearStreamRuntime(streamId);
 		});
 		this.mutations = operation.catch(() => undefined);
 		return await operation;

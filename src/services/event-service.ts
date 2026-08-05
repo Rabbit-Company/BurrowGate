@@ -2,6 +2,7 @@ import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
+import { openMetrics } from "./openmetrics-service.ts";
 
 export async function recordEvent(input: {
 	siteId: string;
@@ -14,6 +15,7 @@ export async function recordEvent(input: {
 	latencyMs: number;
 	countryCode?: string | null;
 }): Promise<void> {
+	openMetrics.recordHttpRequest(input);
 	try {
 		await repository.insertEvent({
 			id: randomId("evt"),

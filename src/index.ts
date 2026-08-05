@@ -38,6 +38,7 @@ import { startBandwidthMetrics } from "./services/bandwidth-service.ts";
 import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
+import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -54,6 +55,9 @@ if (config.http.enabled && config.cookieSecureMode === "always") {
 		"[BurrowGate] BG_COOKIE_SECURE=true/always disables admin and visitor sessions over HTTP. Use BG_COOKIE_SECURE=auto when any protected site must remain available through HTTP.",
 	);
 }
+if (config.openMetrics.enabled && !config.openMetrics.token) {
+	Logger.warn(`[BurrowGate] ${OPENMETRICS_PATH} is enabled without BG_OPENMETRICS_TOKEN; restrict it with network policy or configure a bearer token.`);
+}
 
 const app = new Web<GatewayState>();
 app.use(ipExtract(config.proxyPreset));
@@ -66,6 +70,7 @@ app.use(
 			"/_burrowgate/static/burrowgate.css",
 			"/_burrowgate/static/pow-worker.js",
 			"/_burrowgate/static/world.svg",
+			...(config.openMetrics.enabled ? [OPENMETRICS_PATH] : []),
 		],
 	}),
 );
@@ -80,6 +85,7 @@ registerChallengeRoutes(app);
 registerAccessRoutes(app);
 registerAdminRoutes(app);
 registerStreamAdminRoutes(app);
+if (config.openMetrics.enabled) app.get(OPENMETRICS_PATH, (ctx) => openMetricsResponse(ctx.req));
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
 	return jsonResponse({

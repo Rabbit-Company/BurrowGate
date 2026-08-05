@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type { BandwidthMinuteRecord, BandwidthProtocol } from "../types.ts";
+import { openMetrics } from "./openmetrics-service.ts";
 
 export interface BandwidthContext {
 	siteId: string;
@@ -64,6 +65,10 @@ export class BandwidthAccumulator {
 		private readonly maxPendingKeys = config.bandwidth.maxPendingKeys,
 	) {}
 
+	pendingRecordCount(): number {
+		return this.pending.size;
+	}
+
 	record(context: BandwidthContext, delta: BandwidthDelta, now = Date.now()): void {
 		if (!hasBytes(delta)) return;
 		const countryCode = storedCountryCode(context.countryCode);
@@ -125,13 +130,18 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 
 export function recordBandwidth(context: BandwidthContext, delta: BandwidthDelta, now?: number): void {
 	accumulator.record(context, delta, now);
+	openMetrics.recordHttpBandwidth(context, delta);
+	openMetrics.setMonitoringQueue("http_bandwidth", accumulator.pendingRecordCount());
 }
 
 export async function flushBandwidthMetrics(): Promise<void> {
 	try {
 		await accumulator.flush();
 	} catch (error) {
+		openMetrics.recordMonitoringPersistenceFailure("http_bandwidth");
 		Logger.error("Failed to persist bandwidth metrics", { error });
+	} finally {
+		openMetrics.setMonitoringQueue("http_bandwidth", accumulator.pendingRecordCount());
 	}
 }
 

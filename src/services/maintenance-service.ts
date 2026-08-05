@@ -4,6 +4,7 @@ import { Logger } from "../logger.ts";
 import { renewDueCertificates } from "./acme-service.ts";
 import { backfillGeoIp } from "./geoip-service.ts";
 import { invalidateNetworkPolicy } from "./ip-rule-service.ts";
+import { openMetrics } from "./openmetrics-service.ts";
 
 const DAY_MS = 86_400_000;
 let cleanupRunning = false;
@@ -132,17 +133,21 @@ export async function runRetentionCleanup(): Promise<void> {
 	if (cleanupRunning) return;
 	cleanupRunning = true;
 	const now = Date.now();
+	const startedAt = performance.now();
+	let cleanupResult: CleanupRunResult = { deleted: 0, attemptedBatches: 0, errors: 0 };
 	try {
 		const tasks = await cleanupTasks(now, config.maintenance.cleanupBatchSize);
-		const result = await runCleanupTasks(tasks, {
+		cleanupResult = await runCleanupTasks(tasks, {
 			batchSize: config.maintenance.cleanupBatchSize,
 			pauseMs: config.maintenance.cleanupPauseMs,
 			timeBudgetMs: config.maintenance.cleanupTimeBudgetMs,
 		});
-		if (result.deleted > 0) Logger.info(`[BurrowGate] Incremental retention cleanup removed ${result.deleted} row(s)`);
+		if (cleanupResult.deleted > 0) Logger.info(`[BurrowGate] Incremental retention cleanup removed ${cleanupResult.deleted} row(s)`);
 	} catch (error) {
+		cleanupResult.errors += 1;
 		Logger.error("[BurrowGate] Unable to prepare retention cleanup", { error });
 	} finally {
+		openMetrics.recordRetentionCleanup({ ...cleanupResult, durationMs: performance.now() - startedAt });
 		cleanupRunning = false;
 	}
 }

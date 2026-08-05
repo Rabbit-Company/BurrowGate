@@ -13,10 +13,11 @@
 		"build:map": "bun scripts/build-map-assets.ts"
 	},
 	"dependencies": {
+		"@rabbit-company/openmetrics-client": "2.0.1",
 		"@rabbit-company/web": "^0.18.2",
 		"@rabbit-company/web-middleware": "^0.18.2",
-		"chart.js": "4.5.1",
 		"acme-client": "5.4.0",
+		"chart.js": "4.5.1",
 		"maxmind": "5.0.7"
 	},
 	"devDependencies": {

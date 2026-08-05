@@ -5,6 +5,7 @@
     "": {
       "name": "burrowgate",
       "dependencies": {
+        "@rabbit-company/openmetrics-client": "2.0.1",
         "@rabbit-company/web": "^0.18.2",
         "@rabbit-company/web-middleware": "^0.18.2",
         "acme-client": "5.4.0",
@@ -45,6 +46,8 @@
     "@peculiar/x509": ["@peculiar/x509@1.14.3", "", { "dependencies": { "@peculiar/asn1-cms": "^2.6.0", "@peculiar/asn1-csr": "^2.6.0", "@peculiar/asn1-ecc": "^2.6.0", "@peculiar/asn1-pkcs9": "^2.6.0", "@peculiar/asn1-rsa": "^2.6.0", "@peculiar/asn1-schema": "^2.6.0", "@peculiar/asn1-x509": "^2.6.0", "pvtsutils": "^1.3.6", "reflect-metadata": "^0.2.2", "tslib": "^2.8.1", "tsyringe": "^4.10.0" } }, "sha512-C2Xj8FZ0uHWeCXXqX5B4/gVFQmtSkiuOolzAgutjTfseNOHT3pUjljDZsTSxXFGgio54bCzVFqmEOUrIVk8RDA=="],
 
     "@rabbit-company/logger": ["@rabbit-company/logger@5.6.1", "", { "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-U/OvLzzkHgTUupgeMsnBHjJVbFfVIt4Nj643rraq/mKpIEmGUVsUGJi1Gin2Tw95vJ8pB/kNYVxtZi9FKO+mIw=="],
+
+    "@rabbit-company/openmetrics-client": ["@rabbit-company/openmetrics-client@2.0.1", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-JJr8reWZwTr5vvq1txc2jEgDkLKJ/QAref8W7C7pP7fdmy1qltpu9Ujrbqariq/pJb3qTj0y89krlYZSgh/YvA=="],
 
     "@rabbit-company/rate-limiter": ["@rabbit-company/rate-limiter@3.0.1", "", { "peerDependencies": { "typescript": "^5.8.3" } }, "sha512-Wj32TPksbohww7fMbERjjSAApA9fdsneRtIpfQmY/W/BfGA9BbO08wKA1tezoVHuYEMUCwjUjaRZxjEYGMxTOw=="],
 

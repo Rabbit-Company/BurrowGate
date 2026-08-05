@@ -36,15 +36,11 @@ export function toBase64Url(bytes: Uint8Array): string {
 	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-export function timingSafeEqualText(left: string, right: string): boolean {
-	const a = encoder.encode(left);
-	const b = encoder.encode(right);
-	const length = Math.max(a.length, b.length);
-	let difference = a.length ^ b.length;
-	for (let index = 0; index < length; index += 1) {
-		difference |= (a[index] ?? 0) ^ (b[index] ?? 0);
-	}
-	return difference === 0;
+export async function timingSafeEqualText(left: string, right: string): Promise<boolean> {
+	const leftDigest = await sha256Bytes(left);
+	const rightDigest = await sha256Bytes(right);
+
+	return crypto.timingSafeEqual(leftDigest, rightDigest);
 }
 
 export function countLeadingZeroBits(bytes: Uint8Array): number {

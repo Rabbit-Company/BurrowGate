@@ -104,6 +104,10 @@ export const config = {
 		backfillBatchSize: envNumber("BG_GEOIP_BACKFILL_BATCH_SIZE", 500, 0, 10_000),
 		retrySeconds: envNumber("BG_GEOIP_RETRY_SECONDS", 30, 5, 3_600),
 	},
+	openMetrics: {
+		enabled: envBoolean("BG_OPENMETRICS_ENABLED", false),
+		token: process.env.BG_OPENMETRICS_TOKEN?.trim() || null,
+	},
 	maintenance: {
 		intervalSeconds: envNumber("BG_MAINTENANCE_INTERVAL_SECONDS", 3_600, 60, 86_400),
 		cleanupIntervalSeconds: envNumber("BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS", 60, 10, 86_400),

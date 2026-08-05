@@ -27,6 +27,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Country codes, country filters, and country tooltips in traffic and session tables
 - Per-site customizable HTML or JSON error responses
 - Per-site customizable HTML challenge pages
+- Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
 
@@ -120,6 +121,8 @@ docker compose up -d --build --force-recreate
 | `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
 | `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP reader cache entries                                                         |
 | `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when the MMDB file is not available yet                                     |
+| `BG_OPENMETRICS_ENABLED`                  | `false`                              | Expose `/_burrowgate/metrics` for Prometheus-compatible scraping                           |
+| `BG_OPENMETRICS_TOKEN`                    | empty                                | Optional bearer token protecting the OpenMetrics endpoint                                  |
 | `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                       |
 | `BG_WEBSOCKET_ENABLED`                    | `true`                               | Enable WebSocket proxying                                                                  |
 | `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS`       | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
@@ -377,6 +380,8 @@ The dashboard includes:
 - drag-to-select time ranges directly on time-series graphs
 
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
+
+Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP status, and process memory. It deliberately excludes paths, client IPs, countries, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
 
 Traffic retention is configured per site from 1 to 365 days. Maintenance removes expired events automatically.
 

@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type { StreamBandwidthMinuteRecord, StreamEventRecord, StreamProtocol } from "../types.ts";
+import { openMetrics } from "./openmetrics-service.ts";
 
 export interface StreamTrafficContext {
 	streamId: string;
@@ -59,6 +60,14 @@ export class StreamMonitoringAccumulator {
 		const count = this.droppedEvents;
 		this.droppedEvents = 0;
 		return count;
+	}
+
+	pendingEventCount(): number {
+		return this.events.length + this.inFlightEventCount;
+	}
+
+	pendingBandwidthRecordCount(): number {
+		return this.bandwidth.size;
 	}
 
 	recordTraffic(context: StreamTrafficContext, delta: StreamTrafficDelta, now = Date.now()): void {
@@ -141,19 +150,27 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 export function recordStreamEvent(event: StreamEventRecord): void {
 	accumulator.recordEvent(event);
+	openMetrics.recordStreamEvent(event);
+	openMetrics.setMonitoringQueue("stream_events", accumulator.pendingEventCount());
 }
 
 export function recordStreamTraffic(context: StreamTrafficContext, delta: StreamTrafficDelta, now?: number): void {
 	accumulator.recordTraffic(context, delta, now);
+	openMetrics.recordStreamBandwidth(context, delta);
+	openMetrics.setMonitoringQueue("stream_bandwidth", accumulator.pendingBandwidthRecordCount());
 }
 
 export async function flushStreamMonitoring(): Promise<void> {
 	try {
 		await accumulator.flush();
 	} catch (error) {
+		openMetrics.recordMonitoringPersistenceFailure("stream_monitoring");
 		Logger.error("[BurrowGate] Failed to persist stream monitoring data", { error });
 	} finally {
 		const dropped = accumulator.takeDroppedEventCount();
+		openMetrics.recordDroppedMonitoringEvents("stream_events", dropped);
+		openMetrics.setMonitoringQueue("stream_events", accumulator.pendingEventCount());
+		openMetrics.setMonitoringQueue("stream_bandwidth", accumulator.pendingBandwidthRecordCount());
 		if (dropped > 0) Logger.warn(`[BurrowGate] Dropped ${dropped} stream monitoring event(s) after reaching the pending-event memory limit`);
 	}
 }
