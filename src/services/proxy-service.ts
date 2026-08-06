@@ -136,6 +136,7 @@ function downstreamHeaders(response: Response, target: URL, incoming: URL, trans
 			if (parsed.host === target.host) {
 				parsed.protocol = `${transport}:`;
 				parsed.host = incoming.host;
+				parsed.port = incoming.port;
 				headers.set("location", parsed.toString());
 			}
 		} catch {

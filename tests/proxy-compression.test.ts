@@ -11,6 +11,9 @@ const origin = Bun.serve({
 	port: 0,
 	fetch(request) {
 		receivedHost = request.headers.get("host");
+		if (new URL(request.url).pathname === "/redirect-test") {
+			return new Response(null, { status: 302, headers: { location: "/web/" } });
+		}
 		return new Response(compressedBody, {
 			headers: {
 				"content-type": "text/plain; charset=utf-8",
@@ -61,5 +64,12 @@ describe("reverse-proxy compression", () => {
 		expect(response.headers.get("content-length")).toBe(String(compressedBody.byteLength));
 		expect(new Uint8Array(await response.arrayBuffer())).toEqual(compressedBody);
 		expect(receivedHost).toBe("proxy.test");
+	});
+
+	test("does not leak the origin port into relative redirects", async () => {
+		const response = await proxyRequest(new Request("https://proxy.test/redirect-test"), site, "127.0.0.1", null);
+
+		expect(response.status).toBe(302);
+		expect(response.headers.get("location")).toBe("https://proxy.test/web/");
 	});
 });
