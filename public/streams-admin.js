@@ -545,7 +545,7 @@ function renderActive(items) {
 		? filtered
 				.map(
 					(item) =>
-						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incomingPort}</code></td><td><code>${escapeHtml(item.clientIp)}:${item.clientPort}</code></td><td>${escapeHtml(item.countryCode || "ZZ")}</td><td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td><td>${escapeHtml(formatDate(item.lastActivityAt))}</td><td>${formatBytes(item.clientToUpstreamBytes)}</td><td>${formatBytes(item.upstreamToClientBytes)}</td></tr>`,
+						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incomingPort}</code></td><td class="ip-cell"><code>${escapeHtml(item.clientIp)}:${item.clientPort}</code></td><td>${escapeHtml(item.countryCode || "ZZ")}</td><td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td><td>${escapeHtml(formatDate(item.lastActivityAt))}</td><td>${formatBytes(item.clientToUpstreamBytes)}</td><td>${formatBytes(item.upstreamToClientBytes)}</td></tr>`,
 				)
 				.join("")
 		: '<tr><td colspan="8" class="empty-cell">No active connections or UDP peers.</td></tr>';
@@ -748,7 +748,7 @@ async function loadEvents() {
 		? result.items
 				.map(
 					(item) =>
-						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td><span class="badge ${item.event_type.includes("error") ? "bad" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td>${item.protocol.toUpperCase()}</td><td><code>${item.incoming_port}</code></td><td><code>${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td title="${escapeHtml(item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
+						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td><span class="badge ${item.event_type.includes("error") ? "bad" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td>${item.protocol.toUpperCase()}</td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td title="${escapeHtml(item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
 				)
 				.join("")
 		: '<tr><td colspan="9" class="empty-cell">No stream events match these filters.</td></tr>';
@@ -766,7 +766,7 @@ async function loadBandwidth() {
 		? result.items
 				.map(
 					(item) =>
-						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incoming_port}</code></td><td><code>${escapeHtml(item.ip)}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td><td><strong>${formatBytes(item.total_bytes)}</strong></td></tr>`,
+						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.ip)}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td><td><strong>${formatBytes(item.total_bytes)}</strong></td></tr>`,
 				)
 				.join("")
 		: '<tr><td colspan="7" class="empty-cell">No stream bandwidth matches these filters.</td></tr>';

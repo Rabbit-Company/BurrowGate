@@ -383,6 +383,10 @@ form.grid label {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+.ip-cell {
+	white-space: normal !important;
+	overflow-wrap: anywhere;
+}
 .empty-cell {
 	text-align: center !important;
 	color: #64748b;

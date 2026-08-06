@@ -581,7 +581,7 @@ async function loadTraffic() {
 						.map(
 							(event) => `<tr>
           <td>${formatDate(event.created_at)}</td>
-          <td><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code></td>
           <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
@@ -627,7 +627,7 @@ async function loadBandwidth() {
 				: result.items
 						.map(
 							(item) => `<tr>
-          <td><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td>
           <td>${countryBadge(item.country_code)}</td>
           <td>${formatBytes(item.client_sent_bytes)}</td>
           <td>${formatBytes(item.client_received_bytes)}</td>
@@ -681,7 +681,7 @@ async function loadSessions() {
 							return `<tr class="session-row ${currentState}">
           <td><span class="badge ${currentState === "active" ? "ok" : currentState === "expired" ? "warn" : "bad"}">${currentState}</span></td>
           <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code></td>
-          <td><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
           <td>${countryBadge(session.country_code)}</td>
           <td>${formatDate(session.created_at)}</td>
           <td>${formatDate(session.last_seen_at)}</td>
@@ -741,7 +741,7 @@ async function loadRules() {
 							const currentState = ruleState(rule);
 							return `<tr class="rule-row ${currentState}">
           <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
-          <td><code>${escapeHtml(rule.network_cidr)}</code></td>
+          <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
           <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
           <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
           <td>${formatDate(rule.created_at)}</td>
