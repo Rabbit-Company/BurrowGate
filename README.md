@@ -2,6 +2,8 @@
 
 BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It protects websites and APIs from bots and automated scrapers with route policies, rate limits, network rules, browser challenges, TLS termination, and traffic monitoring.
 
+![BurrowGate Dashboard](https://cdn.rabbit-company.com/burrowgate/dashboard.webp)
+
 ## Features
 
 - Native HTTP and HTTPS listeners on ports 80 and 443

@@ -379,7 +379,7 @@ form.grid label {
 	border-bottom: 0;
 }
 .path-cell {
-	max-width: 520px;
+	max-width: 420px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
@@ -1392,6 +1392,9 @@ form.grid label {
 @media (min-width: 1281px) {
 	.toolbar {
 		grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(105px, 1fr));
+	}
+	.toolbar.traffic-toolbar {
+		grid-template-columns: minmax(180px, 1.5fr) repeat(5, minmax(105px, 1fr)) 85px;
 	}
 	.compact-toolbar {
 		grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 0.7fr));
