@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { requestIsSecure, requestTransport, secureCookieForRequest, withRequestTransport } from "../src/config.ts";
+import { parseIpExtractionPreset, requestIsSecure, requestTransport, secureCookieForRequest, withRequestTransport } from "../src/config.ts";
+
+describe("client IP extraction preset validation", () => {
+	test("accepts every supported site preset", () => {
+		for (const preset of ["direct", "cloudflare", "aws", "gcp", "azure", "vercel", "nginx", "development"] as const) {
+			expect(parseIpExtractionPreset(preset)).toBe(preset);
+		}
+	});
+
+	test("rejects unknown presets", () => {
+		expect(() => parseIpExtractionPreset("untrusted-forwarder")).toThrow("Unsupported IP extraction preset");
+	});
+});
 
 describe("listener transport context", () => {
 	test("HTTP listener wins over a reconstructed HTTPS request URL", async () => {

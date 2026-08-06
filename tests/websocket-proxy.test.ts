@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	isWebSocketUpgrade,
+	clientIpForUpgrade,
 	offeredWebSocketProtocols,
 	selectedProtocolHeaders,
 	websocketUpstreamHeaders,
@@ -15,6 +16,7 @@ const site: SiteRecord = {
 	public_host: "socket.example.test",
 	origin_url: "https://origin.example.test/base",
 	origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+	ip_extraction_preset: "direct",
 	enabled: 1,
 	session_ttl_seconds: 3_600,
 	default_access_mode: "challenge",
@@ -49,6 +51,17 @@ const accessSession: AccessSessionRecord = {
 };
 
 describe("WebSocket reverse proxy", () => {
+	test("uses the site's client IP extraction preset", async () => {
+		const request = new Request("https://socket.example.test/ws", { headers: { "cf-connecting-ip": "203.0.113.17" } });
+		const server = {
+			requestIP: () => ({ address: "173.245.48.10" }),
+			upgrade: () => false,
+		};
+
+		expect(await clientIpForUpgrade(request, server, "cloudflare")).toBe("203.0.113.17");
+		expect(await clientIpForUpgrade(request, server, "direct")).toBe("173.245.48.10");
+	});
+
 	test("recognizes valid WebSocket upgrade requests", () => {
 		expect(
 			isWebSocketUpgrade(

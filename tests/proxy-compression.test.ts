@@ -27,6 +27,7 @@ const site: SiteRecord = {
 	public_host: "proxy.test",
 	origin_url: `http://127.0.0.1:${origin.port}`,
 	origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+	ip_extraction_preset: "direct",
 	enabled: 1,
 	session_ttl_seconds: 3_600,
 	default_access_mode: "challenge",

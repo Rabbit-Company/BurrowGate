@@ -10,6 +10,7 @@ function site(overrides: Partial<SiteRecord> = {}): SiteRecord {
 		public_host: "example.test",
 		origin_url: "http://127.0.0.1:3000",
 		origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+		ip_extraction_preset: "direct",
 		enabled: 1,
 		session_ttl_seconds: 3_600,
 		challenge_policy_json: "[]",

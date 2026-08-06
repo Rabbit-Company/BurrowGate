@@ -3,6 +3,7 @@ export type DefaultNetworkAction = "inherit" | Exclude<IpRuleAction, "pass">;
 export type FlowStatus = "pending" | "completed" | "failed" | "expired";
 export type StepStatus = "pending" | "completed" | "failed" | "expired";
 export type SiteAccessMode = "challenge" | "bypass";
+export type IpExtractionPreset = import("@rabbit-company/web-middleware/ip-extract").IpExtractionPreset;
 export type RouteAccessMode = "inherit" | "challenge" | "bypass" | "block";
 export type RateLimitAlgorithm = "fixed-window" | "sliding-window" | "token-bucket";
 export type RateLimitKeyMode = "ip" | "session-or-ip" | "header-or-ip";
@@ -88,6 +89,7 @@ export interface SiteRecord {
 	public_host: string;
 	origin_url: string;
 	origin_signing_secret: string;
+	ip_extraction_preset: IpExtractionPreset;
 	enabled: number;
 	session_ttl_seconds: number;
 	challenge_policy_json: string;

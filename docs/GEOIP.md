@@ -65,7 +65,7 @@ Or set a custom path with `BG_GEOIP_DATABASE_PATH`.
 
 ## Client IP source
 
-GeoIP uses the same normalized client IP as IP rules, rate limiting, sessions, and traffic logging. When BurrowGate is placed behind another proxy, configure the trusted proxy preset correctly. Do not trust forwarded IP headers from arbitrary clients.
+GeoIP uses the same normalized client IP as IP rules, rate limiting, sessions, and traffic logging. Configure each site's **Client IP source** in the Sites dashboard to match the proxy in front of that hostname. Keep `direct` for sites exposed by BurrowGate itself, and do not trust forwarded IP headers from arbitrary clients. `BG_PROXY_PRESET` applies only to dashboard requests.
 
 ## Existing data
 

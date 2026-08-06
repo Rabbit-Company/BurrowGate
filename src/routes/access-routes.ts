@@ -26,7 +26,7 @@ async function context(ctx: any): Promise<{
 }> {
 	const url = new URL(ctx.req.url);
 	return {
-		site: await resolveSiteForHost(normalizeHost(requestHost(ctx.req))),
+		site: ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req)))),
 		ip: getClientIp(ctx) ?? "unknown",
 		returnPath: safeReturnPath(url.searchParams.get("return")),
 	};
@@ -57,7 +57,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 		const started = performance.now();
 		const form = await ctx.req.formData();
 		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
-		const site = await resolveSiteForHost(normalizeHost(requestHost(ctx.req)));
+		const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
 		if (!site) return htmlResponse("No BurrowGate site is configured for this host.", 421);
 		if (!sameOriginRequest(ctx.req)) return htmlResponse(accessLoginPage(site, returnPath, "Request validation failed."), 403);
 		const settings = await accessSettingsForSite(site.id);
@@ -115,7 +115,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 	app.post("/_burrowgate/api/access/login", async (ctx) => {
 		const started = performance.now();
 		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
-		const site = await resolveSiteForHost(normalizeHost(requestHost(ctx.req)));
+		const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
 		if (!site) return jsonResponse({ error: "No site configured" }, 421);
 		const settings = await accessSettingsForSite(site.id);
 		if (settings.enabled !== 1)

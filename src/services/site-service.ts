@@ -1,5 +1,5 @@
 import { challengeRegistry } from "../challenges/index.ts";
-import { config } from "../config.ts";
+import { config, parseIpExtractionPreset } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type {
@@ -9,6 +9,7 @@ import type {
 	HealthAlertProvider,
 	OriginHealthFailureMode,
 	LoadBalancingAlgorithm,
+	IpExtractionPreset,
 	SiteAccessMode,
 	SiteRecord,
 } from "../types.ts";
@@ -44,6 +45,7 @@ export interface SiteInput {
 	errorJsonFields?: unknown;
 	healthCheck?: unknown;
 	loadBalancer?: unknown;
+	ipExtractionPreset?: unknown;
 }
 
 export interface SiteView {
@@ -51,6 +53,7 @@ export interface SiteView {
 	name: string;
 	publicHost: string;
 	originUrl: string;
+	ipExtractionPreset: IpExtractionPreset;
 	enabled: boolean;
 	sessionTtlSeconds: number;
 	challengePolicy: ChallengePolicyStep[];
@@ -312,6 +315,7 @@ export function siteView(site: SiteRecord): SiteView {
 		name: site.name,
 		publicHost: site.public_host,
 		originUrl: site.origin_url,
+		ipExtractionPreset: site.ip_extraction_preset ?? "direct",
 		enabled: site.enabled === 1,
 		sessionTtlSeconds: Number(site.session_ttl_seconds),
 		challengePolicy: policyFromRecord(site),
@@ -365,6 +369,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		public_host: publicHost,
 		origin_url: normalizeOriginUrl(input.originUrl),
 		origin_signing_secret: providedSecret ?? generatedSigningSecret!,
+		ip_extraction_preset: parseIpExtractionPreset(input.ipExtractionPreset),
 		enabled: enabledValue(input.enabled, true) ? 1 : 0,
 		session_ttl_seconds: sessionTtl(input.sessionTtlSeconds, config.defaultSite.sessionTtlSeconds),
 		challenge_policy_json: JSON.stringify(
@@ -430,6 +435,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		public_host: publicHost,
 		origin_url: normalizeOriginUrl(input.originUrl ?? existing.origin_url),
 		origin_signing_secret: signingSecret(input.originSigningSecret) ?? existing.origin_signing_secret,
+		ip_extraction_preset: parseIpExtractionPreset(input.ipExtractionPreset, existing.ip_extraction_preset ?? "direct"),
 		enabled: enabledValue(input.enabled, existing.enabled === 1) ? 1 : 0,
 		session_ttl_seconds: sessionTtl(input.sessionTtlSeconds, existing.session_ttl_seconds),
 		challenge_policy_json: JSON.stringify(parseChallengePolicy(input.challengePolicy, existingPolicy)),

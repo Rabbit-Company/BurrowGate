@@ -1,4 +1,4 @@
-import { ipExtract } from "@rabbit-company/web-middleware/ip-extract";
+import { IP_EXTRACTION_PRESETS, ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
 import { config, type RequestTransport } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, SiteRecord } from "../types.ts";
@@ -183,14 +183,17 @@ function flushPreOpenQueue(bridge: WebSocketBridgeData): void {
 	}
 }
 
-const websocketIpExtract = ipExtract(config.proxyPreset);
+const websocketIpExtractors = new Map<IpExtractionPreset, ReturnType<typeof ipExtract>>(
+	(Object.keys(IP_EXTRACTION_PRESETS) as IpExtractionPreset[]).map((preset) => [preset, ipExtract(preset)]),
+);
 
-async function clientIpForUpgrade(request: Request, server: WebSocketUpgradeServer): Promise<string> {
+export async function clientIpForUpgrade(request: Request, server: WebSocketUpgradeServer, preset: IpExtractionPreset): Promise<string> {
 	const directIp = server.requestIP(request)?.address;
-	const context = { req: request, clientIp: directIp } as Parameters<typeof websocketIpExtract>[0];
+	const extractor = websocketIpExtractors.get(preset)!;
+	const context = { req: request, clientIp: directIp } as Parameters<typeof extractor>[0];
 
 	try {
-		await websocketIpExtract(context, async () => {});
+		await extractor(context, async () => {});
 	} catch (error) {
 		Logger.error("Failed to extract WebSocket client IP", { error });
 	}
@@ -326,7 +329,7 @@ export async function handleWebSocketUpgrade(
 	const site = await resolveSiteForHost(host);
 	if (!site) return jsonResponse({ error: `No BurrowGate site is configured for ${host}` }, 421);
 
-	const ip = await clientIpForUpgrade(request, server);
+	const ip = await clientIpForUpgrade(request, server, site.ip_extraction_preset ?? "direct");
 	const url = incomingUrl;
 	const eventBase: {
 		siteId: string;

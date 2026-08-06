@@ -909,7 +909,7 @@ function renderSites() {
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span>${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Client IP: ${escapeHtml(site.ipExtractionPreset ?? "direct")} | Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
@@ -925,6 +925,7 @@ function resetSiteForm() {
 	byId("siteEventRetentionDays").value = String(defaultEventRetentionDays);
 	byId("siteEnabled").checked = true;
 	byId("siteDefaultAccessMode").value = "challenge";
+	byId("siteIpExtractionPreset").value = "direct";
 	byId("siteLoadBalancingAlgorithm").value = "failover";
 	byId("siteLoadBalancingAffinity").checked = true;
 	byId("originPoolRuntime").classList.add("hidden");
@@ -980,6 +981,7 @@ function editSite(id) {
 	byId("siteEventRetentionDays").value = String(site.eventRetentionDays ?? defaultEventRetentionDays);
 	byId("siteEnabled").checked = Boolean(site.enabled);
 	byId("siteDefaultAccessMode").value = site.defaultAccessMode ?? "challenge";
+	byId("siteIpExtractionPreset").value = site.ipExtractionPreset ?? "direct";
 	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
 	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
 	byId("originPoolRuntime").classList.remove("hidden");
@@ -1147,6 +1149,7 @@ async function saveSite(event) {
 		originUrl: byId("siteOriginUrl").value.trim(),
 		enabled: byId("siteEnabled").checked,
 		defaultAccessMode: byId("siteDefaultAccessMode").value,
+		ipExtractionPreset: byId("siteIpExtractionPreset").value,
 		sessionTtlSeconds: Number(byId("siteSessionTtl").value),
 		eventRetentionDays: Number(byId("siteEventRetentionDays").value),
 		challengePolicy,

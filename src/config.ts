@@ -1,6 +1,6 @@
+import { IP_EXTRACTION_PRESETS, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type ProxyPreset = "direct" | "nginx" | "cloudflare" | "aws" | "development";
 export type CookieSecureMode = "auto" | "always" | "never";
 export type RequestTransport = "http" | "https";
 
@@ -24,10 +24,12 @@ function envBoolean(name: string, fallback: boolean): boolean {
 	throw new Error(`${name} must be true or false`);
 }
 
-function proxyPreset(value: string | undefined): ProxyPreset {
-	const preset = (value ?? "direct") as ProxyPreset;
-	if (!["direct", "nginx", "cloudflare", "aws", "development"].includes(preset)) {
-		throw new Error(`Unsupported BG_PROXY_PRESET: ${preset}`);
+export function parseIpExtractionPreset(value: unknown, fallback: IpExtractionPreset = "direct", label = "IP extraction preset"): IpExtractionPreset {
+	const preset = String(value ?? fallback)
+		.trim()
+		.toLowerCase() as IpExtractionPreset;
+	if (!Object.keys(IP_EXTRACTION_PRESETS).includes(preset)) {
+		throw new Error(`Unsupported ${label}: ${preset}`);
 	}
 	return preset;
 }
@@ -67,7 +69,7 @@ export const config = {
 		listenerDrainTimeoutMs: envNumber("BG_TLS_LISTENER_DRAIN_TIMEOUT_MS", 5_000, 100, 60_000),
 	},
 	databaseUrl: process.env.DATABASE_URL ?? "sqlite://./data/burrowgate.db",
-	proxyPreset: proxyPreset(process.env.BG_PROXY_PRESET),
+	dashboardProxyPreset: parseIpExtractionPreset(process.env.BG_PROXY_PRESET, "direct", "BG_PROXY_PRESET"),
 	cookieSecureMode: cookieSecureMode(process.env.BG_COOKIE_SECURE),
 	originTimeoutMs: envNumber("BG_ORIGIN_TIMEOUT_MS", 30_000, 1_000, 300_000),
 	websocket: {

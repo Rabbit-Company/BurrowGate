@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS sites (
   public_host VARCHAR(255) NOT NULL UNIQUE,
   origin_url TEXT NOT NULL,
   origin_signing_secret TEXT NOT NULL,
+  ip_extraction_preset VARCHAR(32) NOT NULL DEFAULT 'direct',
   enabled INTEGER NOT NULL DEFAULT 1,
   session_ttl_seconds INTEGER NOT NULL,
   challenge_policy_json TEXT NOT NULL,
@@ -430,6 +431,7 @@ function duplicateColumnError(error: unknown): boolean {
 
 async function ensureSiteColumns(): Promise<void> {
 	const statements = [
+		"ALTER TABLE sites ADD COLUMN ip_extraction_preset VARCHAR(32) NULL",
 		"ALTER TABLE sites ADD COLUMN default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge'",
 		"ALTER TABLE sites ADD COLUMN event_retention_days INTEGER NULL",
 		"ALTER TABLE sites ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
@@ -459,6 +461,7 @@ async function ensureSiteColumns(): Promise<void> {
 			if (!duplicateColumnError(error)) throw error;
 		}
 	}
+	await db`UPDATE sites SET ip_extraction_preset=${config.dashboardProxyPreset} WHERE ip_extraction_preset IS NULL`;
 	await db`UPDATE sites SET event_retention_days=${config.eventRetentionDays} WHERE event_retention_days IS NULL`;
 	await db`UPDATE sites SET error_html_template=${DEFAULT_ERROR_HTML_TEMPLATE} WHERE error_html_template IS NULL`;
 	await db`UPDATE sites SET error_json_fields_json=${JSON.stringify(DEFAULT_ERROR_JSON_FIELDS)} WHERE error_json_fields_json IS NULL`;
