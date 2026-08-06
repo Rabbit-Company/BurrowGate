@@ -25,6 +25,7 @@ let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
 let siteOrigins = [];
+let trafficHasMultipleOrigins = false;
 let editingOriginId = null;
 let routePolicies = [];
 let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
@@ -32,6 +33,7 @@ let countryRules = [];
 let editingRoutePolicyId = null;
 let currentTls = null;
 let overviewRequestId = 0;
+let trafficRequestId = 0;
 let selectedRangeFrom = 0;
 let selectedRangeTo = 0;
 let dateRangeIsAutomatic = true;
@@ -372,9 +374,21 @@ function countryBadge(codeInput) {
 	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
 }
 
+function setTrafficOriginVisibility(origins = []) {
+	trafficHasMultipleOrigins = origins.length > 1;
+	byId("eventOriginFilter").classList.toggle("hidden", !trafficHasMultipleOrigins);
+	byId("eventOriginColumnHeader").classList.toggle("hidden", !trafficHasMultipleOrigins);
+	if (!trafficHasMultipleOrigins) byId("eventOrigin").value = "";
+}
+
+function trafficColumnCount() {
+	return trafficHasMultipleOrigins ? 9 : 8;
+}
+
 async function loadTraffic() {
+	const requestId = ++trafficRequestId;
 	const state = tableState.traffic;
-	setTableLoading("events", 9);
+	setTableLoading("events", trafficColumnCount());
 	updateSortIndicators("panel-traffic", state);
 	try {
 		const result = await api(
@@ -392,19 +406,26 @@ async function loadTraffic() {
 				...rangeQuery(),
 			})}`,
 		);
+		if (requestId !== trafficRequestId) return;
 		if (result.page > result.totalPages) {
 			state.page = result.totalPages;
 			return await loadTraffic();
 		}
 		const originSelect = byId("eventOrigin");
 		const selectedOriginId = originSelect.value;
-		originSelect.innerHTML = `<option value="">All origins</option>${(result.origins ?? [])
+		const origins = result.origins ?? [];
+		originSelect.innerHTML = `<option value="">All origins</option>${origins
 			.map((origin) => `<option value="${escapeHtml(origin.id)}">${escapeHtml(origin.name)}</option>`)
 			.join("")}`;
-		if ([...originSelect.options].some((option) => option.value === selectedOriginId)) originSelect.value = selectedOriginId;
+		setTrafficOriginVisibility(origins);
+		if (trafficHasMultipleOrigins && [...originSelect.options].some((option) => option.value === selectedOriginId)) originSelect.value = selectedOriginId;
+		if (!trafficHasMultipleOrigins && selectedOriginId) {
+			state.page = 1;
+			return await loadTraffic();
+		}
 		byId("events").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="9" class="empty-cell">No traffic matches these filters.</td></tr>'
+				? `<tr><td colspan="${trafficColumnCount()}" class="empty-cell">No traffic matches these filters.</td></tr>`
 				: result.items
 						.map(
 							(event) => `<tr>
@@ -413,7 +434,7 @@ async function loadTraffic() {
           <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
-          <td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>
+          ${trafficHasMultipleOrigins ? `<td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>` : ""}
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
           <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
           <td>${formatDuration(event.latency_ms)}</td>
@@ -422,7 +443,8 @@ async function loadTraffic() {
 						.join("");
 		updatePagination("events", result, loadTraffic);
 	} catch (error) {
-		setTableError("events", 9, error);
+		if (requestId !== trafficRequestId) return;
+		setTableError("events", trafficColumnCount(), error);
 	}
 }
 
@@ -1073,6 +1095,7 @@ function resetSiteScopedPages() {
 	tableState.sessions.page = 1;
 	tableState.rules.page = 1;
 	byId("eventOrigin").value = "";
+	setTrafficOriginVisibility();
 	latestMetrics = null;
 	routePolicies = [];
 	accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
