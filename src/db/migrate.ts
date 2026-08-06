@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS request_events (
   latency_ms INTEGER NOT NULL,
   country_code VARCHAR(2) NULL,
   origin_id VARCHAR(64) NULL,
+	cache_status VARCHAR(16) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -380,6 +381,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_origin_created ON request_events (site_id, origin_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_cache_created ON request_events (site_id, cache_status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -517,10 +519,15 @@ async function ensureAccessSessionColumns(): Promise<void> {
 }
 
 async function ensureRequestEventColumns(): Promise<void> {
-	try {
-		await db.unsafe("ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL");
-	} catch (error) {
-		if (!duplicateColumnError(error)) throw error;
+	for (const statement of [
+		"ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL",
+		"ALTER TABLE request_events ADD COLUMN cache_status VARCHAR(16) NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
 	}
 }
 

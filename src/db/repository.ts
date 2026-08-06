@@ -49,12 +49,13 @@ export interface EventQuery {
 	pageSize: number;
 	search?: string;
 	decision?: string;
+	cacheStatus?: "hit" | "miss" | "bypass";
 	method?: string;
 	statusGroup?: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
 	countryCode?: string;
 	since?: number;
 	until?: number;
-	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "latency_ms";
+	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "cache_status" | "latency_ms";
 	sortDirection: SortDirection;
 }
 
@@ -167,6 +168,25 @@ export interface TrafficMetricPoint {
 	blocked: number;
 	errors: number;
 	averageLatency: number;
+}
+
+export interface CacheMetricPoint {
+	bucket: number;
+	hits: number;
+	misses: number;
+	bypasses: number;
+	hitRatio: number;
+}
+
+export function fillCacheMetricSeries(rows: CacheMetricPoint[], startBucket: number, endTime: number, bucketMs: number): CacheMetricPoint[] {
+	const firstBucket = Math.floor(startBucket / bucketMs) * bucketMs;
+	const endBucket = Math.floor(endTime / bucketMs) * bucketMs;
+	const byBucket = new Map(rows.map((row) => [row.bucket, row]));
+	const completed: CacheMetricPoint[] = [];
+	for (let bucket = firstBucket; bucket <= endBucket; bucket += bucketMs) {
+		completed.push(byBucket.get(bucket) ?? { bucket, hits: 0, misses: 0, bypasses: 0, hitRatio: 0 });
+	}
+	return completed;
 }
 
 export function fillTrafficMetricSeries(rows: TrafficMetricPoint[], startBucket: number, endTime: number, bucketMs: number): TrafficMetricPoint[] {
@@ -623,7 +643,7 @@ export const repository = {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.created_at})`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -654,9 +674,10 @@ export const repository = {
 		const pattern = searchPattern(query.search);
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
+			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(cache_status,'')) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
+		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;
 		const originFilter = query.originId ? db`AND origin_id=${query.originId}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
@@ -678,11 +699,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as RequestEventRecord[];
@@ -744,6 +765,86 @@ export const repository = {
 			),
 			decisions: decisions.map((row) => ({ decision: row.decision, count: toNumber(row.count) })),
 			methods: methods.map((row) => ({ method: row.method, count: toNumber(row.count) })),
+		};
+	},
+	async cacheMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: CacheMetricPoint[];
+		totals: { hits: number; misses: number; bypasses: number; hitRatio: number; originRequestsAvoided: number };
+		topPaths: Array<{ path: string; hits: number; misses: number; bypasses: number; hitRatio: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const bucketExpression = metricBucketExpression("created_at", bucketMs);
+		const rows = (await db`
+      SELECT
+        ${bucketExpression} * ${bucketMs} AS bucket,
+        SUM(CASE WHEN cache_status='hit' THEN 1 ELSE 0 END) AS hits,
+        SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS misses,
+        SUM(CASE WHEN cache_status='bypass' THEN 1 ELSE 0 END) AS bypasses
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter}
+      GROUP BY ${bucketExpression}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; hits: number | string; misses: number | string; bypasses: number | string }>;
+		const series = fillCacheMetricSeries(
+			rows.map((row) => {
+				const hits = toNumber(row.hits);
+				const misses = toNumber(row.misses);
+				return {
+					bucket: toNumber(row.bucket),
+					hits,
+					misses,
+					bypasses: toNumber(row.bypasses),
+					hitRatio: hits + misses > 0 ? (hits / (hits + misses)) * 100 : 0,
+				};
+			}),
+			since,
+			until,
+			bucketMs,
+		);
+		const totals = series.reduce(
+			(result, point) => {
+				result.hits += point.hits;
+				result.misses += point.misses;
+				result.bypasses += point.bypasses;
+				return result;
+			},
+			{ hits: 0, misses: 0, bypasses: 0 },
+		);
+		const paths = (await db`
+      SELECT
+        path,
+        SUM(CASE WHEN cache_status='hit' THEN 1 ELSE 0 END) AS hits,
+        SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS misses,
+        SUM(CASE WHEN cache_status='bypass' THEN 1 ELSE 0 END) AS bypasses
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter}
+      GROUP BY path
+      ORDER BY hits DESC, misses DESC
+      LIMIT 10
+    `) as Array<{ path: string; hits: number | string; misses: number | string; bypasses: number | string }>;
+		return {
+			series,
+			totals: {
+				...totals,
+				hitRatio: totals.hits + totals.misses > 0 ? totals.hits / (totals.hits + totals.misses) : 0,
+				originRequestsAvoided: totals.hits,
+			},
+			topPaths: paths.map((row) => {
+				const hits = toNumber(row.hits);
+				const misses = toNumber(row.misses);
+				return {
+					path: row.path,
+					hits,
+					misses,
+					bypasses: toNumber(row.bypasses),
+					hitRatio: hits + misses > 0 ? hits / (hits + misses) : 0,
+				};
+			}),
 		};
 	},
 	async bandwidthMetrics(
@@ -1211,6 +1312,8 @@ export const repository = {
         COUNT(*) AS requests,
         SUM(CASE WHEN decision IN ('blocked','route-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
+		SUM(CASE WHEN cache_status='hit' THEN 1 ELSE 0 END) AS cache_hits,
+		SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS cache_misses,
         COUNT(DISTINCT ip) AS unique_ips,
         COALESCE(AVG(latency_ms),0) AS average_latency
       FROM request_events
@@ -1219,6 +1322,8 @@ export const repository = {
 			requests: number | string;
 			blocked: number | string;
 			errors: number | string;
+			cache_hits: number | string;
+			cache_misses: number | string;
 			unique_ips: number | string;
 			average_latency: number | string;
 		}>;
@@ -1235,9 +1340,12 @@ export const repository = {
 			}>;
 		const requests = toNumber(eventStats?.requests);
 		const errors = toNumber(eventStats?.errors);
+		const cacheHits = toNumber(eventStats?.cache_hits);
+		const cacheMisses = toNumber(eventStats?.cache_misses);
 		return {
 			activeSessions: toNumber(sessions?.count),
 			activeRules: toNumber(ipRules?.count) + toNumber(countryRules?.count),
+			cacheHitRatio: cacheHits + cacheMisses > 0 ? cacheHits / (cacheHits + cacheMisses) : 0,
 			blocked24h: toNumber(eventStats?.blocked),
 			requests24h: requests,
 			challenges24h: toNumber(challenges?.count),

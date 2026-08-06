@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fillTrafficMetricSeries, type TrafficMetricPoint } from "../src/db/repository.ts";
+import { fillCacheMetricSeries, fillTrafficMetricSeries, type CacheMetricPoint, type TrafficMetricPoint } from "../src/db/repository.ts";
 
 function point(bucket: number, requests: number): TrafficMetricPoint {
 	return { bucket, requests, blocked: 0, errors: 0, averageLatency: requests ? 25 : 0 };
@@ -32,5 +32,22 @@ describe("traffic metric bucket completion", () => {
 
 		expect(series.map((item) => item.bucket)).toEqual([bucketStart, bucketStart + minute]);
 		expect(series.map((item) => item.requests)).toEqual([3, 0]);
+	});
+});
+
+describe("cache metric bucket completion", () => {
+	test("fills missing buckets without changing recorded hit ratios", () => {
+		const minute = 60_000;
+		const start = Date.UTC(2026, 7, 6, 12, 0, 0);
+		const rows: CacheMetricPoint[] = [
+			{ bucket: start, hits: 3, misses: 1, bypasses: 2, hitRatio: 75 },
+			{ bucket: start + 2 * minute, hits: 1, misses: 1, bypasses: 0, hitRatio: 50 },
+		];
+		const series = fillCacheMetricSeries(rows, start + 10_000, start + 2 * minute + 30_000, minute);
+
+		expect(series).toHaveLength(3);
+		expect(series[0]).toEqual(rows[0]);
+		expect(series[1]).toEqual({ bucket: start + minute, hits: 0, misses: 0, bypasses: 0, hitRatio: 0 });
+		expect(series[2]).toEqual(rows[1]);
 	});
 });

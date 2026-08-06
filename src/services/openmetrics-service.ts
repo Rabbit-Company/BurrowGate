@@ -68,6 +68,12 @@ export class BurrowGateOpenMetrics {
 	private readonly httpRequests: Counter;
 	private readonly httpRequestDuration: Histogram;
 	private readonly httpTransferred: Counter;
+	private readonly httpCacheRequests: Counter;
+	private readonly httpCacheStored: Counter;
+	private readonly httpCacheEvictions: Counter;
+	private readonly httpCacheServed: Counter;
+	private readonly httpCacheEntries: Gauge;
+	private readonly httpCacheBytes: Gauge;
 	private readonly streamEvents: Counter;
 	private readonly streamTransferred: Counter;
 	private readonly streamActiveConnections: Gauge;
@@ -123,6 +129,44 @@ export class BurrowGateOpenMetrics {
 			help: "HTTP and WebSocket payload bytes transferred",
 			unit: "bytes",
 			labelNames: ["site_id", "protocol", "direction"],
+			registry: this.registry,
+		});
+		this.httpCacheRequests = new Counter({
+			name: "http_cache_requests",
+			help: "Static asset cache lookups by outcome",
+			labelNames: ["site_id", "outcome"],
+			registry: this.registry,
+		});
+		this.httpCacheStored = new Counter({
+			name: "http_cache_stored",
+			help: "Static asset responses stored in cache",
+			labelNames: ["site_id"],
+			registry: this.registry,
+		});
+		this.httpCacheEvictions = new Counter({
+			name: "http_cache_evictions",
+			help: "Static asset cache entries removed by reason",
+			labelNames: ["site_id", "reason"],
+			registry: this.registry,
+		});
+		this.httpCacheServed = new Counter({
+			name: "http_cache_served",
+			help: "Static asset bytes served from cache",
+			unit: "bytes",
+			labelNames: ["site_id"],
+			registry: this.registry,
+		});
+		this.httpCacheEntries = new Gauge({
+			name: "http_cache_entries",
+			help: "Current static asset cache entry count",
+			labelNames: ["site_id"],
+			registry: this.registry,
+		});
+		this.httpCacheBytes = new Gauge({
+			name: "http_cache_size",
+			help: "Current static asset cache body size",
+			unit: "bytes",
+			labelNames: ["site_id"],
 			registry: this.registry,
 		});
 		this.streamEvents = new Counter({
@@ -287,6 +331,26 @@ export class BurrowGateOpenMetrics {
 			const amount = positive(value);
 			if (amount > 0) this.httpTransferred.labels({ site_id: context.siteId, protocol: context.protocol, direction }).inc(amount);
 		}
+	}
+
+	recordHttpCacheRequest(siteId: string, outcome: "hit" | "miss" | "bypass", bytesServed = 0): void {
+		if (!this.enabled) return;
+		this.httpCacheRequests.labels({ site_id: siteId, outcome }).inc();
+		if (bytesServed > 0) this.httpCacheServed.labels({ site_id: siteId }).inc(bytesServed);
+	}
+
+	recordHttpCacheStore(siteId: string): void {
+		if (this.enabled) this.httpCacheStored.labels({ site_id: siteId }).inc();
+	}
+
+	recordHttpCacheEviction(siteId: string, reason: "capacity" | "expired" | "purge", count = 1): void {
+		if (this.enabled && count > 0) this.httpCacheEvictions.labels({ site_id: siteId, reason }).inc(count);
+	}
+
+	setHttpCacheStorage(siteId: string, entries: number, bytes: number): void {
+		if (!this.enabled) return;
+		this.httpCacheEntries.labels({ site_id: siteId }).set(Math.max(0, entries));
+		this.httpCacheBytes.labels({ site_id: siteId }).set(Math.max(0, bytes));
 	}
 
 	recordStreamEvent(event: StreamEventRecord): void {

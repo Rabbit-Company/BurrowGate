@@ -34,7 +34,7 @@ import { TlsListenerManager } from "./services/tls-listener-service.ts";
 import type { GatewayState } from "./types.ts";
 import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
-import { startBandwidthMetrics } from "./services/bandwidth-service.ts";
+import { meteredBody, startBandwidthMetrics } from "./services/bandwidth-service.ts";
 import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
@@ -42,6 +42,7 @@ import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-se
 import { originHealthManager } from "./services/origin-health-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
 import { requestLimitViolation } from "./services/http-policy-service.ts";
+import { staticAssetCache } from "./services/static-cache-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -353,6 +354,30 @@ async function gateway(ctx: any): Promise<Response> {
 			: accessStatus === "bypass"
 				? "proxied-unprotected"
 				: "proxied";
+	const cacheLookup = staticAssetCache.lookup(request, site, route.policy, route.http.cache);
+	const cacheStatus = cacheLookup.outcome === "disabled" ? null : cacheLookup.outcome;
+	if (cacheLookup.outcome === "hit" && cacheLookup.response) {
+		const cached = cacheLookup.response;
+		const cachedBody = meteredBody(cached.body, { siteId: site.id, ip, countryCode: eventBase.countryCode ?? null, protocol: "http" }, (bytes) => ({
+			clientSentBytes: bytes,
+		}));
+		let response = new Response(cachedBody, { status: cached.status, statusText: cached.statusText, headers: cached.headers });
+		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
+			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));
+		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
+			response = appendSetCookies(response, clearAccessIdentityCookies(request));
+		}
+		await recordEvent({
+			...eventBase,
+			sessionId: session?.id ?? null,
+			status: response.status,
+			decision,
+			cacheStatus,
+			originId: cacheLookup.originId ?? null,
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return appendRateLimitHeaders(response, rateLimit.headers);
+	}
 	let selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip);
 	if (!selectedOrigin) {
 		await recordEvent({
@@ -360,6 +385,7 @@ async function gateway(ctx: any): Promise<Response> {
 			sessionId: session?.id ?? null,
 			status: 503,
 			decision: "origin-pool-unavailable",
+			cacheStatus,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return siteErrorResponse(site, request, {
@@ -400,6 +426,7 @@ async function gateway(ctx: any): Promise<Response> {
 			response = await proxySelectedOrigin();
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		}
+		response = staticAssetCache.observeResponse(request, response, cacheLookup, site, route.policy, route.http.cache, selectedOrigin.id);
 		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
 			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));
 		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
@@ -410,6 +437,7 @@ async function gateway(ctx: any): Promise<Response> {
 			sessionId: session?.id ?? null,
 			status: response.status,
 			decision,
+			cacheStatus,
 			originId: selectedOrigin.id,
 			latencyMs: Math.round(performance.now() - started),
 		});
@@ -421,6 +449,7 @@ async function gateway(ctx: any): Promise<Response> {
 				sessionId: session?.id ?? null,
 				status: 413,
 				decision: "request-limited",
+				cacheStatus,
 				originId: selectedOrigin.id,
 				latencyMs: Math.round(performance.now() - started),
 			});
@@ -439,6 +468,7 @@ async function gateway(ctx: any): Promise<Response> {
 			sessionId: session?.id ?? null,
 			status: 502,
 			decision: "origin-error",
+			cacheStatus,
 			originId: selectedOrigin.id,
 			latencyMs: Math.round(performance.now() - started),
 		});

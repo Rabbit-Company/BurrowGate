@@ -28,6 +28,7 @@ import { DEFAULT_CHALLENGE_HTML_TEMPLATE, validateChallengeHtmlTemplate } from "
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
 import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } from "./http-policy-service.ts";
+import { staticAssetCache } from "./static-cache-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -491,6 +492,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		throw new Error("The active certificate does not cover the new public hostname. Replace or remove the certificate before changing this hostname.");
 	}
 	await repository.updateSite(updated);
+	staticAssetCache.purge({ siteId: id });
 	const primary = await repository.primaryOrigin(id);
 	if (primary && (primary.origin_url !== updated.origin_url || (primary.name.endsWith(" primary") && primary.name !== `${updated.name} primary`))) {
 		await repository.updateOrigin({

@@ -52,6 +52,8 @@ import { originHealthManager } from "../services/origin-health-service.ts";
 import { loadBalancer } from "../services/load-balancer-service.ts";
 import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
 import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
+import { staticAssetCache } from "../services/static-cache-service.ts";
+import { instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -206,6 +208,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
 			websocketDefaults: instanceWebSocketDefaults(),
+			httpCacheDefaults: instanceStaticCacheDefaults(),
 			errorResponseDefaults: {
 				mode: "json",
 				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,
@@ -294,6 +297,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		for (const policy of policies) invalidateRouteRateLimiter(policy.id);
 		loadBalancer.removeSite(site.id);
 		originHealthManager.removeSite(site.id);
+		staticAssetCache.removeSite(site.id);
 		const tlsReload = await Promise.allSettled([requestTlsReload()]);
 		const warning =
 			tlsReload[0]?.status === "rejected" ? "The site was deleted, but TLS listener reload failed. Restart BurrowGate to refresh active certificates." : null;
@@ -341,6 +345,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		try {
 			const origin = await createOrigin(ctx.params.id, await parseOriginInput(ctx.req));
+			staticAssetCache.purge({ siteId: ctx.params.id });
 			await loadBalancer.refreshSite(ctx.params.id);
 			await originHealthManager.refreshSite(ctx.params.id);
 			return jsonResponse({ origin: originView(origin) }, 201);
@@ -357,6 +362,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const existing = await repository.originById(ctx.params.id);
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
 			const origin = await updateOrigin(existing.site_id, ctx.params.id, await parseOriginInput(ctx.req));
+			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
 			await originHealthManager.refreshSite(existing.site_id);
 			return jsonResponse({ origin: originView(origin) });
@@ -373,6 +379,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const existing = await repository.originById(ctx.params.id);
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
 			await deleteOrigin(existing.site_id, ctx.params.id);
+			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
 			await originHealthManager.refreshSite(existing.site_id);
 			return jsonResponse({ deleted: true });
@@ -460,6 +467,47 @@ export function registerAdminRoutes(app: Web<any>): void {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to delete route policy";
 			return jsonResponse({ error: message }, message === "Route policy not found" ? 404 : 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/cache", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ metrics: staticAssetCache.metrics(), site: null });
+		return jsonResponse({ metrics: staticAssetCache.metrics(selection.site.id), site: siteView(selection.site) });
+	});
+
+	app.post("/_burrowgate/api/admin/cache/purge", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		try {
+			const raw = (await ctx.req.json()) as unknown;
+			if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Cache purge payload must be an object");
+			const body = raw as Record<string, unknown>;
+			if (body.allSites === true) {
+				const purged = staticAssetCache.purge();
+				return jsonResponse({ purged, metrics: staticAssetCache.metrics() });
+			}
+			const selection = await selectedSite(new URL(ctx.req.url));
+			if (selection.error) return selection.error;
+			if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+			const routePolicyId = String(body.routePolicyId ?? "").trim() || undefined;
+			if (routePolicyId && !(await repository.routePolicyById(routePolicyId, selection.site.id))) {
+				return jsonResponse({ error: "Route policy was not found for the selected site" }, 404);
+			}
+			const pathPrefix = String(body.pathPrefix ?? "").trim() || undefined;
+			if (
+				pathPrefix &&
+				(!pathPrefix.startsWith("/") || pathPrefix.startsWith("//") || pathPrefix.length > 2_048 || pathPrefix.includes("?") || pathPrefix.includes("#"))
+			) {
+				throw new Error("Cache purge path must begin with one slash and be at most 2048 characters");
+			}
+			const purged = staticAssetCache.purge({ siteId: selection.site.id, routePolicyId, pathPrefix });
+			return jsonResponse({ purged, metrics: staticAssetCache.metrics(selection.site.id) });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to purge static cache" }, 400);
 		}
 	});
 
@@ -587,7 +635,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const denied = await guard(ctx.req);
 		if (denied) return denied;
 		const url = new URL(ctx.req.url);
-		const section = enumParam(url, "section", ["traffic", "bandwidth", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
+		const section =
+			enumParam(url, "section", ["traffic", "bandwidth", "cache", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
 		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
@@ -605,6 +654,43 @@ export function registerAdminRoutes(app: Web<any>): void {
 			bucketMs,
 			bucketCount,
 		};
+
+		if (section === "cache") {
+			const metrics = await repository.cacheMetrics(selection.site?.id, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Cache outcomes",
+					subtitle: "Hits, misses, and bypassed requests per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "number",
+					emptyMessage: "No cache activity in this range.",
+					datasets: [
+						{ key: "hits", label: "Hits" },
+						{ key: "misses", label: "Misses" },
+						{ key: "bypasses", label: "Bypasses" },
+					],
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Cache hit ratio",
+					subtitle: "Hits as a percentage of cacheable lookups",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "percentage",
+					emptyMessage: "No cacheable lookups in this range.",
+					datasets: [{ key: "hitRatio", label: "Hit ratio" }],
+					data: metrics.series,
+				},
+				breakdown: [
+					{ label: "Hits", count: metrics.totals.hits },
+					{ label: "Misses", count: metrics.totals.misses },
+					{ label: "Bypasses", count: metrics.totals.bypasses },
+				],
+				cache: metrics,
+			});
+		}
 
 		if (section === "bandwidth") {
 			await flushBandwidthMetrics();
@@ -857,6 +943,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
+		const cacheStatus = enumParam(url, "cache", ["hit", "miss", "bypass"] as const);
 		const originId = stringParam(url, "origin");
 		const method = stringParam(url, "method");
 		const statusGroup = enumParam(url, "status", ["1xx", "2xx", "3xx", "4xx", "5xx"] as const);
@@ -869,12 +956,18 @@ export function registerAdminRoutes(app: Web<any>): void {
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				...(search ? { search } : {}),
 				...(decision ? { decision } : {}),
+				...(cacheStatus ? { cacheStatus } : {}),
 				...(method ? { method } : {}),
 				...(statusGroup ? { statusGroup } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
 				since: range.since,
 				until: range.until,
-				sortBy: enumParam(url, "sortBy", ["created_at", "ip", "country_code", "method", "path", "status", "decision", "latency_ms"] as const, "created_at")!,
+				sortBy: enumParam(
+					url,
+					"sortBy",
+					["created_at", "ip", "country_code", "method", "path", "status", "decision", "cache_status", "latency_ms"] as const,
+					"created_at",
+				)!,
 				sortDirection: sortDirection(url),
 			}),
 			selection.site ? repository.originsForSite(selection.site.id) : Promise.resolve([]),

@@ -1,3 +1,4 @@
+import { config } from "../config.ts";
 import type { RoutePolicyRecord, SiteRecord } from "../types.ts";
 
 export interface HeaderAssignment {
@@ -16,16 +17,57 @@ export interface RequestLimits {
 	maxHeaderBytes: number;
 }
 
+export type SiteStaticCacheMode = "disabled" | "enabled";
+export type RouteStaticCacheMode = "inherit" | SiteStaticCacheMode;
+
+export interface SiteStaticCachePolicy {
+	mode: SiteStaticCacheMode;
+	ttlSeconds: number;
+	maxObjectBytes: number;
+	extensions: string[];
+}
+
+export interface RouteStaticCachePolicy {
+	mode: RouteStaticCacheMode;
+	ttlSeconds: number | null;
+	maxObjectBytes: number | null;
+	extensions: string[] | null;
+}
+
+export const DEFAULT_STATIC_CACHE_EXTENSIONS = [
+	".css",
+	".js",
+	".mjs",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".avif",
+	".svg",
+	".ico",
+	".woff",
+	".woff2",
+	".ttf",
+	".otf",
+	".eot",
+	".wasm",
+	".txt",
+	".xml",
+] as const;
+
 export interface SiteHttpPolicyView {
 	requestHeaders: HeaderMutationPolicy;
 	responseHeaders: HeaderMutationPolicy;
 	limits: RequestLimits;
+	cache: SiteStaticCachePolicy;
 }
 
 export interface RouteHttpPolicyView {
 	requestHeaders: HeaderMutationPolicy;
 	responseHeaders: HeaderMutationPolicy;
 	limits: { [K in keyof RequestLimits]: number | null };
+	cache: RouteStaticCachePolicy;
 }
 
 export interface ResolvedHttpPolicy extends SiteHttpPolicyView {}
@@ -49,6 +91,7 @@ const limitDefinitions = {
 	maxRequestTargetBytes: { label: "Maximum request target", maximum: 1_048_576 },
 	maxHeaderBytes: { label: "Maximum request headers", maximum: 1_048_576 },
 } as const;
+const staticCacheObjectCeiling = Math.min(config.httpCache.maxObjectBytes, config.httpCache.maxBytes);
 
 // These fields control connection framing, origin routing, or BurrowGate's
 // authenticated forwarding boundary. They must remain proxy-owned.
@@ -92,13 +135,69 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 	requestHeaders: { set: [], remove: [] },
 	responseHeaders: { set: [], remove: [] },
 	limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
+	cache: {
+		mode: "disabled",
+		ttlSeconds: 3_600,
+		maxObjectBytes: Math.min(5 * 1_024 * 1_024, staticCacheObjectCeiling),
+		extensions: [...DEFAULT_STATIC_CACHE_EXTENSIONS],
+	},
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	requestHeaders: { set: [], remove: [] },
 	responseHeaders: { set: [], remove: [] },
 	limits: { maxBodyBytes: null, maxRequestTargetBytes: null, maxHeaderBytes: null },
+	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
 });
+
+function cacheMode(value: unknown, route: boolean, fallback: SiteStaticCacheMode | RouteStaticCacheMode): SiteStaticCacheMode | RouteStaticCacheMode {
+	if (value === undefined) return fallback;
+	const mode = String(value).trim().toLowerCase();
+	if (mode === "enabled" || mode === "disabled" || (route && mode === "inherit")) return mode as SiteStaticCacheMode | RouteStaticCacheMode;
+	throw new Error(`Static cache mode must be ${route ? "inherit, enabled, or disabled" : "enabled or disabled"}`);
+}
+
+function cacheInteger(value: unknown, label: string, fallback: number | null, minimum: number, maximum: number, nullable: boolean): number | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	const result = value === undefined ? fallback : Number(value);
+	if (!Number.isSafeInteger(result) || Number(result) < minimum || Number(result) > maximum) {
+		throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
+	}
+	return Number(result);
+}
+
+function cacheExtensions(value: unknown, nullable: boolean, fallback: readonly string[] | null): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/u);
+	const extensions = [...new Set(raw.map((item) => String(item).trim().toLowerCase()).filter(Boolean))];
+	if (extensions.length < 1 || extensions.length > 64) throw new Error("Static cache extensions must contain from 1 to 64 values");
+	for (const extension of extensions) {
+		if (extension.length > 32 || !/^\.[a-z0-9][a-z0-9._-]*$/u.test(extension)) throw new Error(`Invalid static cache extension: ${extension}`);
+	}
+	return extensions;
+}
+
+function parseSiteCache(value: unknown): SiteStaticCachePolicy {
+	const defaults = defaultSitePolicy().cache;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: cacheMode(input.mode, false, defaults.mode) as SiteStaticCacheMode,
+		ttlSeconds: cacheInteger(input.ttlSeconds, "Static cache TTL", defaults.ttlSeconds, 1, 604_800, false)!,
+		maxObjectBytes: cacheInteger(input.maxObjectBytes, "Static cache maximum object size", defaults.maxObjectBytes, 1_024, staticCacheObjectCeiling, false)!,
+		extensions: cacheExtensions(input.extensions, false, defaults.extensions)!,
+	};
+}
+
+function parseRouteCache(value: unknown): RouteStaticCachePolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: cacheMode(input.mode, true, "inherit") as RouteStaticCacheMode,
+		ttlSeconds: cacheInteger(input.ttlSeconds, "Route static cache TTL", null, 1, 604_800, true),
+		maxObjectBytes: cacheInteger(input.maxObjectBytes, "Route static cache maximum object size", null, 1_024, staticCacheObjectCeiling, true),
+		extensions: cacheExtensions(input.extensions, true, null),
+	};
+}
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -129,6 +228,9 @@ function assertMutableHeader(name: string, direction: "request" | "response", op
 	}
 	if (direction === "response" && operation === "set" && protectedResponseSetHeaders.has(name)) {
 		throw new Error(`Response header ${name} cannot be set by a header policy`);
+	}
+	if (direction === "response" && operation === "set" && name === "x-burrowgate-cache") {
+		throw new Error("Response header x-burrowgate-cache is managed by BurrowGate and cannot be changed");
 	}
 }
 
@@ -181,6 +283,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 			maxRequestTargetBytes: limitValue("maxRequestTargetBytes", limits.maxRequestTargetBytes, false)!,
 			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, false)!,
 		},
+		cache: parseSiteCache(input.cache),
 	};
 }
 
@@ -195,6 +298,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 			maxRequestTargetBytes: limitValue("maxRequestTargetBytes", limits.maxRequestTargetBytes, true),
 			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, true),
 		},
+		cache: parseRouteCache(input.cache),
 	};
 }
 
@@ -220,11 +324,13 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const value = objectValue(input, "Site HTTP policy");
 	const current = storedSitePolicy(existing);
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Site request limits");
+	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Site static cache policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
+			cache: { ...current.cache, ...suppliedCache },
 		}),
 	);
 }
@@ -235,11 +341,13 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const value = objectValue(input, "Route HTTP policy");
 	const current = storedRoutePolicy(existing);
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Route request limits");
+	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Route static cache policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
+			cache: { ...current.cache, ...suppliedCache },
 		}),
 	);
 }
@@ -277,6 +385,12 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			maxRequestTargetBytes: routePolicy.limits.maxRequestTargetBytes ?? sitePolicy.limits.maxRequestTargetBytes,
 			maxHeaderBytes: routePolicy.limits.maxHeaderBytes ?? sitePolicy.limits.maxHeaderBytes,
 		},
+		cache: {
+			mode: routePolicy.cache.mode === "inherit" ? sitePolicy.cache.mode : routePolicy.cache.mode,
+			ttlSeconds: routePolicy.cache.ttlSeconds ?? sitePolicy.cache.ttlSeconds,
+			maxObjectBytes: Math.min(routePolicy.cache.maxObjectBytes ?? sitePolicy.cache.maxObjectBytes, config.httpCache.maxObjectBytes, config.httpCache.maxBytes),
+			extensions: routePolicy.cache.extensions ?? sitePolicy.cache.extensions,
+		},
 	};
 }
 
@@ -308,4 +422,13 @@ export function requestLimitViolation(request: Request, limits: RequestLimits): 
 		}
 	}
 	return null;
+}
+
+export function instanceStaticCacheDefaults(): SiteStaticCachePolicy & { maxEntries: number; maxBytes: number; instanceMaxObjectBytes: number } {
+	return {
+		...defaultSitePolicy().cache,
+		maxEntries: config.httpCache.maxEntries,
+		maxBytes: config.httpCache.maxBytes,
+		instanceMaxObjectBytes: staticCacheObjectCeiling,
+	};
 }

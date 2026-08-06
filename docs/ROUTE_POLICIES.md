@@ -108,3 +108,23 @@ shared global limit.
 
 WebSocket policies apply to the HTTP upgrade request. They do not currently limit
 individual WebSocket messages.
+
+## Static asset cache overrides
+
+The site HTTP policy defines the default static-cache mode, maximum TTL, maximum
+object size, and allowed file extensions. A route can inherit, enable, or disable
+caching and independently override the other values. A blank route value inherits
+the site value.
+
+Caching never bypasses network policy, browser verification, access authentication,
+or route rate limiting. Only the origin fetch is skipped on a cache hit. Range,
+conditional, authorized, and application-cookie requests bypass the cache, and
+unsafe origin responses are never stored. Use the route editor's **Purge policy
+cache** action after an application deployment when asset URLs are not content
+hashed.
+
+Historical outcomes and top paths, current in-memory usage, and site/path/global
+purge controls are available in the dashboard's **Cache** tab. Recent Traffic
+stores and filters cache status separately from its access decision: `hit`, `miss`,
+or `bypass` is shown without replacing verified, authenticated, allowlisted, or
+unprotected request classification.

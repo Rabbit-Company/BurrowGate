@@ -11,6 +11,10 @@ describe("OpenMetrics exporter", () => {
 			decision: "proxied",
 			latencyMs: 25,
 		});
+		metrics.recordHttpCacheRequest("site-1", "hit", 512);
+		metrics.recordHttpCacheStore("site-1");
+		metrics.recordHttpCacheEviction("site-1", "capacity", 2);
+		metrics.setHttpCacheStorage("site-1", 3, 1_024);
 		metrics.recordStreamBandwidth(
 			{ streamId: "stream-1", incomingPort: 443, ip: "203.0.113.10", countryCode: "SI", protocol: "tcp" },
 			{ clientToUpstreamBytes: 42 },
@@ -23,6 +27,10 @@ describe("OpenMetrics exporter", () => {
 		const output = metrics.metricsText();
 		expect(output).toContain('burrowgate_build_info{environment="test",version="test-version"} 1');
 		expect(output).toContain('decision="proxied",method="OTHER",site_id="site-1",status_class="2xx"');
+		expect(output).toContain('burrowgate_http_cache_requests_total{outcome="hit",site_id="site-1"} 1');
+		expect(output).toContain('burrowgate_http_cache_served_bytes_total{site_id="site-1"} 512');
+		expect(output).toContain('burrowgate_http_cache_entries{site_id="site-1"} 3');
+		expect(output).toContain('burrowgate_http_cache_size_bytes{site_id="site-1"} 1024');
 		expect(output).toContain('direction="client_to_upstream",protocol="tcp",stream_id="stream-1"} 42');
 		expect(output).toContain('burrowgate_origin_health_state{site_id="site-1",state="unhealthy"} 1');
 		expect(output).toContain('burrowgate_origin_backend_health_state{origin_id="origin-1",site_id="site-1",state="unhealthy"} 1');

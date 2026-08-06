@@ -89,6 +89,11 @@ export const config = {
 		flushIntervalMs: envNumber("BG_BANDWIDTH_FLUSH_INTERVAL_MS", 10_000, 1_000, 300_000),
 		maxPendingKeys: envNumber("BG_BANDWIDTH_MAX_PENDING_KEYS", 50_000, 100, 1_000_000),
 	},
+	httpCache: {
+		maxEntries: envNumber("BG_HTTP_CACHE_MAX_ENTRIES", 2_048, 1, 100_000),
+		maxBytes: envNumber("BG_HTTP_CACHE_MAX_BYTES", 256 * 1_024 * 1_024, 1 * 1_024 * 1_024, 16 * 1_024 * 1_024 * 1_024),
+		maxObjectBytes: envNumber("BG_HTTP_CACHE_MAX_OBJECT_BYTES", 32 * 1_024 * 1_024, 1_024, 1 * 1_024 * 1_024 * 1_024),
+	},
 	accessLoginMaxFailureKeys: envNumber("BG_ACCESS_LOGIN_MAX_FAILURE_KEYS", 50_000, 100, 1_000_000),
 	streams: {
 		connectTimeoutSeconds: envNumber("BG_STREAM_CONNECT_TIMEOUT_SECONDS", 15, 1, 300),

@@ -9,6 +9,7 @@ import { siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
 import { applyHeaderPolicy, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
+import { rememberOriginResponse } from "./static-cache-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
 // Content-Length even after the incoming body has passed through the proxy.
@@ -273,9 +274,12 @@ export async function proxyRequest(
 	const responseBody = meteredBody(response.body, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
-	return new Response(responseBody, {
-		status: response.status,
-		statusText: response.statusText,
-		headers: responseHeaders,
-	});
+	return rememberOriginResponse(
+		new Response(responseBody, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: responseHeaders,
+		}),
+		response,
+	);
 }

@@ -360,6 +360,8 @@ export interface CountryRuleRecord {
 	expires_at: number | null;
 }
 
+export type HttpCacheStatus = "hit" | "miss" | "bypass";
+
 export interface RequestEventRecord {
 	id: string;
 	site_id: string;
@@ -372,6 +374,7 @@ export interface RequestEventRecord {
 	latency_ms: number;
 	country_code: string | null;
 	origin_id?: string | null;
+	cache_status: HttpCacheStatus | null;
 	created_at: number;
 }
 

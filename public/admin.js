@@ -30,6 +30,33 @@ let websocketDefaults = {
 	preOpenQueueBytes: 1048576,
 	upstreamBufferBytes: 16777216,
 };
+let httpCacheDefaults = {
+	mode: "disabled",
+	ttlSeconds: 3600,
+	maxObjectBytes: 5242880,
+	extensions: [
+		".css",
+		".js",
+		".mjs",
+		".png",
+		".jpg",
+		".jpeg",
+		".gif",
+		".webp",
+		".avif",
+		".svg",
+		".ico",
+		".woff",
+		".woff2",
+		".ttf",
+		".otf",
+		".eot",
+		".wasm",
+		".txt",
+		".xml",
+	],
+	instanceMaxObjectBytes: 33554432,
+};
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
@@ -109,6 +136,19 @@ function formatHeaderNames(names) {
 	return (names ?? []).join("\n");
 }
 
+function parseCacheExtensions(id, nullable) {
+	const extensions = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toLowerCase())
+				.filter(Boolean),
+		),
+	];
+	if (extensions.length > 0) return extensions;
+	return nullable ? null : [...httpCacheDefaults.extensions];
+}
+
 function readHttpPolicy(prefix, routeOverrides) {
 	return {
 		requestHeaders: {
@@ -124,6 +164,19 @@ function readHttpPolicy(prefix, routeOverrides) {
 			maxRequestTargetBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxRequestTargetBytes`) : Number(byId(`${prefix}MaxRequestTargetBytes`).value),
 			maxHeaderBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxHeaderBytes`) : Number(byId(`${prefix}MaxHeaderBytes`).value),
 		},
+		cache: routeOverrides
+			? {
+					mode: byId(`${prefix}CacheMode`).value,
+					ttlSeconds: optionalNumberInput(`${prefix}CacheTtl`),
+					maxObjectBytes: optionalNumberInput(`${prefix}CacheMaxObject`),
+					extensions: parseCacheExtensions(`${prefix}CacheExtensions`, true),
+				}
+			: {
+					mode: byId(`${prefix}CacheEnabled`).checked ? "enabled" : "disabled",
+					ttlSeconds: Number(byId(`${prefix}CacheTtl`).value),
+					maxObjectBytes: Number(byId(`${prefix}CacheMaxObject`).value),
+					extensions: parseCacheExtensions(`${prefix}CacheExtensions`, false),
+				},
 	};
 }
 
@@ -141,6 +194,14 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 		const value = http.limits?.[key];
 		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? 0);
 	}
+	const cache = http.cache ?? (routeOverrides ? { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null } : httpCacheDefaults);
+	if (routeOverrides) byId(`${prefix}CacheMode`).value = cache.mode ?? "inherit";
+	else byId(`${prefix}CacheEnabled`).checked = cache.mode === "enabled";
+	byId(`${prefix}CacheTtl`).value = routeOverrides && cache.ttlSeconds == null ? "" : String(cache.ttlSeconds ?? httpCacheDefaults.ttlSeconds);
+	byId(`${prefix}CacheMaxObject`).value =
+		routeOverrides && cache.maxObjectBytes == null ? "" : String(cache.maxObjectBytes ?? httpCacheDefaults.maxObjectBytes);
+	byId(`${prefix}CacheExtensions`).value = cache.extensions?.join(", ") ?? "";
+	if (!routeOverrides) updateSiteHttpCacheControls();
 }
 
 function twoDigits(value) {
@@ -377,6 +438,7 @@ async function loadOverview() {
 	byId("errorsStatLabel").textContent = `5xx errors (${rangeLabel})`;
 	byId("latencyStatLabel").textContent = `Average latency (${rangeLabel})`;
 	byId("challengesStatLabel").textContent = `Challenges (${rangeLabel})`;
+	byId("cacheHitRatioStatLabel").textContent = `Cache hit ratio (${rangeLabel})`;
 
 	const overview = await api(`/overview?${queryString(rangeQuery())}`);
 	if (requestId !== overviewRequestId) return;
@@ -389,7 +451,7 @@ async function loadOverview() {
 		averageLatency24h: formatDuration(overview.averageLatency24h),
 		challenges24h: formatNumber(overview.challenges24h),
 		activeSessions: formatNumber(overview.activeSessions),
-		activeRules: formatNumber(overview.activeRules),
+		cacheHitRatioStat: `${(Number(overview.cacheHitRatio ?? 0) * 100).toFixed(2)}%`,
 	};
 	for (const [id, value] of Object.entries(formatted)) byId(id).textContent = value;
 
@@ -400,6 +462,7 @@ async function loadOverview() {
 	byId("errorsStatLabel").textContent = `5xx errors (${resolvedRangeLabel})`;
 	byId("latencyStatLabel").textContent = `Average latency (${resolvedRangeLabel})`;
 	byId("challengesStatLabel").textContent = `Challenges (${resolvedRangeLabel})`;
+	byId("cacheHitRatioStatLabel").textContent = `Cache hit ratio (${resolvedRangeLabel})`;
 	byId("errorRate24h").textContent = `${Number(overview.errorRate24h ?? 0).toFixed(2)}% error rate`;
 	byId("retentionNote").textContent =
 		`Only the selected page is loaded. Request events are retained for ${overview.retentionDays} day${overview.retentionDays === 1 ? "" : "s"}.`;
@@ -469,7 +532,7 @@ function setTrafficOriginVisibility(origins = []) {
 }
 
 function trafficColumnCount() {
-	return trafficHasMultipleOrigins ? 9 : 8;
+	return trafficHasMultipleOrigins ? 10 : 9;
 }
 
 async function loadTraffic() {
@@ -486,6 +549,7 @@ async function loadTraffic() {
 				sortDirection: state.sortDirection,
 				search: byId("eventSearch").value.trim(),
 				decision: byId("eventDecision").value,
+				cache: byId("eventCacheStatus").value,
 				method: byId("eventMethod").value,
 				status: byId("eventStatus").value,
 				origin: byId("eventOrigin").value,
@@ -524,6 +588,7 @@ async function loadTraffic() {
           ${trafficHasMultipleOrigins ? `<td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>` : ""}
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
           <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
+			<td>${event.cache_status ? `<span class="badge ${event.cache_status === "hit" ? "ok" : event.cache_status === "miss" ? "warn" : "info"}">${escapeHtml(event.cache_status)}</span>` : '<span class="muted">-</span>'}</td>
           <td>${formatDuration(event.latency_ms)}</td>
         </tr>`,
 						)
@@ -1066,6 +1131,60 @@ function updateSiteWebSocketControls() {
 	byId("siteWebSocketDisabledNotice").classList.toggle("hidden", websocketDefaults.available);
 }
 
+function updateSiteHttpCacheControls() {
+	byId("siteHttpCacheSettings").classList.toggle("hidden", !byId("siteHttpCacheEnabled").checked);
+}
+
+function openSelectedSiteCacheSettings() {
+	setActiveTab("sites");
+	if (selectedSiteId) editSite(selectedSiteId);
+	setSiteEditorTab("http");
+}
+
+function renderCacheMetrics(metrics) {
+	const value = metrics ?? {};
+	byId("cacheHitRatio").textContent = `${(Number(value.hitRatio ?? 0) * 100).toFixed(2)}%`;
+	byId("cacheLookups").textContent = `${formatNumber(value.hits)} / ${formatNumber(value.misses)}`;
+	byId("cacheEntries").textContent = `${formatNumber(value.entries)} / ${formatNumber(value.maxEntries)}`;
+	byId("cacheBytes").textContent = `${formatBytes(value.bytes)} / ${formatBytes(value.maxBytes)}`;
+	byId("cacheBypasses").textContent = formatNumber(value.bypasses);
+	byId("cacheStores").textContent = formatNumber(value.stores);
+	byId("cacheEvictions").textContent = `${formatNumber(value.evictions)} / ${formatNumber(value.expired)}`;
+	byId("cacheBytesServed").textContent = formatBytes(value.bytesServed);
+}
+
+async function loadCacheMetrics(siteId = selectedSiteId) {
+	if (!siteId) return;
+	const response = await api(`/cache?siteId=${encodeURIComponent(siteId)}`, {}, false);
+	if (selectedSiteId !== siteId) return;
+	renderCacheMetrics(response.metrics);
+}
+
+async function purgeSiteCache(allSites = false) {
+	const siteId = selectedSiteId;
+	if (!allSites && !siteId) return;
+	const pathPrefix = allSites ? "" : byId("cachePurgePath").value.trim();
+	const target = allSites ? "/cache/purge" : `/cache/purge?siteId=${encodeURIComponent(siteId)}`;
+	const result = await api(
+		target,
+		{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(allSites ? { allSites: true } : { pathPrefix }) },
+		false,
+	);
+	if (allSites) await loadCacheMetrics(siteId);
+	else renderCacheMetrics(result.metrics);
+	showToast(`Purged ${formatNumber(result.purged)} cached entr${result.purged === 1 ? "y" : "ies"}.`);
+}
+
+async function purgeRouteCache() {
+	if (!editingRoutePolicyId) return;
+	const result = await api("/cache/purge", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ routePolicyId: editingRoutePolicyId }),
+	});
+	showToast(`Purged ${formatNumber(result.purged)} cached entr${result.purged === 1 ? "y" : "ies"} for this route policy.`);
+}
+
 function resetSiteForm() {
 	editingSiteId = null;
 	byId("siteForm").reset();
@@ -1085,6 +1204,7 @@ function resetSiteForm() {
 	byId("siteWebSocketUpstreamBuffer").value = String(websocketDefaults.upstreamBufferBytes);
 	updateSiteWebSocketControls();
 	writeHttpPolicy("siteHttp", null, false);
+	byId("siteHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
 	byId("originPoolRuntime").classList.add("hidden");
 	siteOrigins = [];
 	resetOriginForm();
@@ -1152,6 +1272,7 @@ function editSite(id) {
 	byId("siteWebSocketUpstreamBuffer").value = String(websocket.upstreamBufferBytes ?? websocketDefaults.upstreamBufferBytes);
 	updateSiteWebSocketControls();
 	writeHttpPolicy("siteHttp", site.http, false);
+	byId("siteHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
 	byId("originPoolRuntime").classList.remove("hidden");
 	resetOriginForm();
 	const health = site.healthCheck ?? {};
@@ -1211,7 +1332,9 @@ async function loadSites() {
 	challengeProviders = response.challengeProviders ?? [];
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
+	httpCacheDefaults = response.httpCacheDefaults ?? httpCacheDefaults;
 	applyWebSocketInputLimits();
+	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
 	const firstErrorOptionsLoad = !errorResponseOptionsLoaded;
 	const previousErrorJsonFields = errorResponseOptionsLoaded ? selectedErrorJsonFields() : null;
 	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
@@ -1254,8 +1377,12 @@ function resetSiteScopedPages() {
 
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
-	for (const name of ["bandwidth", "sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
+	for (const name of ["bandwidth", "cache", "sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadTraffic()];
+	if (activeTab === "cache") {
+		loadedTabs.add("cache");
+		tasks.push(loadCacheMetrics());
+	}
 	if (activeTab === "bandwidth") {
 		loadedTabs.add("bandwidth");
 		tasks.push(loadBandwidth());
@@ -1459,7 +1586,7 @@ function renderRoutePolicies() {
     <div class="route-policy-main">
       <div class="site-list-title"><strong>${escapeHtml(policy.name)}</strong><span class="badge ${policy.enabled ? "ok" : "warn"}">${policy.enabled ? "enabled" : "disabled"}</span><span class="badge ${policy.accessMode === "block" ? "bad" : policy.accessMode === "challenge" ? "warn" : "info"}">${escapeHtml(routeAccessLabel(policy.accessMode))}</span></div>
       <div class="route-policy-pattern"><code>${escapeHtml(policy.pathPattern)}</code><span>${policy.methods.length ? escapeHtml(policy.methods.join(", ")) : "All methods"}</span><span>Priority ${formatNumber(policy.priority)}</span></div>
-      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
+      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>Cache: ${escapeHtml(policy.http?.cache?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-route-edit="${escapeHtml(policy.id)}">Edit</button><button class="button danger compact" type="button" data-route-delete="${escapeHtml(policy.id)}">Delete</button></div>
   </div>`,
@@ -1495,6 +1622,8 @@ function resetRoutePolicyForm() {
 	byId("routeWebSocketPreOpenQueue").value = "";
 	byId("routeWebSocketUpstreamBuffer").value = "";
 	writeHttpPolicy("routeHttp", null, true);
+	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("purgeRouteCache").classList.add("hidden");
 	byId("routeRateEnabled").checked = false;
 	byId("routeRateAlgorithm").value = "sliding-window";
 	byId("routeRateMax").value = "120";
@@ -1532,6 +1661,8 @@ function editRoutePolicy(id) {
 	byId("routeWebSocketPreOpenQueue").value = websocket.preOpenQueueBytes ?? "";
 	byId("routeWebSocketUpstreamBuffer").value = websocket.upstreamBufferBytes ?? "";
 	writeHttpPolicy("routeHttp", policy.http, true);
+	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("purgeRouteCache").classList.remove("hidden");
 	byId("routeRateEnabled").checked = Boolean(policy.rateLimit.enabled);
 	byId("routeRateAlgorithm").value = policy.rateLimit.algorithm;
 	byId("routeRateMax").value = String(policy.rateLimit.max);
@@ -1930,12 +2061,17 @@ function metricLabel(bucket, rangeDurationMs, detailed = false) {
 function metricValueFormatter(format) {
 	if (format === "duration") return (value) => formatDuration(Number(value));
 	if (format === "bytes") return (value) => formatBytes(Number(value));
+	if (format === "percentage") return (value) => `${Number(value).toFixed(1)}%`;
 	return (value) => formatNumber(Math.round(Number(value)));
 }
 
 function chartColor(key, index, theme) {
 	const semantic = {
 		requests: 0,
+		hits: 0,
+		misses: 1,
+		bypasses: 3,
+		hitRatio: 4,
 		created: 0,
 		verified: 0,
 		allow: 4,
@@ -2246,6 +2382,30 @@ function renderMetrics() {
 	latencyChart = createChart("latencyChart", secondary);
 	renderBreakdown(latestMetrics.breakdown ?? []);
 	if (latestMetrics.section === "bandwidth") renderBandwidthDetails(latestMetrics);
+	if (latestMetrics.section === "cache") renderCacheDetails(latestMetrics.cache);
+}
+
+function renderCacheDetails(cache) {
+	const totals = cache?.totals ?? {};
+	byId("cacheHistoryHitRatio").textContent = `${(Number(totals.hitRatio ?? 0) * 100).toFixed(2)}%`;
+	byId("cacheHistoryLookups").textContent = `${formatNumber(totals.hits)} / ${formatNumber(totals.misses)}`;
+	byId("cacheHistoryBypasses").textContent = formatNumber(totals.bypasses);
+	byId("cacheHistoryAvoided").textContent = formatNumber(totals.originRequestsAvoided);
+	const paths = cache?.topPaths ?? [];
+	byId("cacheTopPaths").innerHTML =
+		paths.length === 0
+			? '<tr><td colspan="5" class="empty-cell">No cache activity exists in this range.</td></tr>'
+			: paths
+					.map(
+						(item) => `<tr>
+			<td class="path-cell" title="${escapeHtml(item.path)}">${escapeHtml(truncate(item.path, 100))}</td>
+			<td>${formatNumber(item.hits)}</td>
+			<td>${formatNumber(item.misses)}</td>
+			<td>${formatNumber(item.bypasses)}</td>
+			<td>${(Number(item.hitRatio ?? 0) * 100).toFixed(2)}%</td>
+		</tr>`,
+					)
+					.join("");
 }
 
 function renderBandwidthDetails(metrics) {
@@ -2478,6 +2638,7 @@ async function refreshDashboard() {
 	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
 	if (activeTab === "bandwidth") tasks.push(loadBandwidth());
+	if (activeTab === "cache") tasks.push(loadCacheMetrics());
 	if (activeTab === "sessions") tasks.push(loadSessions());
 	if (activeTab === "rules") tasks.push(loadRules());
 	if (activeTab === "routes") tasks.push(loadRoutePolicies());
@@ -2498,6 +2659,7 @@ function setActiveTab(name) {
 		renderGeoMap();
 	}
 	void loadMetrics();
+	if (name === "cache") void loadCacheMetrics();
 	if (loadedTabs.has(name)) return;
 	loadedTabs.add(name);
 	if (name === "traffic") void loadTraffic();
@@ -2536,7 +2698,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
-	for (const id of ["eventDecision", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
+	for (const id of ["eventDecision", "eventCacheStatus", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
 			void loadTraffic();
@@ -2797,6 +2959,13 @@ function bindActions() {
 	byId("routeRateKeyMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routePolicyAccessMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routeWebSocketMode").addEventListener("change", updateRoutePolicyControls);
+	byId("purgeRouteCache").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				if (confirm("Purge every cached response stored by this route policy?")) await purgeRouteCache();
+			}),
+	);
 	byId("refreshRoutePolicies").addEventListener(
 		"click",
 		(event) =>
@@ -2842,6 +3011,29 @@ function bindActions() {
 		resetSiteForm();
 		byId("siteName").focus();
 	});
+	byId("siteHttpCacheEnabled").addEventListener("change", updateSiteHttpCacheControls);
+	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));
+	byId("configureCache").addEventListener("click", openSelectedSiteCacheSettings);
+	byId("refreshCache").addEventListener(
+		"click",
+		(event) => void runWithButton(event.currentTarget, async () => await Promise.all([loadCacheMetrics(), loadMetrics()])),
+	);
+	byId("purgeCacheSite").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				const prefix = byId("cachePurgePath").value.trim();
+				if (confirm(prefix ? `Purge cached entries whose path starts with ${prefix}?` : "Purge every cached response for this site?"))
+					await purgeSiteCache(false);
+			}),
+	);
+	byId("purgeCacheAll").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				if (confirm("Purge all in-memory static cache entries for every site?")) await purgeSiteCache(true);
+			}),
+	);
 	byId("cancelSiteEdit").addEventListener("click", resetSiteForm);
 	byId("resetSiteForm").addEventListener("click", () => (editingSiteId ? editSite(editingSiteId) : resetSiteForm()));
 	byId("generateSiteSecret").addEventListener("click", () => {

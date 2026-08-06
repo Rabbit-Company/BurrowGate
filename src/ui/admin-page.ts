@@ -50,7 +50,7 @@ export function adminPage(): string {
   <article class="card pad stat"><span id="latencyStatLabel" class="muted">Average latency (24h)</span><strong id="averageLatency24h">-</strong></article>
   <article class="card pad stat"><span id="challengesStatLabel" class="muted">Challenges (24h)</span><strong id="challenges24h">-</strong></article>
   <article class="card pad stat"><span class="muted">Active sessions</span><strong id="activeSessions">-</strong></article>
-  <article class="card pad stat"><span class="muted">Active network rules</span><strong id="activeRules">-</strong></article>
+	<article class="card pad stat"><span id="cacheHitRatioStatLabel" class="muted">Cache hit ratio (24h)</span><strong id="cacheHitRatioStat">-</strong></article>
 </section>
 
 <section class="grid charts-grid">
@@ -81,6 +81,7 @@ export function adminPage(): string {
 <nav class="tabs" aria-label="Dashboard sections">
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
   <button class="tab" data-tab="bandwidth" type="button">Bandwidth</button>
+	<button class="tab" data-tab="cache" type="button">Cache</button>
   <button class="tab" data-tab="sessions" type="button">Sessions</button>
   <button class="tab" data-tab="rules" type="button">Network rules</button>
   <button class="tab" data-tab="routes" type="button">Routes</button>
@@ -93,14 +94,15 @@ export function adminPage(): string {
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar traffic-toolbar">
       <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session..."></label>
-      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+		<label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+		<label><span>Cache</span><select id="eventCacheStatus" class="select"><option value="">All</option><option value="hit">Hit</option><option value="miss">Miss</option><option value="bypass">Bypass</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label id="eventOriginFilter" class="hidden"><span>Origin</span><select id="eventOrigin" class="select"><option value="">All origins</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Cache", "cache_status")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="9" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>
@@ -124,6 +126,38 @@ export function adminPage(): string {
     ${pagination("bandwidth")}
     <div id="bandwidthProtocols" class="breakdown"></div>
   </article>
+</section>
+
+<section id="panel-cache" class="tab-panel hidden">
+	<section class="grid stats cache-history-stats">
+		<article class="card pad stat"><span class="muted">Historical hit ratio</span><strong id="cacheHistoryHitRatio">0.00%</strong></article>
+		<article class="card pad stat"><span class="muted">Hits / misses</span><strong id="cacheHistoryLookups">0 / 0</strong></article>
+		<article class="card pad stat"><span class="muted">Bypasses</span><strong id="cacheHistoryBypasses">0</strong></article>
+		<article class="card pad stat"><span class="muted">Origin requests avoided</span><strong id="cacheHistoryAvoided">0</strong></article>
+	</section>
+	<article class="card">
+		<div class="pad section-heading"><div><h2>Runtime cache</h2><p class="muted">Current in-memory state and process-lifetime counters. These reset when BurrowGate restarts. Cached objects are never persisted to disk.</p></div><button id="refreshCache" class="button secondary" type="button">Refresh</button></div>
+		<div class="tls-summary-grid cache-runtime-grid">
+			<div><span class="muted">Runtime hit ratio</span><strong id="cacheHitRatio">0.00%</strong></div>
+			<div><span class="muted">Hits / misses</span><strong id="cacheLookups">0 / 0</strong></div>
+			<div><span class="muted">Entries</span><strong id="cacheEntries">0</strong></div>
+			<div><span class="muted">Memory</span><strong id="cacheBytes">0 B</strong></div>
+			<div><span class="muted">Bypasses</span><strong id="cacheBypasses">0</strong></div>
+			<div><span class="muted">Stores</span><strong id="cacheStores">0</strong></div>
+			<div><span class="muted">Evicted / expired</span><strong id="cacheEvictions">0 / 0</strong></div>
+			<div><span class="muted">Cache bytes served</span><strong id="cacheBytesServed">0 B</strong></div>
+		</div>
+		<div class="toolbar cache-purge-toolbar">
+			<label class="search-field"><span>Purge path prefix</span><input id="cachePurgePath" class="input" placeholder="/assets/"><small class="muted">Leave blank to purge every cached entry for this site.</small></label>
+			<button id="purgeCacheSite" class="button secondary align-end" type="button">Purge site cache</button>
+			<button id="purgeCacheAll" class="button danger align-end" type="button">Purge all sites</button>
+			<button id="configureCache" class="button secondary align-end" type="button">Configure site cache</button>
+		</div>
+	</article>
+	<article class="card">
+		<div class="pad section-heading"><div><h2>Top cache paths</h2><p class="muted">Requests in the selected date range, ranked by cache hits.</p></div></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>Path</th><th>Hits</th><th>Misses</th><th>Bypasses</th><th>Hit ratio</th></tr></thead><tbody id="cacheTopPaths"><tr><td colspan="5" class="empty-cell">Open the tab to load cache activity.</td></tr></tbody></table></div>
+	</article>
 </section>
 
 <section id="panel-sessions" class="tab-panel hidden">
@@ -212,6 +246,13 @@ export function adminPage(): string {
               <label><span>Maximum body (bytes)</span><input id="routeHttpMaxBodyBytes" class="input" type="number" min="0" max="1099511627776" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site. Use 0 for unlimited.</small></label>
               <label><span>Maximum request target (bytes)</span><input id="routeHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the path and query string. Blank inherits; 0 is unlimited.</small></label>
               <label><span>Maximum request headers (bytes)</span><input id="routeHttpMaxHeaderBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the combined parsed request headers. Blank inherits; 0 is unlimited.</small></label>
+            </div>
+            <div class="section-heading compact-heading"><div><h4>Safe static-asset cache</h4><p class="muted">Override cache behavior for matching assets. Safety checks remain mandatory.</p></div><button id="purgeRouteCache" class="button secondary compact hidden" type="button">Purge policy cache</button></div>
+            <div class="site-form-grid">
+              <label><span>Cache mode</span><select id="routeHttpCacheMode" class="select"><option value="inherit">Inherit site default</option><option value="enabled">Enable</option><option value="disabled">Disable</option></select><small class="muted">The route override applies only when this policy matches.</small></label>
+              <label><span>TTL (seconds)</span><input id="routeHttpCacheTtl" class="input" type="number" min="1" max="604800" step="1" placeholder="Inherit site"><small class="muted">Origin max-age or s-maxage can shorten this value.</small></label>
+              <label><span>Maximum object (bytes)</span><input id="routeHttpCacheMaxObject" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site maximum.</small></label>
+              <label><span>Cacheable extensions</span><textarea id="routeHttpCacheExtensions" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site extensions"></textarea><small class="muted">Comma or whitespace separated. Blank inherits.</small></label>
             </div>
             <div class="site-form-grid">
               <label><span>Set request headers</span><textarea id="routeHttpRequestHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>
@@ -327,6 +368,15 @@ export function adminPage(): string {
               <label><span>Maximum request target (bytes)</span><input id="siteHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" value="0" required><small class="muted">Limits the path and query string; 0 is unlimited.</small></label>
               <label><span>Maximum request headers (bytes)</span><input id="siteHttpMaxHeaderBytes" class="input" type="number" min="0" max="1048576" step="1" value="0" required><small class="muted">Limits the combined parsed request headers; 0 is unlimited.</small></label>
             </div>
+            <div class="section-heading error-response-heading"><div><h3>Safe static-asset cache</h3><p class="muted">Cache public static responses in bounded memory. The cache never stores responses with cookies, private/no-store/no-cache directives, unsafe variants, ranges, HTML, JSON, or authenticated application requests.</p></div></div>
+            <label class="check-row"><input id="siteHttpCacheEnabled" type="checkbox"><span><strong>Enable static-asset caching</strong><small class="muted">Disabled by default. Browser verification cookies are ignored for eligibility, but application cookies and Authorization always bypass cache.</small></span></label>
+            <div id="siteHttpCacheSettings" class="site-form-grid hidden">
+              <label><span>Maximum TTL (seconds)</span><input id="siteHttpCacheTtl" class="input" type="number" min="1" max="604800" step="1" required><small class="muted">Origin max-age or s-maxage can only shorten this value.</small></label>
+              <label><span>Maximum object (bytes)</span><input id="siteHttpCacheMaxObject" class="input" type="number" min="1024" step="1" required><small class="muted">Objects above this size continue streaming but are not stored.</small></label>
+              <label class="site-origin-field"><span>Cacheable extensions</span><textarea id="siteHttpCacheExtensions" class="input code-input compact-code-input" rows="4" spellcheck="false" required></textarea><small class="muted">Comma or whitespace separated. Keep this limited to static asset formats.</small></label>
+            </div>
+			<p class="notice muted">Historical metrics, runtime memory, and purge controls are available in the dedicated Cache tab.</p>
+			<button id="openCacheDashboard" class="button secondary" type="button">Open Cache dashboard</button>
             <div class="section-heading error-response-heading"><div><h3>Header policies</h3><p class="muted">Change headers at the origin boundary. BurrowGate keeps routing, framing, forwarding, and signed identity headers under proxy control.</p></div></div>
             <div class="site-form-grid">
               <label><span>Set request headers</span><textarea id="siteHttpRequestHeadersSet" class="input code-input" rows="6" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>

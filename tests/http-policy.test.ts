@@ -8,6 +8,7 @@ import {
 	serializeRouteHttpPolicy,
 	serializeSiteHttpPolicy,
 	siteHttpPolicyView,
+	instanceStaticCacheDefaults,
 } from "../src/services/http-policy-service.ts";
 
 function site(httpPolicy?: string | null): SiteRecord {
@@ -64,11 +65,21 @@ function route(httpPolicy?: string | null): RoutePolicyRecord {
 
 describe("HTTP header and request-limit policies", () => {
 	test("defaults sites to no header changes and unlimited requests", () => {
+		const { maxEntries: _maxEntries, maxBytes: _maxBytes, instanceMaxObjectBytes: _instanceMaxObjectBytes, ...cache } = instanceStaticCacheDefaults();
 		expect(siteHttpPolicyView(site(null))).toEqual({
 			requestHeaders: { set: [], remove: [] },
 			responseHeaders: { set: [], remove: [] },
 			limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
+			cache,
 		});
+	});
+
+	test("inherits cache defaults while allowing safe route overrides", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ cache: { mode: "enabled", ttlSeconds: 7_200, maxObjectBytes: 10_000, extensions: [".css", ".png"] } });
+		const routePolicy = serializeRouteHttpPolicy({ cache: { mode: "enabled", ttlSeconds: 300, extensions: [".css"] } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.cache).toEqual({ mode: "enabled", ttlSeconds: 300, maxObjectBytes: 10_000, extensions: [".css"] });
+		expect(() => serializeSiteHttpPolicy({ cache: { mode: "enabled", extensions: ["css"] } })).toThrow("Invalid static cache extension");
 	});
 
 	test("inherits site limits and lets route rules take precedence", () => {

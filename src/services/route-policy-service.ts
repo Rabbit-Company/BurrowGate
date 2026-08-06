@@ -19,6 +19,7 @@ import {
 	type RouteWebSocketPolicyView,
 } from "./websocket-policy-service.ts";
 import { resolveHttpPolicy, routeHttpPolicyView, serializeRouteHttpPolicy, type ResolvedHttpPolicy, type RouteHttpPolicyView } from "./http-policy-service.ts";
+import { staticAssetCache } from "./static-cache-service.ts";
 
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 
@@ -271,6 +272,7 @@ export async function updateRoutePolicy(siteId: string, id: string, input: Route
 	if (!existing) throw new Error("Route policy not found");
 	const policy = buildRecord(siteId, input, existing);
 	await repository.updateRoutePolicy(policy);
+	staticAssetCache.purge({ siteId, routePolicyId: id });
 	invalidateRoutePolicyCache(siteId);
 	return policy;
 }
@@ -279,6 +281,7 @@ export async function deleteRoutePolicy(siteId: string, id: string): Promise<voi
 	const existing = await repository.routePolicyById(id, siteId);
 	if (!existing) throw new Error("Route policy not found");
 	await repository.deleteRoutePolicy(id, siteId);
+	staticAssetCache.purge({ siteId, routePolicyId: id });
 	invalidateRoutePolicyCache(siteId);
 }
 

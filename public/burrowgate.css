@@ -940,6 +940,9 @@ form.grid label {
 	font-size: 12px;
 	line-height: 1.55;
 }
+.compact-code-input {
+	min-height: 96px;
+}
 .check-row {
 	display: flex !important;
 	grid-template-columns: none !important;
@@ -1107,6 +1110,42 @@ form.grid label {
 }
 .tls-summary-grid strong {
 	overflow-wrap: anywhere;
+}
+.cache-runtime-grid {
+	padding: 0 24px 18px;
+}
+#panel-cache {
+	display: grid;
+	gap: 18px;
+	min-width: 0;
+}
+#panel-cache > .cache-history-stats {
+	margin-bottom: 0;
+}
+.toolbar.cache-purge-toolbar {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cache-purge-toolbar > * {
+	min-width: 0;
+}
+.cache-purge-toolbar .search-field {
+	grid-column: 1 / -1;
+}
+.cache-purge-toolbar .button {
+	min-height: 46px;
+	padding: 12px 18px;
+	white-space: nowrap;
+}
+@media (max-width: 700px) {
+	.toolbar.cache-purge-toolbar {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.cache-purge-toolbar .search-field {
+		grid-column: auto;
+	}
+	.cache-purge-toolbar .button {
+		width: 100%;
+	}
 }
 .tls-form,
 .tls-method {
@@ -1458,7 +1497,7 @@ form.grid label {
 		grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(105px, 1fr));
 	}
 	.toolbar.traffic-toolbar {
-		grid-template-columns: minmax(180px, 1.5fr) repeat(5, minmax(105px, 1fr)) 85px;
+		grid-template-columns: minmax(180px, 1.5fr) repeat(6, minmax(105px, 1fr)) 85px;
 	}
 	.compact-toolbar {
 		grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 0.7fr));

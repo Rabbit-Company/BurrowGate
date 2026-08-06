@@ -3,6 +3,7 @@ import { Logger } from "../logger.ts";
 import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+import type { HttpCacheStatus } from "../types.ts";
 
 const blockedSiteIds = new Set<string>();
 
@@ -25,6 +26,7 @@ export async function recordEvent(input: {
 	latencyMs: number;
 	countryCode?: string | null;
 	originId?: string | null;
+	cacheStatus?: HttpCacheStatus | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
@@ -41,6 +43,7 @@ export async function recordEvent(input: {
 			latency_ms: input.latencyMs,
 			country_code: input.countryCode === undefined ? countryCodeForStorage(input.ip) : input.countryCode,
 			origin_id: input.originId ?? null,
+			cache_status: input.cacheStatus ?? null,
 			created_at: Date.now(),
 		});
 	} catch (error) {
