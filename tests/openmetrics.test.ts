@@ -12,6 +12,7 @@ describe("OpenMetrics exporter", () => {
 			latencyMs: 25,
 		});
 		metrics.recordHttpCacheRequest("site-1", "hit", 512);
+		metrics.recordHttpProtectionRequest("site-1", "monitored");
 		metrics.recordHttpCacheStore("site-1");
 		metrics.recordHttpCacheEviction("site-1", "capacity", 2);
 		metrics.setHttpCacheStorage("site-1", 3, 1_024);
@@ -31,6 +32,7 @@ describe("OpenMetrics exporter", () => {
 		expect(output).toContain('burrowgate_http_cache_served_bytes_total{site_id="site-1"} 512');
 		expect(output).toContain('burrowgate_http_cache_entries{site_id="site-1"} 3');
 		expect(output).toContain('burrowgate_http_cache_size_bytes{site_id="site-1"} 1024');
+		expect(output).toContain('burrowgate_http_protection_requests_total{outcome="monitored",site_id="site-1"} 1');
 		expect(output).toContain('direction="client_to_upstream",protocol="tcp",stream_id="stream-1"} 42');
 		expect(output).toContain('burrowgate_origin_health_state{site_id="site-1",state="unhealthy"} 1');
 		expect(output).toContain('burrowgate_origin_backend_health_state{origin_id="origin-1",site_id="site-1",state="unhealthy"} 1');

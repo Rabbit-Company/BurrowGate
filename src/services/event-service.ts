@@ -4,6 +4,7 @@ import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 import type { HttpCacheStatus } from "../types.ts";
+import type { ManagedProtectionMatch, ManagedProtectionSeverity, ManagedProtectionStatus } from "./managed-protection-service.ts";
 
 const blockedSiteIds = new Set<string>();
 
@@ -27,9 +28,17 @@ export async function recordEvent(input: {
 	countryCode?: string | null;
 	originId?: string | null;
 	cacheStatus?: HttpCacheStatus | null;
+	protectionStatus?: ManagedProtectionStatus | null;
+	protectionRuleId?: string | null;
+	protectionCategory?: string | null;
+	protectionSeverity?: ManagedProtectionSeverity | null;
+	protectionRulesetId?: string | null;
+	protectionRulesetVersion?: string | null;
+	protectionMatches?: ManagedProtectionMatch[] | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
+	if (input.protectionStatus) openMetrics.recordHttpProtectionRequest(input.siteId, input.protectionStatus);
 	try {
 		await repository.insertEvent({
 			id: randomId("evt"),
@@ -44,6 +53,13 @@ export async function recordEvent(input: {
 			country_code: input.countryCode === undefined ? countryCodeForStorage(input.ip) : input.countryCode,
 			origin_id: input.originId ?? null,
 			cache_status: input.cacheStatus ?? null,
+			protection_status: input.protectionStatus ?? null,
+			protection_rule_id: input.protectionRuleId ?? null,
+			protection_category: input.protectionCategory ?? null,
+			protection_severity: input.protectionSeverity ?? null,
+			protection_ruleset_id: input.protectionRulesetId ?? null,
+			protection_ruleset_version: input.protectionRulesetVersion ?? null,
+			protection_matches_json: input.protectionMatches?.length ? JSON.stringify(input.protectionMatches) : null,
 			created_at: Date.now(),
 		});
 	} catch (error) {

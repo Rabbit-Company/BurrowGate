@@ -70,6 +70,7 @@ const headerPolicy: ResolvedHttpPolicy = {
 	responseHeaders: { set: [{ name: "content-security-policy", value: "default-src 'self'" }], remove: ["x-origin-remove"] },
 	limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
 	cache: { mode: "disabled", ttlSeconds: 3_600, maxObjectBytes: 5_242_880, extensions: [".css"] },
+	protection: { mode: "disabled", rulesetId: "default", excludedRuleIds: [] },
 };
 
 describe("reverse-proxy compression", () => {

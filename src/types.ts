@@ -361,6 +361,7 @@ export interface CountryRuleRecord {
 }
 
 export type HttpCacheStatus = "hit" | "miss" | "bypass";
+export type RequestProtectionStatus = "clean" | "monitored" | "blocked";
 
 export interface RequestEventRecord {
 	id: string;
@@ -375,6 +376,13 @@ export interface RequestEventRecord {
 	country_code: string | null;
 	origin_id?: string | null;
 	cache_status: HttpCacheStatus | null;
+	protection_status: RequestProtectionStatus | null;
+	protection_rule_id: string | null;
+	protection_category: string | null;
+	protection_severity: string | null;
+	protection_ruleset_id: string | null;
+	protection_ruleset_version: string | null;
+	protection_matches_json: string | null;
 	created_at: number;
 }
 

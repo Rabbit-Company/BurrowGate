@@ -1123,6 +1123,14 @@ form.grid label {
 	gap: 18px;
 	min-width: 0;
 }
+#panel-protection {
+	display: grid;
+	gap: 18px;
+	min-width: 0;
+}
+#panel-protection > .protection-history-stats {
+	margin-bottom: 0;
+}
 #panel-cache > .cache-history-stats {
 	margin-bottom: 0;
 }
@@ -1501,7 +1509,7 @@ form.grid label {
 		grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(105px, 1fr));
 	}
 	.toolbar.traffic-toolbar {
-		grid-template-columns: minmax(180px, 1.5fr) repeat(6, minmax(105px, 1fr)) 85px;
+		grid-template-columns: minmax(180px, 1.5fr) repeat(7, minmax(105px, 1fr)) 85px;
 	}
 	.compact-toolbar {
 		grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(120px, 0.7fr));

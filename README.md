@@ -12,6 +12,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Uploaded PEM certificate support
 - SNI certificate selection for multiple domains
 - Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying
+- Managed request protection with monitor/block modes, per-route overrides, rule exclusions, and auditable outcomes
 - Native TCP and UDP stream proxying, including optional incoming TCP TLS termination
 - Per-site and per-route access policies
 - Fixed-window, sliding-window, and token-bucket rate limits
@@ -336,7 +337,7 @@ Alerts support generic signed JSON webhooks, Slack, Discord, and ntfy. BurrowGat
 
 Every site keeps its original URL as the primary origin and can add more origins from the site editor. Available algorithms are priority failover, round robin, and smooth weighted round robin. Priority failover chooses the lowest healthy priority number; weight controls proportional selection in weighted mode. An origin can be drained to keep existing sticky sessions while preventing new assignments.
 
-With sticky affinity enabled, BurrowGate stores an origin ID on an existing visitor session. Requests without a valid session—including unprotected API calls—use a deterministic client-IP assignment without storing additional per-IP load-balancer state. If the assigned origin becomes unavailable, BurrowGate selects another origin and updates the session assignment. Safe `GET` and `HEAD` requests receive one connection-level failover retry; non-idempotent requests are never replayed automatically.
+With sticky affinity enabled, BurrowGate stores an origin ID on an existing visitor session. Requests without a valid session (including unprotected API calls) use a deterministic client-IP assignment without storing additional per-IP load-balancer state. If the assigned origin becomes unavailable, BurrowGate selects another origin and updates the session assignment. Safe `GET` and `HEAD` requests receive one connection-level failover retry; non-idempotent requests are never replayed automatically.
 
 See [`docs/ERROR_RESPONSES.md`](docs/ERROR_RESPONSES.md).
 
@@ -467,6 +468,8 @@ The dashboard includes:
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 
 Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and alert delivery, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP status, and process memory. It deliberately excludes paths, client IPs, countries, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
+
+Managed request protection defaults to monitor mode and can be configured per site or overridden per route. Its dashboard separates clean, would-block, and blocked traffic and records versioned rule metadata without storing matching input values. See [`docs/MANAGED_PROTECTION.md`](docs/MANAGED_PROTECTION.md).
 
 Traffic retention is configured per site from 1 to 365 days. Maintenance removes expired events automatically.
 

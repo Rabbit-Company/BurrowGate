@@ -26,6 +26,12 @@ import { recordBandwidth } from "./bandwidth-service.ts";
 import { originHealthManager } from "./origin-health-service.ts";
 import { loadBalancer } from "./load-balancer-service.ts";
 import type { ResolvedWebSocketPolicy } from "./websocket-policy-service.ts";
+import {
+	inspectManagedRequest,
+	type ManagedProtectionMatch,
+	type ManagedProtectionSeverity,
+	type ManagedProtectionStatus,
+} from "./managed-protection-service.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -358,6 +364,13 @@ export async function handleWebSocketUpgrade(
 		method: string;
 		path: string;
 		countryCode?: string | null;
+		protectionStatus?: ManagedProtectionStatus | null;
+		protectionRuleId?: string | null;
+		protectionCategory?: string | null;
+		protectionSeverity?: ManagedProtectionSeverity | null;
+		protectionRulesetId?: string | null;
+		protectionRulesetVersion?: string | null;
+		protectionMatches?: ManagedProtectionMatch[] | null;
 	} = {
 		siteId: site.id,
 		ip,
@@ -451,6 +464,33 @@ export async function handleWebSocketUpgrade(
 			clientIp: ip,
 			routePolicy: route.policy?.name,
 			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This WebSocket route is not available.",
+		});
+	}
+	const protection = await inspectManagedRequest(request, route.http.protection);
+	if (protection.status !== "disabled") {
+		eventBase.protectionStatus = protection.status;
+		eventBase.protectionRuleId = protection.primaryMatch?.ruleId ?? null;
+		eventBase.protectionCategory = protection.primaryMatch?.category ?? null;
+		eventBase.protectionSeverity = protection.primaryMatch?.severity ?? null;
+		eventBase.protectionRulesetId = protection.rulesetId;
+		eventBase.protectionRulesetVersion = protection.rulesetVersion;
+		eventBase.protectionMatches = protection.matches;
+	}
+	if (protection.status === "blocked") {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: 403,
+			decision: "managed-protection-blocked",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "managed_request_blocked",
+			error: "WebSocket request blocked by BurrowGate",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: "The WebSocket handshake matched a managed request-protection rule.",
 		});
 	}
 	const accessSettings = await accessSettingsForSite(site.id);

@@ -43,12 +43,20 @@ import { originHealthManager } from "./services/origin-health-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
 import { requestLimitViolation } from "./services/http-policy-service.ts";
 import { staticAssetCache } from "./services/static-cache-service.ts";
+import {
+	inspectManagedRequest,
+	type ManagedProtectionMatch,
+	type ManagedProtectionSeverity,
+	type ManagedProtectionStatus,
+} from "./services/managed-protection-service.ts";
+import { loadManagedRuleSets } from "./services/managed-ruleset-loader.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
 await initializeGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();
+await loadManagedRuleSets();
 await loadBalancer.initialize();
 await originHealthManager.initialize();
 await runMaintenance();
@@ -140,6 +148,13 @@ async function gateway(ctx: any): Promise<Response> {
 		method: string;
 		path: string;
 		countryCode?: string | null;
+		protectionStatus?: ManagedProtectionStatus | null;
+		protectionRuleId?: string | null;
+		protectionCategory?: string | null;
+		protectionSeverity?: ManagedProtectionSeverity | null;
+		protectionRulesetId?: string | null;
+		protectionRulesetVersion?: string | null;
+		protectionMatches?: ManagedProtectionMatch[] | null;
 	} = {
 		siteId: site.id,
 		ip,
@@ -223,6 +238,33 @@ async function gateway(ctx: any): Promise<Response> {
 			clientIp: ip,
 			routePolicy: route.policy?.name,
 			reason: limitViolation.message,
+		});
+	}
+	const protection = await inspectManagedRequest(request, route.http.protection);
+	if (protection.status !== "disabled") {
+		eventBase.protectionStatus = protection.status;
+		eventBase.protectionRuleId = protection.primaryMatch?.ruleId ?? null;
+		eventBase.protectionCategory = protection.primaryMatch?.category ?? null;
+		eventBase.protectionSeverity = protection.primaryMatch?.severity ?? null;
+		eventBase.protectionRulesetId = protection.rulesetId;
+		eventBase.protectionRulesetVersion = protection.rulesetVersion;
+		eventBase.protectionMatches = protection.matches;
+	}
+	if (protection.status === "blocked") {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: 403,
+			decision: "managed-protection-blocked",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "managed_request_blocked",
+			error: "Request blocked by BurrowGate",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: "The request matched a managed request-protection rule.",
 		});
 	}
 	const accessSettings = await accessSettingsForSite(site.id);

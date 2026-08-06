@@ -54,6 +54,7 @@ import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput 
 import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
 import { staticAssetCache } from "../services/static-cache-service.ts";
 import { instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
+import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -84,6 +85,16 @@ function enumParam<T extends string>(url: URL, name: string, allowed: readonly T
 
 function sortDirection(url: URL): SortDirection {
 	return url.searchParams.get("sortDirection") === "asc" ? "asc" : "desc";
+}
+
+function protectionMatches(value: string | null): unknown[] {
+	if (!value) return [];
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
 }
 
 const DEFAULT_DATE_RANGE_MS = 24 * 3_600_000;
@@ -209,6 +220,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			defaultEventRetentionDays: config.eventRetentionDays,
 			websocketDefaults: instanceWebSocketDefaults(),
 			httpCacheDefaults: instanceStaticCacheDefaults(),
+			managedProtection: managedRuleSetCatalog(),
 			errorResponseDefaults: {
 				mode: "json",
 				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,
@@ -636,7 +648,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (denied) return denied;
 		const url = new URL(ctx.req.url);
 		const section =
-			enumParam(url, "section", ["traffic", "bandwidth", "cache", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ?? "traffic";
+			enumParam(url, "section", ["traffic", "bandwidth", "cache", "protection", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ??
+			"traffic";
 		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
@@ -689,6 +702,47 @@ export function registerAdminRoutes(app: Web<any>): void {
 					{ label: "Bypasses", count: metrics.totals.bypasses },
 				],
 				cache: metrics,
+			});
+		}
+
+		if (section === "protection") {
+			const metrics = await repository.protectionMetrics(selection.site?.id, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Request protection outcomes",
+					subtitle: "Clean, monitored, and blocked inspected requests",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "number",
+					emptyMessage: "No requests were inspected in this range.",
+					datasets: [
+						{ key: "clean", label: "Clean" },
+						{ key: "monitored", label: "Would block" },
+						{ key: "blocked", label: "Blocked" },
+					],
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Top matched rules",
+					subtitle: "Most frequent managed-rule matches in this range",
+					type: "bar",
+					timeSeries: false,
+					valueFormat: "number",
+					emptyMessage: "No managed rules matched in this range.",
+					datasets: [
+						{ key: "monitored", label: "Would block" },
+						{ key: "blocked", label: "Blocked" },
+					],
+					data: metrics.topRules.slice(0, 8).map((rule) => ({ label: rule.ruleId, monitored: rule.monitored, blocked: rule.blocked })),
+				},
+				breakdown: [
+					{ label: "Inspected", count: metrics.totals.inspected },
+					{ label: "Would block", count: metrics.totals.monitored },
+					{ label: "Blocked", count: metrics.totals.blocked },
+				],
+				protection: metrics,
+				rulesets: managedRuleSetCatalog(),
 			});
 		}
 
@@ -944,6 +998,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
 		const cacheStatus = enumParam(url, "cache", ["hit", "miss", "bypass"] as const);
+		const protectionStatus = enumParam(url, "protection", ["clean", "monitored", "blocked"] as const);
 		const originId = stringParam(url, "origin");
 		const method = stringParam(url, "method");
 		const statusGroup = enumParam(url, "status", ["1xx", "2xx", "3xx", "4xx", "5xx"] as const);
@@ -957,6 +1012,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(search ? { search } : {}),
 				...(decision ? { decision } : {}),
 				...(cacheStatus ? { cacheStatus } : {}),
+				...(protectionStatus ? { protectionStatus } : {}),
 				...(method ? { method } : {}),
 				...(statusGroup ? { statusGroup } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
@@ -965,7 +1021,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				sortBy: enumParam(
 					url,
 					"sortBy",
-					["created_at", "ip", "country_code", "method", "path", "status", "decision", "cache_status", "latency_ms"] as const,
+					["created_at", "ip", "country_code", "method", "path", "status", "decision", "cache_status", "protection_status", "latency_ms"] as const,
 					"created_at",
 				)!,
 				sortDirection: sortDirection(url),
@@ -975,7 +1031,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const originNames = new Map(origins.map((origin) => [origin.id, origin.name]));
 		return jsonResponse({
 			...page,
-			items: page.items.map((event) => ({ ...event, origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null })),
+			items: page.items.map((event) => ({
+				...event,
+				protection_matches: protectionMatches(event.protection_matches_json),
+				origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null,
+			})),
 			origins: origins.map((origin) => ({ id: origin.id, name: origin.name })),
 		});
 	});

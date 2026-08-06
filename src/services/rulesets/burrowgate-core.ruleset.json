@@ -1,0 +1,435 @@
+{
+	"schemaVersion": "1",
+	"id": "burrowgate-core",
+	"title": "BurrowGate Core",
+	"version": "v1",
+	"description": "Baseline managed-protection ruleset covering common web exploit classes.",
+	"rules": [
+		{
+			"id": "BG-CORE-1001",
+			"title": "Path traversal sequence",
+			"category": "path-traversal",
+			"severity": "high",
+			"location": "request-target",
+			"match": {
+				"any": [
+					{
+						"field": "request-target",
+						"operator": "regex",
+						"pattern": "(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)|%2e(?:%2e|\\.)|\\.%2e",
+						"flags": "iu"
+					},
+					{
+						"field": "request-target",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-1002",
+			"title": "Sensitive file probe",
+			"category": "scanner",
+			"severity": "medium",
+			"location": "request-target",
+			"match": {
+				"field": "request-target",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "(?:^|\\/)(?:\\.env|\\.git(?:\\/|$)|\\.svn(?:\\/|$)|wp-config\\.php(?:\\.|$)|id_rsa(?:\\.|$))",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-1003",
+			"title": "Local file inclusion target",
+			"category": "lfi",
+			"severity": "high",
+			"location": "request-target",
+			"match": {
+				"any": [
+					{
+						"field": "request-target",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "\\/etc\\/(?:passwd|shadow|group|hosts)\\b|\\/proc\\/self\\/(?:environ|cmdline|fd)\\b|(?:^|[/\\\\])(?:boot|win)\\.ini\\b|\\/windows\\/(?:system32|win\\.ini)",
+						"flags": "u"
+					},
+					{
+						"field": "query",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "\\/etc\\/(?:passwd|shadow|group)\\b|\\/proc\\/self\\/(?:environ|cmdline)\\b|(?:boot|win)\\.ini\\b",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-1004",
+			"title": "PHP / protocol wrapper",
+			"category": "lfi",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\b(?:php|data|expect|phar|zip|glob|rar):\\/\\/",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-1005",
+			"title": "Null byte injection",
+			"category": "evasion",
+			"severity": "medium",
+			"location": "request-target",
+			"match": {
+				"any": [
+					{
+						"field": "request-target",
+						"operator": "regex",
+						"pattern": "%00|%u0000",
+						"flags": "iu"
+					},
+					{
+						"field": "query",
+						"transforms": ["url-decode"],
+						"operator": "regex",
+						"pattern": "\\x00",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-1006",
+			"title": "Backup / config file probe",
+			"category": "scanner",
+			"severity": "medium",
+			"location": "request-target",
+			"match": {
+				"field": "request-target",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "(?:^|\\/)(?:\\.htaccess|\\.htpasswd|\\.ds_store|\\.npmrc|\\.dockerignore|\\.aws\\/credentials|\\.ssh\\/(?:id_[a-z]+|authorized_keys)|web\\.config|docker-compose\\.ya?ml|\\.gitlab-ci\\.yml|\\.travis\\.yml)\\b|\\.(?:bak|old|orig|save|swp|swo|sql|log)(?:$|[?#\\/])",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2001",
+			"title": "SQL injection pattern",
+			"category": "sql-injection",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\bunion\\b.{0,48}\\bselect\\b|(?:\\bor\\b|\\band\\b)\\s+[\"']?\\d+[\"']?\\s*=\\s*[\"']?\\d+",
+				"flags": "iu"
+			}
+		},
+		{
+			"id": "BG-CORE-2004",
+			"title": "SQL injection metadata access",
+			"category": "sql-injection",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\binformation_schema\\b|\\b(?:group_concat|load_file|xp_cmdshell|utl_(?:http|inaddr))\\b|\\binto\\s+(?:out|dump)file\\b|@@(?:version|datadir|hostname)",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2005",
+			"title": "SQL injection time-based probe",
+			"category": "sql-injection",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\b(?:sleep|benchmark|pg_sleep|dbms_pipe\\.receive_message)\\s*\\(|\\bwaitfor\\s+delay\\b",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2002",
+			"title": "Cross-site scripting pattern",
+			"category": "xss",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "<\\s*script\\b|javascript\\s*:|on(?:error|load|click)\\s*=",
+				"flags": "iu"
+			}
+		},
+		{
+			"id": "BG-CORE-2006",
+			"title": "Cross-site scripting vector",
+			"category": "xss",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "<\\s*(?:svg|img|iframe|body|object|embed|details|video|audio|marquee|math|form|meta|base|link|style|template)\\b|\\b(?:eval|settimeout|setinterval|alert|prompt|confirm)\\s*\\(|document\\.(?:cookie|write|location|domain)|window\\.(?:location|name)|\\.innerhtml\\b|string\\.fromcharcode",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2003",
+			"title": "Command injection pattern",
+			"category": "command-injection",
+			"severity": "critical",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "(?:;|\\|{1,2}|&&)\\s*(?:ba)?sh\\b|(?:;|\\|{1,2}|&&)\\s*(?:cmd|powershell|curl|wget)\\b",
+				"flags": "iu"
+			}
+		},
+		{
+			"id": "BG-CORE-2007",
+			"title": "Command injection vector",
+			"category": "command-injection",
+			"severity": "critical",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "`[^`]*`|\\$\\([^)]*\\)|\\/dev\\/tcp\\/|\\/bin\\/(?:ba)?sh\\b|\\b(?:ncat|netcat|telnet|nslookup|certutil|bitsadmin|whoami|ifconfig|ipconfig)\\b|\\b(?:python[0-9]?|perl|ruby)\\s+-[a-z]|\\bchmod\\s+[0-7]{3}\\b|\\brm\\s+-rf\\b",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2008",
+			"title": "Server-side template injection",
+			"category": "ssti",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\{\\{.{0,64}?\\}\\}|\\$\\{.{0,64}?\\}|<%.{0,64}?%>|#\\{.{0,64}?\\}|\\{%.{0,64}?%\\}|<#(?:assign|list|if)\\b|#(?:set|foreach|if)\\s*\\(",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2009",
+			"title": "JNDI / Log4Shell lookup",
+			"category": "jndi-injection",
+			"severity": "critical",
+			"location": "query",
+			"match": {
+				"any": [
+					{
+						"field": "query",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "\\$\\{jndi:|jndi:(?:ldaps?|rmi|dns|iiop):|\\$\\{(?:lower:|upper:|env:|sys:|date:|::-|java:|main:|marker:|ctx:)",
+						"flags": "u"
+					},
+					{
+						"field": "request-target",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "\\$\\{jndi:|jndi:(?:ldaps?|rmi|dns):",
+						"flags": "u"
+					},
+					{
+						"field": "header",
+						"transforms": ["lowercase"],
+						"operator": "regex",
+						"pattern": "\\$\\{jndi:|jndi:(?:ldaps?|rmi|dns):|\\$\\{(?:lower:|upper:|env:|::-)",
+						"flags": "u",
+						"header": "user-agent"
+					},
+					{
+						"field": "header",
+						"transforms": ["lowercase"],
+						"operator": "regex",
+						"pattern": "\\$\\{jndi:|jndi:(?:ldaps?|rmi|dns):",
+						"flags": "u",
+						"header": "referer"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-2010",
+			"title": "NoSQL injection pattern",
+			"category": "nosql-injection",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "\\[\\$(?:ne|eq|gt|gte|lt|lte|in|nin|regex|where|exists|or|and|not|elemmatch)\\]|\\$where\\s*:|\\{\\s*\\$(?:ne|gt|lt|gte|lte|regex|where|in)\\b",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2011",
+			"title": "Prototype pollution pattern",
+			"category": "prototype-pollution",
+			"severity": "medium",
+			"location": "query",
+			"match": {
+				"field": "query",
+				"transforms": ["url-decode", "lowercase"],
+				"operator": "regex",
+				"pattern": "__proto__|\\[(?:__proto__|constructor|prototype)\\]|constructor\\[[\"']?prototype[\"']?\\]|\\bconstructor\\.prototype\\b",
+				"flags": "u"
+			}
+		},
+		{
+			"id": "BG-CORE-2012",
+			"title": "Insecure deserialization marker",
+			"category": "deserialization",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"any": [
+					{
+						"field": "query",
+						"transforms": ["url-decode"],
+						"operator": "regex",
+						"pattern": "rO0AB[A-Za-z0-9+/=]{6,}",
+						"flags": "u"
+					},
+					{
+						"field": "query",
+						"transforms": ["url-decode"],
+						"operator": "regex",
+						"pattern": "\\bO:[0-9]{1,4}:\"[a-zA-Z0-9_\\\\]",
+						"flags": "u"
+					},
+					{
+						"field": "query",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "aced0005",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-3001",
+			"title": "Ambiguous request framing",
+			"category": "protocol-anomaly",
+			"severity": "critical",
+			"location": "header",
+			"match": {
+				"all": [
+					{
+						"field": "header",
+						"header": "transfer-encoding",
+						"operator": "not-empty"
+					},
+					{
+						"any": [
+							{
+								"field": "header",
+								"header": "content-length",
+								"operator": "exists"
+							},
+							{
+								"field": "header",
+								"transforms": ["lowercase", "trim"],
+								"operator": "regex",
+								"pattern": "^chunked$",
+								"flags": "u",
+								"header": "transfer-encoding",
+								"negate": true
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-3002",
+			"title": "CRLF / response splitting",
+			"category": "protocol-anomaly",
+			"severity": "medium",
+			"location": "request-target",
+			"match": {
+				"any": [
+					{
+						"field": "request-target",
+						"operator": "regex",
+						"pattern": "%0d%0a|%0d|%0a|%e5%98%8[ac]|%u000[ad]",
+						"flags": "iu"
+					},
+					{
+						"field": "query",
+						"transforms": ["url-decode"],
+						"operator": "regex",
+						"pattern": "[\\r\\n]",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-4001",
+			"title": "SSRF to internal / metadata target",
+			"category": "ssrf",
+			"severity": "high",
+			"location": "query",
+			"match": {
+				"any": [
+					{
+						"field": "query",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "169\\.254\\.169\\.254|metadata\\.google\\.internal|169\\.254\\.170\\.2|100\\.100\\.100\\.200|fd00:ec2|metadata\\.(?:azure|oraclecloud)\\b|\\b(?:gopher|dict|file|tftp|ldap|ftp):\\/\\/|(?:https?|ftp):\\/\\/(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\]|169\\.254\\.|10\\.\\d|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.)|\\b2130706433\\b|0x7f000001",
+						"flags": "u"
+					},
+					{
+						"field": "request-target",
+						"transforms": ["url-decode", "lowercase"],
+						"operator": "regex",
+						"pattern": "169\\.254\\.169\\.254|metadata\\.google\\.internal|\\b(?:gopher|dict|file):\\/\\/",
+						"flags": "u"
+					}
+				]
+			}
+		},
+		{
+			"id": "BG-CORE-5001",
+			"title": "Offensive tool user-agent",
+			"category": "scanner",
+			"severity": "low",
+			"location": "header",
+			"match": {
+				"field": "header",
+				"transforms": ["lowercase"],
+				"operator": "regex",
+				"pattern": "\\b(?:sqlmap|nikto|nessus|acunetix|netsparker|nmap|masscan|zgrab|nuclei|dirbuster|gobuster|ffuf|wfuzz|hydra|wpscan|arachni|w3af|skipfish|metasploit|havij|xsser|commix|dirsearch|zmeu)\\b",
+				"flags": "u",
+				"header": "user-agent"
+			}
+		}
+	]
+}

@@ -34,6 +34,26 @@ export interface RouteStaticCachePolicy {
 	extensions: string[] | null;
 }
 
+export type ManagedProtectionMode = "disabled" | "monitor" | "block";
+export type RouteManagedProtectionMode = "inherit" | ManagedProtectionMode;
+
+export interface SiteManagedProtectionPolicy {
+	mode: ManagedProtectionMode;
+	rulesetId: string;
+	excludedRuleIds: string[];
+}
+
+export interface RouteManagedProtectionPolicy {
+	mode: RouteManagedProtectionMode;
+	excludedRuleIds: string[];
+}
+
+export interface ResolvedManagedProtectionPolicy {
+	mode: ManagedProtectionMode;
+	rulesetId: string;
+	excludedRuleIds: string[];
+}
+
 export const DEFAULT_STATIC_CACHE_EXTENSIONS = [
 	".css",
 	".js",
@@ -61,6 +81,7 @@ export interface SiteHttpPolicyView {
 	responseHeaders: HeaderMutationPolicy;
 	limits: RequestLimits;
 	cache: SiteStaticCachePolicy;
+	protection: SiteManagedProtectionPolicy;
 }
 
 export interface RouteHttpPolicyView {
@@ -68,9 +89,12 @@ export interface RouteHttpPolicyView {
 	responseHeaders: HeaderMutationPolicy;
 	limits: { [K in keyof RequestLimits]: number | null };
 	cache: RouteStaticCachePolicy;
+	protection: RouteManagedProtectionPolicy;
 }
 
-export interface ResolvedHttpPolicy extends SiteHttpPolicyView {}
+export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection"> {
+	protection: ResolvedManagedProtectionPolicy;
+}
 
 export type RequestLimitViolation = {
 	status: 413 | 414 | 431;
@@ -141,6 +165,7 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 		maxObjectBytes: Math.min(5 * 1_024 * 1_024, staticCacheObjectCeiling),
 		extensions: [...DEFAULT_STATIC_CACHE_EXTENSIONS],
 	},
+	protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
@@ -148,7 +173,56 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	responseHeaders: { set: [], remove: [] },
 	limits: { maxBodyBytes: null, maxRequestTargetBytes: null, maxHeaderBytes: null },
 	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
+	protection: { mode: "inherit", excludedRuleIds: [] },
 });
+
+function protectionMode(
+	value: unknown,
+	route: boolean,
+	fallback: ManagedProtectionMode | RouteManagedProtectionMode,
+): ManagedProtectionMode | RouteManagedProtectionMode {
+	if (value === undefined) return fallback;
+	const mode = String(value).trim().toLowerCase();
+	if (["disabled", "monitor", "block"].includes(mode) || (route && mode === "inherit")) {
+		return mode as ManagedProtectionMode | RouteManagedProtectionMode;
+	}
+	throw new Error(`Managed protection mode must be ${route ? "inherit, disabled, monitor, or block" : "disabled, monitor, or block"}`);
+}
+
+function protectionRuleIds(value: unknown, fallback: readonly string[] = []): string[] {
+	if (value === undefined || value === null || value === "") return [...fallback];
+	const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/u);
+	const ids = [...new Set(raw.map((item) => String(item).trim().toUpperCase()).filter(Boolean))];
+	if (ids.length > 256) throw new Error("Managed protection supports at most 256 excluded rule IDs");
+	for (const id of ids) if (!/^[A-Z0-9][A-Z0-9._:-]{0,127}$/u.test(id)) throw new Error(`Invalid managed protection rule ID: ${id}`);
+	return ids;
+}
+
+function protectionRulesetId(value: unknown, fallback: string): string {
+	const id = String(value ?? fallback)
+		.trim()
+		.toLowerCase();
+	if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(id)) throw new Error("Managed protection ruleset ID is invalid");
+	return id;
+}
+
+function parseSiteProtection(value: unknown): SiteManagedProtectionPolicy {
+	const defaults = defaultSitePolicy().protection;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: protectionMode(input.mode, false, defaults.mode) as ManagedProtectionMode,
+		rulesetId: protectionRulesetId(input.rulesetId, defaults.rulesetId),
+		excludedRuleIds: protectionRuleIds(input.excludedRuleIds, defaults.excludedRuleIds),
+	};
+}
+
+function parseRouteProtection(value: unknown): RouteManagedProtectionPolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: protectionMode(input.mode, true, "inherit") as RouteManagedProtectionMode,
+		excludedRuleIds: protectionRuleIds(input.excludedRuleIds),
+	};
+}
 
 function cacheMode(value: unknown, route: boolean, fallback: SiteStaticCacheMode | RouteStaticCacheMode): SiteStaticCacheMode | RouteStaticCacheMode {
 	if (value === undefined) return fallback;
@@ -284,6 +358,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, false)!,
 		},
 		cache: parseSiteCache(input.cache),
+		protection: parseSiteProtection(input.protection),
 	};
 }
 
@@ -299,6 +374,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, true),
 		},
 		cache: parseRouteCache(input.cache),
+		protection: parseRouteProtection(input.protection),
 	};
 }
 
@@ -325,12 +401,14 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const current = storedSitePolicy(existing);
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Site request limits");
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Site static cache policy");
+	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Site managed protection policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
 			cache: { ...current.cache, ...suppliedCache },
+			protection: { ...current.protection, ...suppliedProtection },
 		}),
 	);
 }
@@ -342,12 +420,14 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const current = storedRoutePolicy(existing);
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Route request limits");
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Route static cache policy");
+	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Route managed protection policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
 			cache: { ...current.cache, ...suppliedCache },
+			protection: { ...current.protection, ...suppliedProtection },
 		}),
 	);
 }
@@ -390,6 +470,11 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			ttlSeconds: routePolicy.cache.ttlSeconds ?? sitePolicy.cache.ttlSeconds,
 			maxObjectBytes: Math.min(routePolicy.cache.maxObjectBytes ?? sitePolicy.cache.maxObjectBytes, config.httpCache.maxObjectBytes, config.httpCache.maxBytes),
 			extensions: routePolicy.cache.extensions ?? sitePolicy.cache.extensions,
+		},
+		protection: {
+			mode: routePolicy.protection.mode === "inherit" ? sitePolicy.protection.mode : routePolicy.protection.mode,
+			rulesetId: sitePolicy.protection.rulesetId,
+			excludedRuleIds: [...new Set([...sitePolicy.protection.excludedRuleIds, ...routePolicy.protection.excludedRuleIds])],
 		},
 	};
 }

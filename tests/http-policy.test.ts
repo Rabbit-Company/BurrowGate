@@ -71,7 +71,19 @@ describe("HTTP header and request-limit policies", () => {
 			responseHeaders: { set: [], remove: [] },
 			limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
 			cache,
+			protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 		});
+	});
+
+	test("inherits managed protection while adding route exclusions", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ protection: { mode: "monitor", excludedRuleIds: ["BG-CORE-1001"] } });
+		const routePolicy = serializeRouteHttpPolicy({ protection: { mode: "block", excludedRuleIds: ["BG-CORE-2002"] } });
+		expect(resolveHttpPolicy(site(sitePolicy), route(routePolicy)).protection).toEqual({
+			mode: "block",
+			rulesetId: "default",
+			excludedRuleIds: ["BG-CORE-1001", "BG-CORE-2002"],
+		});
+		expect(() => serializeSiteHttpPolicy({ protection: { mode: "enforce" } })).toThrow("Managed protection mode");
 	});
 
 	test("inherits cache defaults while allowing safe route overrides", () => {

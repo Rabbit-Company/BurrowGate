@@ -57,6 +57,7 @@ let httpCacheDefaults = {
 	],
 	instanceMaxObjectBytes: 33554432,
 };
+let managedProtection = { defaultRuleSetId: "burrowgate-core", items: [] };
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
@@ -149,6 +150,17 @@ function parseCacheExtensions(id, nullable) {
 	return nullable ? null : [...httpCacheDefaults.extensions];
 }
 
+function parseRuleIds(id) {
+	return [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toUpperCase())
+				.filter(Boolean),
+		),
+	];
+}
+
 function readHttpPolicy(prefix, routeOverrides) {
 	return {
 		requestHeaders: {
@@ -177,6 +189,13 @@ function readHttpPolicy(prefix, routeOverrides) {
 					maxObjectBytes: Number(byId(`${prefix}CacheMaxObject`).value),
 					extensions: parseCacheExtensions(`${prefix}CacheExtensions`, false),
 				},
+		protection: routeOverrides
+			? { mode: byId(`${prefix}ProtectionMode`).value, excludedRuleIds: parseRuleIds(`${prefix}ProtectionExcludedRules`) }
+			: {
+					mode: byId(`${prefix}ProtectionMode`).value,
+					rulesetId: byId(`${prefix}ProtectionRuleset`).value,
+					excludedRuleIds: parseRuleIds(`${prefix}ProtectionExcludedRules`),
+				},
 	};
 }
 
@@ -201,7 +220,13 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 	byId(`${prefix}CacheMaxObject`).value =
 		routeOverrides && cache.maxObjectBytes == null ? "" : String(cache.maxObjectBytes ?? httpCacheDefaults.maxObjectBytes);
 	byId(`${prefix}CacheExtensions`).value = cache.extensions?.join(", ") ?? "";
+	const protection =
+		http.protection ?? (routeOverrides ? { mode: "inherit", excludedRuleIds: [] } : { mode: "monitor", rulesetId: "default", excludedRuleIds: [] });
+	byId(`${prefix}ProtectionMode`).value = protection.mode ?? (routeOverrides ? "inherit" : "monitor");
+	if (!routeOverrides) byId(`${prefix}ProtectionRuleset`).value = protection.rulesetId ?? "default";
+	byId(`${prefix}ProtectionExcludedRules`).value = protection.excludedRuleIds?.join("\n") ?? "";
 	if (!routeOverrides) updateSiteHttpCacheControls();
+	if (!routeOverrides) updateSiteProtectionControls();
 }
 
 function twoDigits(value) {
@@ -493,6 +518,7 @@ function decisionClass(decision) {
 		[
 			"blocked",
 			"route-blocked",
+			"managed-protection-blocked",
 			"websocket-policy-denied",
 			"origin-error",
 			"websocket-origin-error",
@@ -532,7 +558,7 @@ function setTrafficOriginVisibility(origins = []) {
 }
 
 function trafficColumnCount() {
-	return trafficHasMultipleOrigins ? 10 : 9;
+	return trafficHasMultipleOrigins ? 11 : 10;
 }
 
 async function loadTraffic() {
@@ -550,6 +576,7 @@ async function loadTraffic() {
 				search: byId("eventSearch").value.trim(),
 				decision: byId("eventDecision").value,
 				cache: byId("eventCacheStatus").value,
+				protection: byId("eventProtectionStatus").value,
 				method: byId("eventMethod").value,
 				status: byId("eventStatus").value,
 				origin: byId("eventOrigin").value,
@@ -589,6 +616,7 @@ async function loadTraffic() {
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
           <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
 			<td>${event.cache_status ? `<span class="badge ${event.cache_status === "hit" ? "ok" : event.cache_status === "miss" ? "warn" : "info"}">${escapeHtml(event.cache_status)}</span>` : '<span class="muted">-</span>'}</td>
+			<td title="${escapeHtml(event.protection_rule_id ?? "No managed rule matched")}">${event.protection_status ? `<span class="badge ${event.protection_status === "blocked" ? "bad" : event.protection_status === "monitored" ? "warn" : "ok"}">${event.protection_status === "monitored" ? "would block" : escapeHtml(event.protection_status)}</span>` : '<span class="muted">-</span>'}</td>
           <td>${formatDuration(event.latency_ms)}</td>
         </tr>`,
 						)
@@ -1135,10 +1163,28 @@ function updateSiteHttpCacheControls() {
 	byId("siteHttpCacheSettings").classList.toggle("hidden", !byId("siteHttpCacheEnabled").checked);
 }
 
+function updateSiteProtectionControls() {
+	const mode = byId("siteHttpProtectionMode").value;
+	const badge = byId("siteProtectionModeBadge");
+	badge.textContent = mode === "block" ? "Blocking" : mode === "monitor" ? "Monitor" : "Disabled";
+	badge.className = `badge ${mode === "block" ? "bad" : mode === "monitor" ? "info" : "warn"}`;
+	const selectedId = byId("siteHttpProtectionRuleset").value === "default" ? managedProtection.defaultRuleSetId : byId("siteHttpProtectionRuleset").value;
+	const ruleSet = managedProtection.items.find((item) => item.id === selectedId);
+	byId("siteProtectionRulesetHelp").textContent = ruleSet
+		? `${ruleSet.title} ${ruleSet.version} - ${ruleSet.description}`
+		: "The active default ruleset is loaded by BurrowGate.";
+}
+
 function openSelectedSiteCacheSettings() {
 	setActiveTab("sites");
 	if (selectedSiteId) editSite(selectedSiteId);
 	setSiteEditorTab("http");
+}
+
+function openSelectedSiteProtectionSettings() {
+	setActiveTab("sites");
+	if (selectedSiteId) editSite(selectedSiteId);
+	setSiteEditorTab("protection");
 }
 
 function renderCacheMetrics(metrics) {
@@ -1333,6 +1379,16 @@ async function loadSites() {
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
 	httpCacheDefaults = response.httpCacheDefaults ?? httpCacheDefaults;
+	managedProtection = response.managedProtection ?? managedProtection;
+	const protectionRulesetSelect = byId("siteHttpProtectionRuleset");
+	const selectedProtectionRuleset = protectionRulesetSelect.value;
+	protectionRulesetSelect.innerHTML = `<option value="default">Default managed ruleset</option>${managedProtection.items
+		.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)} ${escapeHtml(item.version)}</option>`)
+		.join("")}`;
+	if ([...protectionRulesetSelect.options].some((option) => option.value === selectedProtectionRuleset)) {
+		protectionRulesetSelect.value = selectedProtectionRuleset;
+	}
+	updateSiteProtectionControls();
 	applyWebSocketInputLimits();
 	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
 	const firstErrorOptionsLoad = !errorResponseOptionsLoaded;
@@ -1586,7 +1642,7 @@ function renderRoutePolicies() {
     <div class="route-policy-main">
       <div class="site-list-title"><strong>${escapeHtml(policy.name)}</strong><span class="badge ${policy.enabled ? "ok" : "warn"}">${policy.enabled ? "enabled" : "disabled"}</span><span class="badge ${policy.accessMode === "block" ? "bad" : policy.accessMode === "challenge" ? "warn" : "info"}">${escapeHtml(routeAccessLabel(policy.accessMode))}</span></div>
       <div class="route-policy-pattern"><code>${escapeHtml(policy.pathPattern)}</code><span>${policy.methods.length ? escapeHtml(policy.methods.join(", ")) : "All methods"}</span><span>Priority ${formatNumber(policy.priority)}</span></div>
-      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>Cache: ${escapeHtml(policy.http?.cache?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
+      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>Protection: ${escapeHtml(policy.http?.protection?.mode ?? "inherit")}</span><span>Cache: ${escapeHtml(policy.http?.cache?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-route-edit="${escapeHtml(policy.id)}">Edit</button><button class="button danger compact" type="button" data-route-delete="${escapeHtml(policy.id)}">Delete</button></div>
   </div>`,
@@ -2072,6 +2128,8 @@ function chartColor(key, index, theme) {
 		misses: 1,
 		bypasses: 3,
 		hitRatio: 4,
+		clean: 4,
+		monitored: 1,
 		created: 0,
 		verified: 0,
 		allow: 4,
@@ -2383,6 +2441,7 @@ function renderMetrics() {
 	renderBreakdown(latestMetrics.breakdown ?? []);
 	if (latestMetrics.section === "bandwidth") renderBandwidthDetails(latestMetrics);
 	if (latestMetrics.section === "cache") renderCacheDetails(latestMetrics.cache);
+	if (latestMetrics.section === "protection") renderProtectionDetails(latestMetrics);
 }
 
 function renderCacheDetails(cache) {
@@ -2403,6 +2462,39 @@ function renderCacheDetails(cache) {
 			<td>${formatNumber(item.misses)}</td>
 			<td>${formatNumber(item.bypasses)}</td>
 			<td>${(Number(item.hitRatio ?? 0) * 100).toFixed(2)}%</td>
+		</tr>`,
+					)
+					.join("");
+}
+
+function renderProtectionDetails(metrics) {
+	const protection = metrics?.protection ?? {};
+	const totals = protection.totals ?? {};
+	byId("protectionInspected").textContent = formatNumber(totals.inspected);
+	byId("protectionMonitored").textContent = formatNumber(totals.monitored);
+	byId("protectionBlocked").textContent = formatNumber(totals.blocked);
+	byId("protectionRuleCount").textContent = formatNumber(protection.topRules?.length ?? 0);
+	const configured = sites.find((site) => site.id === selectedSiteId)?.http?.protection;
+	const catalog = metrics.rulesets ?? managedProtection;
+	const selectedRuleSetId = configured?.rulesetId === "default" || !configured?.rulesetId ? catalog.defaultRuleSetId : configured.rulesetId;
+	const ruleSet = catalog.items?.find((item) => item.id === selectedRuleSetId);
+	const mode = configured?.mode ?? "monitor";
+	byId("protectionRulesetSummary").innerHTML = ruleSet
+		? `<div class="row responsive"><span class="badge ${mode === "block" ? "bad" : mode === "monitor" ? "info" : "warn"}">${escapeHtml(mode)}</span><strong>${escapeHtml(ruleSet.title)} ${escapeHtml(ruleSet.version)}</strong><span class="muted">${escapeHtml(ruleSet.description)}</span></div>`
+		: '<p class="muted">No managed ruleset metadata is available.</p>';
+	const rules = protection.topRules ?? [];
+	byId("protectionTopRules").innerHTML =
+		rules.length === 0
+			? '<tr><td colspan="6" class="empty-cell">No managed protection rules matched in this range.</td></tr>'
+			: rules
+					.map(
+						(rule) => `<tr>
+			<td><code>${escapeHtml(rule.ruleId)}</code></td>
+			<td>${escapeHtml(rule.category)}</td>
+			<td><span class="badge ${rule.severity === "critical" || rule.severity === "high" ? "bad" : rule.severity === "medium" ? "warn" : "info"}">${escapeHtml(rule.severity)}</span></td>
+			<td>${formatNumber(rule.monitored)}</td>
+			<td>${formatNumber(rule.blocked)}</td>
+			<td>${formatNumber(rule.count)}</td>
 		</tr>`,
 					)
 					.join("");
@@ -2698,7 +2790,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
-	for (const id of ["eventDecision", "eventCacheStatus", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
+	for (const id of ["eventDecision", "eventCacheStatus", "eventProtectionStatus", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
 			void loadTraffic();
@@ -3012,8 +3104,12 @@ function bindActions() {
 		byId("siteName").focus();
 	});
 	byId("siteHttpCacheEnabled").addEventListener("change", updateSiteHttpCacheControls);
+	byId("siteHttpProtectionMode").addEventListener("change", updateSiteProtectionControls);
+	byId("siteHttpProtectionRuleset").addEventListener("change", updateSiteProtectionControls);
 	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));
+	byId("openProtectionDashboard").addEventListener("click", () => setActiveTab("protection"));
 	byId("configureCache").addEventListener("click", openSelectedSiteCacheSettings);
+	byId("configureProtection").addEventListener("click", openSelectedSiteProtectionSettings);
 	byId("refreshCache").addEventListener(
 		"click",
 		(event) => void runWithButton(event.currentTarget, async () => await Promise.all([loadCacheMetrics(), loadMetrics()])),

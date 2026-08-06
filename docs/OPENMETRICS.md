@@ -64,6 +64,7 @@ Define the referenced `otlp` exporter elsewhere in the Collector configuration.
 - `burrowgate_http_transferred_bytes_total`
 - `burrowgate_http_cache_requests_total`, `burrowgate_http_cache_stored_total`, and `burrowgate_http_cache_evictions_total`
 - `burrowgate_http_cache_served_bytes_total`, `burrowgate_http_cache_entries`, and `burrowgate_http_cache_size_bytes`
+- `burrowgate_http_protection_requests_total`, labeled only by site and bounded outcome (`clean`, `monitored`, or `blocked`)
 - `burrowgate_stream_events_total` and `burrowgate_stream_transferred_bytes_total`
 - `burrowgate_stream_active_connections`
 - `burrowgate_stream_listener_configured` and `burrowgate_stream_listener_up`

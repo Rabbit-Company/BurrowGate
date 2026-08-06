@@ -82,6 +82,7 @@ export function adminPage(): string {
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
   <button class="tab" data-tab="bandwidth" type="button">Bandwidth</button>
 	<button class="tab" data-tab="cache" type="button">Cache</button>
+	<button class="tab" data-tab="protection" type="button">Protection</button>
   <button class="tab" data-tab="sessions" type="button">Sessions</button>
   <button class="tab" data-tab="rules" type="button">Network rules</button>
   <button class="tab" data-tab="routes" type="button">Routes</button>
@@ -94,15 +95,16 @@ export function adminPage(): string {
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar traffic-toolbar">
       <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session..."></label>
-		<label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+		<label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="managed-protection-blocked">Managed protection blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
 		<label><span>Cache</span><select id="eventCacheStatus" class="select"><option value="">All</option><option value="hit">Hit</option><option value="miss">Miss</option><option value="bypass">Bypass</option></select></label>
+		<label><span>Protection</span><select id="eventProtectionStatus" class="select"><option value="">All</option><option value="clean">Clean</option><option value="monitored">Would block</option><option value="blocked">Blocked</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label id="eventOriginFilter" class="hidden"><span>Origin</span><select id="eventOrigin" class="select"><option value="">All origins</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Cache", "cache_status")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="9" class="empty-cell">Loading...</td></tr></tbody></table></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Cache", "cache_status")}</th><th>${sortButton("Protection", "protection_status")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="10" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>
@@ -157,6 +159,23 @@ export function adminPage(): string {
 	<article class="card">
 		<div class="pad section-heading"><div><h2>Top cache paths</h2><p class="muted">Requests in the selected date range, ranked by cache hits.</p></div></div>
 		<div class="table-wrap"><table class="table"><thead><tr><th>Path</th><th>Hits</th><th>Misses</th><th>Bypasses</th><th>Hit ratio</th></tr></thead><tbody id="cacheTopPaths"><tr><td colspan="5" class="empty-cell">Open the tab to load cache activity.</td></tr></tbody></table></div>
+	</article>
+</section>
+
+<section id="panel-protection" class="tab-panel hidden">
+	<section class="grid stats protection-history-stats">
+		<article class="card pad stat"><span class="muted">Requests inspected</span><strong id="protectionInspected">0</strong></article>
+		<article class="card pad stat"><span class="muted">Would block</span><strong id="protectionMonitored">0</strong></article>
+		<article class="card pad stat"><span class="muted">Blocked</span><strong id="protectionBlocked">0</strong></article>
+		<article class="card pad stat"><span class="muted">Matched rules</span><strong id="protectionRuleCount">0</strong></article>
+	</section>
+	<article class="card">
+		<div class="pad section-heading"><div><h2>Managed ruleset</h2><p class="muted">Monitor mode records requests that would be blocked without changing the response sent by the origin.</p></div><button id="configureProtection" class="button secondary" type="button">Configure site protection</button></div>
+		<div id="protectionRulesetSummary" class="pad pad-topless"><p class="muted">Loading managed ruleset information...</p></div>
+	</article>
+	<article class="card">
+		<div class="pad section-heading"><div><h2>Top matched rules</h2><p class="muted">Only rule metadata is stored. Request bodies and matched values are not retained.</p></div></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>Rule</th><th>Category</th><th>Severity</th><th>Would block</th><th>Blocked</th><th>Total</th></tr></thead><tbody id="protectionTopRules"><tr><td colspan="6" class="empty-cell">Open the tab to load protection activity.</td></tr></tbody></table></div>
 	</article>
 </section>
 
@@ -240,6 +259,13 @@ export function adminPage(): string {
               <label><span>Upstream buffer (bytes)</span><input id="routeWebSocketUpstreamBuffer" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Closes slow origin connections before memory use exceeds this value.</small></label>
             </div>
           </div>
+			<div class="policy-subsection">
+				<div class="section-heading compact-heading"><div><h3>Managed request protection</h3><p class="muted">Override enforcement for this route or exclude specific managed rule IDs.</p></div></div>
+				<div class="site-form-grid">
+					<label><span>Protection mode</span><select id="routeHttpProtectionMode" class="select"><option value="inherit">Inherit site default</option><option value="disabled">Disabled</option><option value="monitor">Monitor only</option><option value="block">Block matches</option></select><small class="muted">Monitor records what would be blocked while continuing to the origin.</small></label>
+					<label><span>Additional excluded rule IDs</span><textarea id="routeHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Route exclusions are added to site exclusions.</small></label>
+				</div>
+			</div>
           <div class="policy-subsection">
             <div class="section-heading compact-heading"><div><h3>HTTP headers and request limits</h3><p class="muted">Add route-specific header rules and override the site's request limits. Route header rules take precedence over matching site rules.</p></div></div>
             <div class="site-form-grid">
@@ -321,6 +347,7 @@ export function adminPage(): string {
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="access" aria-selected="false">Access</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="websocket" aria-selected="false">WebSocket</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="http" aria-selected="false">HTTP</button>
+			<button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="protection" aria-selected="false">Protection</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="origins" aria-selected="false">Origins</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="health" aria-selected="false">Health</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="responses" aria-selected="false">Responses</button>
@@ -338,6 +365,15 @@ export function adminPage(): string {
             </div>
             <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
           </section>
+					<section class="error-response-editor hidden" data-site-editor-panel="protection">
+						<div class="section-heading error-response-heading"><div><h3>Managed request protection</h3><p class="muted">Inspect requests with a versioned managed ruleset before they reach the origin.</p></div><span id="siteProtectionModeBadge" class="badge info">Monitor</span></div>
+						<div class="site-form-grid">
+							<label><span>Protection mode</span><select id="siteHttpProtectionMode" class="select"><option value="disabled">Disabled</option><option value="monitor" selected>Monitor only</option><option value="block">Block matches</option></select><small class="muted">Start in Monitor. Requests continue normally while potential blocks are recorded.</small></label>
+							<label><span>Managed ruleset</span><select id="siteHttpProtectionRuleset" class="select"><option value="default">Default managed ruleset</option></select><small id="siteProtectionRulesetHelp" class="muted">The active default ruleset is loaded by BurrowGate.</small></label>
+							<label class="site-origin-field"><span>Excluded rule IDs</span><textarea id="siteHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="5" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Use narrow route exclusions when only one endpoint requires an exception.</small></label>
+						</div>
+						<button id="openProtectionDashboard" class="button secondary" type="button">Open Protection dashboard</button>
+					</section>
           <section class="error-response-editor hidden" data-site-editor-panel="access">
             <div class="section-heading error-response-heading"><div><h3>Traffic and access</h3><p class="muted">Control client identity, verification defaults, session lifetime, and stored traffic history.</p></div></div>
             <div class="site-form-grid">

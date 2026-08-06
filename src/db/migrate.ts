@@ -168,6 +168,13 @@ CREATE TABLE IF NOT EXISTS request_events (
   country_code VARCHAR(2) NULL,
   origin_id VARCHAR(64) NULL,
 	cache_status VARCHAR(16) NULL,
+	protection_status VARCHAR(16) NULL,
+	protection_rule_id VARCHAR(128) NULL,
+	protection_category VARCHAR(64) NULL,
+	protection_severity VARCHAR(16) NULL,
+	protection_ruleset_id VARCHAR(128) NULL,
+	protection_ruleset_version VARCHAR(64) NULL,
+	protection_matches_json TEXT NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -382,6 +389,8 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_origin_created ON request_events (site_id, origin_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_cache_created ON request_events (site_id, cache_status, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_created ON request_events (site_id, protection_status, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_rule_created ON request_events (site_id, protection_rule_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -522,6 +531,13 @@ async function ensureRequestEventColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL",
 		"ALTER TABLE request_events ADD COLUMN cache_status VARCHAR(16) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_status VARCHAR(16) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_rule_id VARCHAR(128) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_category VARCHAR(64) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_severity VARCHAR(16) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_ruleset_id VARCHAR(128) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_ruleset_version VARCHAR(64) NULL",
+		"ALTER TABLE request_events ADD COLUMN protection_matches_json TEXT NULL",
 	]) {
 		try {
 			await db.unsafe(statement);

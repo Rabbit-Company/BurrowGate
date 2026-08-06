@@ -74,6 +74,7 @@ export class BurrowGateOpenMetrics {
 	private readonly httpCacheServed: Counter;
 	private readonly httpCacheEntries: Gauge;
 	private readonly httpCacheBytes: Gauge;
+	private readonly httpProtectionRequests: Counter;
 	private readonly streamEvents: Counter;
 	private readonly streamTransferred: Counter;
 	private readonly streamActiveConnections: Gauge;
@@ -167,6 +168,12 @@ export class BurrowGateOpenMetrics {
 			help: "Current static asset cache body size",
 			unit: "bytes",
 			labelNames: ["site_id"],
+			registry: this.registry,
+		});
+		this.httpProtectionRequests = new Counter({
+			name: "http_protection_requests",
+			help: "Managed request-protection inspections by outcome",
+			labelNames: ["site_id", "outcome"],
 			registry: this.registry,
 		});
 		this.streamEvents = new Counter({
@@ -351,6 +358,10 @@ export class BurrowGateOpenMetrics {
 		if (!this.enabled) return;
 		this.httpCacheEntries.labels({ site_id: siteId }).set(Math.max(0, entries));
 		this.httpCacheBytes.labels({ site_id: siteId }).set(Math.max(0, bytes));
+	}
+
+	recordHttpProtectionRequest(siteId: string, outcome: "clean" | "monitored" | "blocked"): void {
+		if (this.enabled) this.httpProtectionRequests.labels({ site_id: siteId, outcome }).inc();
 	}
 
 	recordStreamEvent(event: StreamEventRecord): void {

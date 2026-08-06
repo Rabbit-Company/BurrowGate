@@ -50,12 +50,13 @@ export interface EventQuery {
 	search?: string;
 	decision?: string;
 	cacheStatus?: "hit" | "miss" | "bypass";
+	protectionStatus?: "clean" | "monitored" | "blocked";
 	method?: string;
 	statusGroup?: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
 	countryCode?: string;
 	since?: number;
 	until?: number;
-	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "cache_status" | "latency_ms";
+	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "cache_status" | "protection_status" | "latency_ms";
 	sortDirection: SortDirection;
 }
 
@@ -643,7 +644,7 @@ export const repository = {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.created_at})`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -674,10 +675,11 @@ export const repository = {
 		const pattern = searchPattern(query.search);
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(cache_status,'')) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
+			? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(cache_status,'')) LIKE ${pattern} OR LOWER(COALESCE(protection_status,'')) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
 		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;
+		const protectionStatusFilter = query.protectionStatus ? db`AND protection_status=${query.protectionStatus}` : db``;
 		const originFilter = query.originId ? db`AND origin_id=${query.originId}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
@@ -699,11 +701,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT * FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as RequestEventRecord[];
@@ -728,7 +730,7 @@ export const repository = {
       SELECT
         ${bucketExpression} * ${bucketMs} AS bucket,
         COUNT(*) AS requests,
-        SUM(CASE WHEN decision IN ('blocked','route-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
+		SUM(CASE WHEN decision IN ('blocked','route-blocked','managed-protection-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
         COALESCE(AVG(latency_ms), 0) AS average_latency
       FROM request_events
@@ -845,6 +847,77 @@ export const repository = {
 					hitRatio: hits + misses > 0 ? hits / (hits + misses) : 0,
 				};
 			}),
+		};
+	},
+	async protectionMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{ bucket: number; clean: number; monitored: number; blocked: number }>;
+		totals: { inspected: number; clean: number; monitored: number; blocked: number };
+		topRules: Array<{ ruleId: string; category: string; severity: string; monitored: number; blocked: number; count: number }>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const bucket = metricBucketExpression("created_at", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        SUM(CASE WHEN protection_status='clean' THEN 1 ELSE 0 END) AS clean,
+        SUM(CASE WHEN protection_status='monitored' THEN 1 ELSE 0 END) AS monitored,
+        SUM(CASE WHEN protection_status='blocked' THEN 1 ELSE 0 END) AS blocked
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} AND protection_status IS NOT NULL ${siteFilter}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{ bucket: number | string; clean: number | string; monitored: number | string; blocked: number | string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (bucketStart) => ({ bucket: bucketStart, clean: 0, monitored: 0, blocked: 0 }));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		for (const row of rows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (!point) continue;
+			point.clean = toNumber(row.clean);
+			point.monitored = toNumber(row.monitored);
+			point.blocked = toNumber(row.blocked);
+		}
+		const totals = points.reduce(
+			(result, point) => {
+				result.clean += point.clean;
+				result.monitored += point.monitored;
+				result.blocked += point.blocked;
+				return result;
+			},
+			{ clean: 0, monitored: 0, blocked: 0 },
+		);
+		const rules = (await db`
+      SELECT protection_rule_id AS rule_id, protection_category AS category, protection_severity AS severity,
+        SUM(CASE WHEN protection_status='monitored' THEN 1 ELSE 0 END) AS monitored,
+        SUM(CASE WHEN protection_status='blocked' THEN 1 ELSE 0 END) AS blocked,
+        COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} AND protection_rule_id IS NOT NULL ${siteFilter}
+      GROUP BY protection_rule_id, protection_category, protection_severity
+      ORDER BY count DESC
+      LIMIT 20
+    `) as Array<{
+			rule_id: string;
+			category: string | null;
+			severity: string | null;
+			monitored: number | string;
+			blocked: number | string;
+			count: number | string;
+		}>;
+		return {
+			series: points,
+			totals: { ...totals, inspected: totals.clean + totals.monitored + totals.blocked },
+			topRules: rules.map((row) => ({
+				ruleId: row.rule_id,
+				category: row.category ?? "unknown",
+				severity: row.severity ?? "unknown",
+				monitored: toNumber(row.monitored),
+				blocked: toNumber(row.blocked),
+				count: toNumber(row.count),
+			})),
 		};
 	},
 	async bandwidthMetrics(
@@ -1109,7 +1182,7 @@ export const repository = {
         SUM(CASE WHEN decision IN ('proxied-unprotected','websocket-unprotected','allowlisted','websocket-allowlisted') THEN 1 ELSE 0 END) AS bypassed,
         SUM(CASE WHEN decision='challenge-required' THEN 1 ELSE 0 END) AS challenged,
         SUM(CASE WHEN decision='rate-limited' THEN 1 ELSE 0 END) AS rate_limited,
-        SUM(CASE WHEN decision IN ('route-blocked','websocket-policy-denied','request-limited') THEN 1 ELSE 0 END) AS blocked
+		SUM(CASE WHEN decision IN ('route-blocked','managed-protection-blocked','websocket-policy-denied','request-limited') THEN 1 ELSE 0 END) AS blocked
       FROM request_events
       WHERE site_id=${siteId} AND created_at >= ${since} AND created_at <= ${until}
       GROUP BY ${bucket}
@@ -1310,7 +1383,7 @@ export const repository = {
 		const [eventStats] = (await db`
       SELECT
         COUNT(*) AS requests,
-        SUM(CASE WHEN decision IN ('blocked','route-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
+		SUM(CASE WHEN decision IN ('blocked','route-blocked','managed-protection-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
 		SUM(CASE WHEN cache_status='hit' THEN 1 ELSE 0 END) AS cache_hits,
 		SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS cache_misses,
