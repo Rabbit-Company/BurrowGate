@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sites (
   load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover',
   load_balancing_affinity INTEGER NOT NULL DEFAULT 1,
   websocket_policy_json TEXT NULL,
+  http_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS route_policies (
   rate_limit_key_header VARCHAR(255) NULL,
   rate_limit_scope VARCHAR(32) NOT NULL DEFAULT 'policy',
   websocket_policy_json TEXT NULL,
+  http_policy_json TEXT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
@@ -456,6 +458,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover'",
 		"ALTER TABLE sites ADD COLUMN load_balancing_affinity INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN http_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -472,10 +475,15 @@ async function ensureSiteColumns(): Promise<void> {
 }
 
 async function ensureRoutePolicyColumns(): Promise<void> {
-	try {
-		await db.unsafe("ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL");
-	} catch (error) {
-		if (!duplicateColumnError(error)) throw error;
+	for (const statement of [
+		"ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL",
+		"ALTER TABLE route_policies ADD COLUMN http_policy_json TEXT NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
 	}
 }
 

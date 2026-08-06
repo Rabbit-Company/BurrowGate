@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { proxyRequest } from "../src/services/proxy-service.ts";
+import { proxyRequest, RequestBodyTooLargeError } from "../src/services/proxy-service.ts";
+import type { ResolvedHttpPolicy } from "../src/services/http-policy-service.ts";
 import type { SiteRecord } from "../src/types.ts";
 
 const plainBody = new TextEncoder().encode("Compressed reverse-proxy response from a qBittorrent or Sonarr-like origin.");
@@ -8,6 +9,8 @@ let receivedHost: string | null = null;
 let receivedContentLength: string | null = null;
 let receivedTransferEncoding: string | null = null;
 let receivedRequestBody: string | null = null;
+let receivedPolicyHeader: string | null = null;
+let receivedRemovedHeader: string | null = null;
 
 const origin = Bun.serve({
 	hostname: "127.0.0.1",
@@ -22,6 +25,11 @@ const origin = Bun.serve({
 			receivedTransferEncoding = request.headers.get("transfer-encoding");
 			receivedRequestBody = await request.text();
 			return new Response("ok");
+		}
+		if (new URL(request.url).pathname === "/header-policy") {
+			receivedPolicyHeader = request.headers.get("x-policy");
+			receivedRemovedHeader = request.headers.get("x-remove-me");
+			return new Response("headers", { headers: { "x-origin-remove": "yes", "x-origin-keep": "yes" } });
 		}
 		return new Response(compressedBody, {
 			headers: {
@@ -55,6 +63,12 @@ const site: SiteRecord = {
 	challenge_html_template: "",
 	created_at: Date.now(),
 	updated_at: Date.now(),
+};
+
+const headerPolicy: ResolvedHttpPolicy = {
+	requestHeaders: { set: [{ name: "x-policy", value: "route" }], remove: ["x-remove-me"] },
+	responseHeaders: { set: [{ name: "content-security-policy", value: "default-src 'self'" }], remove: ["x-origin-remove"] },
+	limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
 };
 
 describe("reverse-proxy compression", () => {
@@ -124,6 +138,38 @@ describe("reverse-proxy compression", () => {
 		expect(receivedContentLength).toBe(String(Buffer.byteLength(body)));
 		expect(receivedTransferEncoding).toBeNull();
 		expect(receivedRequestBody).toBe(body);
+	});
+
+	test("applies request and response header policies at the origin boundary", async () => {
+		const response = await proxyRequest(
+			new Request("http://proxy.test/header-policy", { headers: { "x-remove-me": "client" } }),
+			site,
+			"127.0.0.1",
+			null,
+			undefined,
+			null,
+			false,
+			null,
+			site.origin_url,
+			headerPolicy,
+		);
+
+		expect(response.status).toBe(200);
+		expect(receivedPolicyHeader).toBe("route");
+		expect(receivedRemovedHeader).toBeNull();
+		expect(response.headers.get("content-security-policy")).toBe("default-src 'self'");
+		expect(response.headers.has("x-origin-remove")).toBe(false);
+		expect(response.headers.get("x-origin-keep")).toBe("yes");
+	});
+
+	test("enforces the body limit when content length is unavailable", async () => {
+		const limitedPolicy: ResolvedHttpPolicy = { ...headerPolicy, limits: { ...headerPolicy.limits, maxBodyBytes: 4 } };
+		const request = new Request("http://proxy.test/form-test", { method: "POST", body: "12345" });
+		expect(request.headers.has("content-length")).toBe(false);
+
+		await expect(proxyRequest(request, site, "127.0.0.1", null, undefined, null, false, null, site.origin_url, limitedPolicy)).rejects.toBeInstanceOf(
+			RequestBodyTooLargeError,
+		);
 	});
 
 	test("writes fixed-length request framing on the upstream connection", async () => {

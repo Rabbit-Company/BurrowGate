@@ -27,6 +27,7 @@ import {
 import { DEFAULT_CHALLENGE_HTML_TEMPLATE, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
+import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } from "./http-policy-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -48,6 +49,7 @@ export interface SiteInput {
 	loadBalancer?: unknown;
 	ipExtractionPreset?: unknown;
 	websocket?: unknown;
+	http?: unknown;
 }
 
 export interface SiteView {
@@ -81,6 +83,7 @@ export interface SiteView {
 	};
 	loadBalancer: { algorithm: LoadBalancingAlgorithm; affinity: boolean };
 	websocket: SiteWebSocketPolicyView;
+	http: SiteHttpPolicyView;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -353,6 +356,7 @@ export function siteView(site: SiteRecord): SiteView {
 			affinity: site.load_balancing_affinity !== 0,
 		},
 		websocket: siteWebSocketPolicyView(site),
+		http: siteHttpPolicyView(site),
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -400,6 +404,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket),
+		http_policy_json: serializeSiteHttpPolicy(input.http),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
@@ -469,6 +474,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket, existing.websocket_policy_json),
+		http_policy_json: serializeSiteHttpPolicy(input.http, existing.http_policy_json),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};

@@ -211,6 +211,7 @@ Each site contains:
 - HTML or JSON error-response settings
 - origin health-check thresholds, failure behavior, and webhook alerts
 - a load-balancing algorithm, sticky affinity behavior, and an origin pool with per-origin priority, weight, drain state, and health-path override
+- HTTP request/response header policies and request-size limits, with route-level overrides
 
 The selected site is stored in the dashboard URL. Traffic, sessions, network rules, route policies, and actions are scoped to that site.
 
@@ -296,6 +297,12 @@ Identity: IP address
 This allows non-browser API clients to work normally while BurrowGate applies request limits at the edge.
 
 Rate limits can use the client IP, a verified BurrowGate session, or a selected application header. Counters can be shared across the policy or separated by path and method.
+
+### Header policies and request limits
+
+The site's **HTTP** tab can set or remove request headers before an origin request and response headers before the origin response is returned to the client. Route policies can add their own rules. A route rule for the same header takes precedence over the site rule. Connection framing, public-host forwarding, client-IP forwarding, and signed `X-BurrowGate-*` identity headers remain proxy-managed and cannot be overridden.
+
+Each site can also limit request-body bytes, request-target bytes (path plus query string), and combined parsed request-header bytes. A value of `0` is unlimited. Route limits are blank when inherited and can use `0` to explicitly remove the site limit. BurrowGate rejects violations with `413`, `414`, or `431`, records a `request-limited` traffic event, and counts streamed request bodies so chunked uploads cannot bypass the configured maximum.
 
 See [`docs/ROUTE_POLICIES.md`](docs/ROUTE_POLICIES.md).
 

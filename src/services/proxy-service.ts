@@ -8,11 +8,19 @@ import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
+import { applyHeaderPolicy, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
 // Content-Length even after the incoming body has passed through the proxy.
 // Larger uploads keep streaming to avoid unbounded per-request memory use.
 const FIXED_LENGTH_BODY_BUFFER_LIMIT = 1 * 1_024 * 1_024;
+
+export class RequestBodyTooLargeError extends Error {
+	constructor(readonly maximumBytes: number) {
+		super(`Request body exceeds the configured limit of ${maximumBytes} bytes`);
+		this.name = "RequestBodyTooLargeError";
+	}
+}
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
 	return upstreamUrlForOrigin(site.origin_url, request);
@@ -155,22 +163,45 @@ function downstreamHeaders(response: Response, target: URL, incoming: URL, trans
 interface UpstreamRequestBody {
 	body: RequestInit["body"];
 	bufferedBytes: number;
+	limitState: { exceeded: boolean };
 }
 
-async function upstreamRequestBody(request: Request, headers: Headers, bandwidth: BandwidthContext): Promise<UpstreamRequestBody> {
-	if (["GET", "HEAD"].includes(request.method) || !request.body) return { body: null, bufferedBytes: 0 };
+async function upstreamRequestBody(request: Request, headers: Headers, bandwidth: BandwidthContext, maxBodyBytes: number): Promise<UpstreamRequestBody> {
+	const limitState = { exceeded: false };
+	if (["GET", "HEAD"].includes(request.method) || !request.body) return { body: null, bufferedBytes: 0, limitState };
 
 	const rawContentLength = request.headers.get("content-length");
 	const contentLength = rawContentLength === null ? null : Number(rawContentLength);
 	if (contentLength !== null && Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= FIXED_LENGTH_BODY_BUFFER_LIMIT) {
 		const body = new Uint8Array(await request.arrayBuffer());
+		if (maxBodyBytes > 0 && body.byteLength > maxBodyBytes) {
+			recordBandwidth(bandwidth, { clientReceivedBytes: body.byteLength });
+			throw new RequestBodyTooLargeError(maxBodyBytes);
+		}
 		headers.set("content-length", String(body.byteLength));
-		return { body, bufferedBytes: body.byteLength };
+		return { body, bufferedBytes: body.byteLength, limitState };
 	}
 
+	let receivedBytes = 0;
+	const body = request.body.pipeThrough(
+		new TransformStream<Uint8Array, Uint8Array>({
+			transform(chunk, controller) {
+				receivedBytes += chunk.byteLength;
+				recordBandwidth(bandwidth, { clientReceivedBytes: chunk.byteLength });
+				if (maxBodyBytes > 0 && receivedBytes > maxBodyBytes) {
+					limitState.exceeded = true;
+					controller.error(new RequestBodyTooLargeError(maxBodyBytes));
+					return;
+				}
+				recordBandwidth(bandwidth, { upstreamSentBytes: chunk.byteLength });
+				controller.enqueue(chunk);
+			},
+		}),
+	);
 	return {
-		body: meteredBody(request.body, bandwidth, (bytes) => ({ clientReceivedBytes: bytes, upstreamSentBytes: bytes })),
+		body,
 		bufferedBytes: 0,
+		limitState,
 	};
 }
 
@@ -184,6 +215,7 @@ export async function proxyRequest(
 	sendUsernameToUpstream = false,
 	countryCode: string | null = null,
 	originUrl: string = site.origin_url,
+	httpPolicy: ResolvedHttpPolicy = resolveHttpPolicy(site),
 ): Promise<Response> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
@@ -207,23 +239,30 @@ export async function proxyRequest(
 	const transport = requestTransport(request);
 	const target = upstreamUrlForOrigin(originUrl, request);
 	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
+	applyHeaderPolicy(headers, httpPolicy.requestHeaders);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
-	const requestBody = await upstreamRequestBody(request, headers, bandwidth);
+	const requestBody = await upstreamRequestBody(request, headers, bandwidth, httpPolicy.limits.maxBodyBytes);
 
-	const response = await fetch(target, {
-		method: request.method,
-		headers,
-		body: requestBody.body,
-		redirect: "manual",
-		signal: AbortSignal.timeout(config.originTimeoutMs),
+	let response: Response;
+	try {
+		response = await fetch(target, {
+			method: request.method,
+			headers,
+			body: requestBody.body,
+			redirect: "manual",
+			signal: AbortSignal.timeout(config.originTimeoutMs),
 
-		// A reverse proxy must preserve the representation received from the
-		// origin. With Bun's default `decompress: true`, the body is decoded while
-		// Content-Encoding/Content-Length still describe the compressed payload.
-		// Forwarding that combination makes browsers attempt a second decode and
-		// results in ERR_CONTENT_DECODING_FAILED.
-		decompress: false,
-	});
+			// A reverse proxy must preserve the representation received from the
+			// origin. With Bun's default `decompress: true`, the body is decoded while
+			// Content-Encoding/Content-Length still describe the compressed payload.
+			// Forwarding that combination makes browsers attempt a second decode and
+			// results in ERR_CONTENT_DECODING_FAILED.
+			decompress: false,
+		});
+	} catch (error) {
+		if (requestBody.limitState.exceeded) throw new RequestBodyTooLargeError(httpPolicy.limits.maxBodyBytes);
+		throw error;
+	}
 	if (requestBody.bufferedBytes > 0) {
 		recordBandwidth(bandwidth, {
 			clientReceivedBytes: requestBody.bufferedBytes,
@@ -232,9 +271,11 @@ export async function proxyRequest(
 	}
 
 	const responseBody = meteredBody(response.body, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
+	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
+	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
 	return new Response(responseBody, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: downstreamHeaders(response, target, incoming, transport),
+		headers: responseHeaders,
 	});
 }

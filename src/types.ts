@@ -117,6 +117,7 @@ export interface SiteRecord {
 	load_balancing_algorithm?: LoadBalancingAlgorithm;
 	load_balancing_affinity?: number;
 	websocket_policy_json?: string | null;
+	http_policy_json?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -204,6 +205,7 @@ export interface RoutePolicyRecord {
 	rate_limit_key_header: string | null;
 	rate_limit_scope: RateLimitScope;
 	websocket_policy_json?: string | null;
+	http_policy_json?: string | null;
 	priority: number;
 	enabled: number;
 	created_at: number;

@@ -17,7 +17,7 @@ import { evaluateIp } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
-import { proxyRequest, type OriginAccessStatus } from "./services/proxy-service.ts";
+import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { findAccessSession, userAgentHash } from "./services/session-service.ts";
 import { resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
 import { resolveRoutePolicy } from "./services/route-policy-service.ts";
@@ -41,6 +41,7 @@ import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
+import { requestLimitViolation } from "./services/http-policy-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -205,6 +206,24 @@ async function gateway(ctx: any): Promise<Response> {
 			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This route is not available.",
 		});
 	}
+	const limitViolation = requestLimitViolation(request, route.http.limits);
+	if (limitViolation) {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: limitViolation.status,
+			decision: "request-limited",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: limitViolation.status,
+			code: limitViolation.code,
+			error: "Request limit exceeded",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: limitViolation.message,
+		});
+	}
 	const accessSettings = await accessSettingsForSite(site.id);
 	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
@@ -365,12 +384,14 @@ async function gateway(ctx: any): Promise<Response> {
 				accessSettings.send_username_to_upstream === 1,
 				eventBase.countryCode ?? null,
 				selectedOrigin!.origin_url,
+				route.http,
 			);
 		let response: Response;
 		try {
 			response = await proxySelectedOrigin();
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		} catch (firstError) {
+			if (firstError instanceof RequestBodyTooLargeError) throw firstError;
 			loadBalancer.reportPassiveFailure(selectedOrigin.id);
 			if (!["GET", "HEAD"].includes(request.method)) throw firstError;
 			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
@@ -394,6 +415,24 @@ async function gateway(ctx: any): Promise<Response> {
 		});
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError) {
+			await recordEvent({
+				...eventBase,
+				sessionId: session?.id ?? null,
+				status: 413,
+				decision: "request-limited",
+				originId: selectedOrigin.id,
+				latencyMs: Math.round(performance.now() - started),
+			});
+			return siteErrorResponse(site, request, {
+				status: 413,
+				code: "request_body_too_large",
+				error: "Request limit exceeded",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: `The request body exceeds this route's configured limit of ${error.maximumBytes} bytes.`,
+			});
+		}
 		loadBalancer.reportPassiveFailure(selectedOrigin.id);
 		await recordEvent({
 			...eventBase,

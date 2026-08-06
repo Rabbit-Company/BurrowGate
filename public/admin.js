@@ -82,6 +82,67 @@ function optionalNumberInput(id) {
 	return value ? Number(value) : null;
 }
 
+function parseHeaderAssignments(id, label) {
+	return byId(id)
+		.value.split(/\r?\n/u)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line, index) => {
+			const separator = line.indexOf(":");
+			if (separator < 1) throw new Error(`${label} line ${index + 1} must use Name: value`);
+			return { name: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() };
+		});
+}
+
+function parseHeaderNames(id) {
+	return byId(id)
+		.value.split(/[\r\n,]+/u)
+		.map((name) => name.trim())
+		.filter(Boolean);
+}
+
+function formatHeaderAssignments(assignments) {
+	return (assignments ?? []).map((assignment) => `${assignment.name}: ${assignment.value}`).join("\n");
+}
+
+function formatHeaderNames(names) {
+	return (names ?? []).join("\n");
+}
+
+function readHttpPolicy(prefix, routeOverrides) {
+	return {
+		requestHeaders: {
+			set: parseHeaderAssignments(`${prefix}RequestHeadersSet`, "Request header policy"),
+			remove: parseHeaderNames(`${prefix}RequestHeadersRemove`),
+		},
+		responseHeaders: {
+			set: parseHeaderAssignments(`${prefix}ResponseHeadersSet`, "Response header policy"),
+			remove: parseHeaderNames(`${prefix}ResponseHeadersRemove`),
+		},
+		limits: {
+			maxBodyBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxBodyBytes`) : Number(byId(`${prefix}MaxBodyBytes`).value),
+			maxRequestTargetBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxRequestTargetBytes`) : Number(byId(`${prefix}MaxRequestTargetBytes`).value),
+			maxHeaderBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxHeaderBytes`) : Number(byId(`${prefix}MaxHeaderBytes`).value),
+		},
+	};
+}
+
+function writeHttpPolicy(prefix, policy, routeOverrides) {
+	const http = policy ?? {};
+	byId(`${prefix}RequestHeadersSet`).value = formatHeaderAssignments(http.requestHeaders?.set);
+	byId(`${prefix}RequestHeadersRemove`).value = formatHeaderNames(http.requestHeaders?.remove);
+	byId(`${prefix}ResponseHeadersSet`).value = formatHeaderAssignments(http.responseHeaders?.set);
+	byId(`${prefix}ResponseHeadersRemove`).value = formatHeaderNames(http.responseHeaders?.remove);
+	for (const [suffix, key] of [
+		["MaxBodyBytes", "maxBodyBytes"],
+		["MaxRequestTargetBytes", "maxRequestTargetBytes"],
+		["MaxHeaderBytes", "maxHeaderBytes"],
+	]) {
+		const value = http.limits?.[key];
+		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? 0);
+	}
+}
+
 function twoDigits(value) {
 	return String(value).padStart(2, "0");
 }
@@ -377,7 +438,8 @@ function decisionClass(decision) {
 		].includes(decision)
 	)
 		return "bad";
-	if (["challenge-required", "websocket-disabled", "rate-limited", "access-login-required", "access-login-rate-limited"].includes(decision)) return "warn";
+	if (["challenge-required", "websocket-disabled", "rate-limited", "request-limited", "access-login-required", "access-login-rate-limited"].includes(decision))
+		return "warn";
 	if (["allowlisted", "websocket-allowlisted", "proxied-unprotected", "websocket-unprotected"].includes(decision)) return "info";
 	return "ok";
 }
@@ -1022,6 +1084,7 @@ function resetSiteForm() {
 	byId("siteWebSocketPreOpenQueue").value = String(websocketDefaults.preOpenQueueBytes);
 	byId("siteWebSocketUpstreamBuffer").value = String(websocketDefaults.upstreamBufferBytes);
 	updateSiteWebSocketControls();
+	writeHttpPolicy("siteHttp", null, false);
 	byId("originPoolRuntime").classList.add("hidden");
 	siteOrigins = [];
 	resetOriginForm();
@@ -1088,6 +1151,7 @@ function editSite(id) {
 	byId("siteWebSocketPreOpenQueue").value = String(websocket.preOpenQueueBytes ?? websocketDefaults.preOpenQueueBytes);
 	byId("siteWebSocketUpstreamBuffer").value = String(websocket.upstreamBufferBytes ?? websocketDefaults.upstreamBufferBytes);
 	updateSiteWebSocketControls();
+	writeHttpPolicy("siteHttp", site.http, false);
 	byId("originPoolRuntime").classList.remove("hidden");
 	resetOriginForm();
 	const health = site.healthCheck ?? {};
@@ -1242,6 +1306,15 @@ async function saveSite(event) {
 		submit.disabled = false;
 		return;
 	}
+	let httpPolicy;
+	try {
+		httpPolicy = readHttpPolicy("siteHttp", false);
+	} catch (error) {
+		setSiteEditorTab("http");
+		showToast(error.message, "bad");
+		submit.disabled = false;
+		return;
+	}
 	const errorResponseMode = byId("siteErrorResponseMode").value;
 	const errorJsonFields = selectedErrorJsonFields();
 	if (errorResponseMode === "json" && errorJsonFields.length === 0) {
@@ -1299,6 +1372,7 @@ async function saveSite(event) {
 			preOpenQueueBytes: Number(byId("siteWebSocketPreOpenQueue").value),
 			upstreamBufferBytes: Number(byId("siteWebSocketUpstreamBuffer").value),
 		},
+		http: httpPolicy,
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1420,6 +1494,7 @@ function resetRoutePolicyForm() {
 	byId("routeWebSocketMaxPayload").value = "";
 	byId("routeWebSocketPreOpenQueue").value = "";
 	byId("routeWebSocketUpstreamBuffer").value = "";
+	writeHttpPolicy("routeHttp", null, true);
 	byId("routeRateEnabled").checked = false;
 	byId("routeRateAlgorithm").value = "sliding-window";
 	byId("routeRateMax").value = "120";
@@ -1456,6 +1531,7 @@ function editRoutePolicy(id) {
 	byId("routeWebSocketMaxPayload").value = websocket.maxPayloadBytes ?? "";
 	byId("routeWebSocketPreOpenQueue").value = websocket.preOpenQueueBytes ?? "";
 	byId("routeWebSocketUpstreamBuffer").value = websocket.upstreamBufferBytes ?? "";
+	writeHttpPolicy("routeHttp", policy.http, true);
 	byId("routeRateEnabled").checked = Boolean(policy.rateLimit.enabled);
 	byId("routeRateAlgorithm").value = policy.rateLimit.algorithm;
 	byId("routeRateMax").value = String(policy.rateLimit.max);
@@ -1609,6 +1685,14 @@ async function saveRoutePolicy(event) {
 			return;
 		}
 	}
+	let httpPolicy;
+	try {
+		httpPolicy = readHttpPolicy("routeHttp", true);
+	} catch (error) {
+		showToast(error.message, "bad");
+		submit.disabled = false;
+		return;
+	}
 	const payload = {
 		name: byId("routePolicyName").value.trim(),
 		pathPattern: byId("routePolicyPath").value.trim(),
@@ -1635,6 +1719,7 @@ async function saveRoutePolicy(event) {
 			preOpenQueueBytes: optionalNumberInput("routeWebSocketPreOpenQueue"),
 			upstreamBufferBytes: optionalNumberInput("routeWebSocketUpstreamBuffer"),
 		},
+		http: httpPolicy,
 	};
 	try {
 		const editing = Boolean(editingRoutePolicyId);

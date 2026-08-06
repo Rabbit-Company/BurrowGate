@@ -93,7 +93,7 @@ export function adminPage(): string {
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar traffic-toolbar">
       <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session..."></label>
-      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
+      <label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
       <label><span>Method</span><select id="eventMethod" class="select"><option value="">All</option><option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>OPTIONS</option></select></label>
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label id="eventOriginFilter" class="hidden"><span>Origin</span><select id="eventOrigin" class="select"><option value="">All origins</option></select></label>
@@ -174,7 +174,7 @@ export function adminPage(): string {
 <section id="panel-routes" class="tab-panel hidden">
   <div class="route-policy-layout">
     <article class="card route-policy-list-card">
-      <div class="pad section-heading"><div><h2>Route policies</h2><p class="muted">The highest-priority matching policy controls access and rate limiting. IP blocks still apply globally.</p></div><div class="row"><button id="refreshRoutePolicies" class="button secondary" type="button">Refresh</button><button id="newRoutePolicy" class="button" type="button">Create</button></div></div>
+      <div class="pad section-heading"><div><h2>Route policies</h2><p class="muted">The highest-priority matching policy controls access, transport, headers, and limits. IP blocks still apply globally.</p></div><div class="row"><button id="refreshRoutePolicies" class="button secondary" type="button">Refresh</button><button id="newRoutePolicy" class="button" type="button">Create</button></div></div>
       <div id="routePolicyList" class="route-policy-list"><div class="empty-state-inline">Open the tab to load route policies.</div></div>
     </article>
     <article class="card route-policy-editor-card">
@@ -204,6 +204,20 @@ export function adminPage(): string {
               <label><span>Maximum message (bytes)</span><input id="routeWebSocketMaxPayload" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Applies in both directions.</small></label>
               <label><span>Pre-open queue (bytes)</span><input id="routeWebSocketPreOpenQueue" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Buffers origin messages until the browser upgrade opens.</small></label>
               <label><span>Upstream buffer (bytes)</span><input id="routeWebSocketUpstreamBuffer" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Closes slow origin connections before memory use exceeds this value.</small></label>
+            </div>
+          </div>
+          <div class="policy-subsection">
+            <div class="section-heading compact-heading"><div><h3>HTTP headers and request limits</h3><p class="muted">Add route-specific header rules and override the site's request limits. Route header rules take precedence over matching site rules.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Maximum body (bytes)</span><input id="routeHttpMaxBodyBytes" class="input" type="number" min="0" max="1099511627776" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site. Use 0 for unlimited.</small></label>
+              <label><span>Maximum request target (bytes)</span><input id="routeHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the path and query string. Blank inherits; 0 is unlimited.</small></label>
+              <label><span>Maximum request headers (bytes)</span><input id="routeHttpMaxHeaderBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the combined parsed request headers. Blank inherits; 0 is unlimited.</small></label>
+            </div>
+            <div class="site-form-grid">
+              <label><span>Set request headers</span><textarea id="routeHttpRequestHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>
+              <label><span>Remove request headers</span><textarea id="routeHttpRequestHeadersRemove" class="input code-input" rows="5" spellcheck="false" placeholder="X-Legacy-Header"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
+              <label><span>Set response headers</span><textarea id="routeHttpResponseHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="Cache-Control: private"></textarea><small class="muted">Applied to responses returned by the origin.</small></label>
+              <label><span>Remove response headers</span><textarea id="routeHttpResponseHeadersRemove" class="input code-input" rows="5" spellcheck="false" placeholder="X-Powered-By"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
             </div>
           </div>
           <div class="policy-subsection">
@@ -265,6 +279,7 @@ export function adminPage(): string {
           <button class="site-editor-tab active" role="tab" type="button" data-site-editor-tab="general" aria-selected="true">General</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="access" aria-selected="false">Access</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="websocket" aria-selected="false">WebSocket</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="http" aria-selected="false">HTTP</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="origins" aria-selected="false">Origins</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="health" aria-selected="false">Health</button>
           <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="responses" aria-selected="false">Responses</button>
@@ -304,6 +319,21 @@ export function adminPage(): string {
               <label><span>Upstream buffer (bytes)</span><input id="siteWebSocketUpstreamBuffer" class="input" type="number" min="1024" step="1" required><small class="muted">Maximum queued data while the origin is receiving slowly.</small></label>
             </div>
             <p id="siteWebSocketDisabledNotice" class="notice muted hidden">WebSocket proxying is disabled for this BurrowGate instance. Site settings are saved but cannot enable it above the instance policy.</p>
+          </section>
+          <section class="error-response-editor hidden" data-site-editor-panel="http">
+            <div class="section-heading error-response-heading"><div><h3>Request limits</h3><p class="muted">Set safe HTTP request ceilings for this site. Matching route policies can inherit or override each limit.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Maximum body (bytes)</span><input id="siteHttpMaxBodyBytes" class="input" type="number" min="0" max="1099511627776" step="1" value="0" required><small class="muted">Rejects oversized bodies with 413. Use 0 for unlimited.</small></label>
+              <label><span>Maximum request target (bytes)</span><input id="siteHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" value="0" required><small class="muted">Limits the path and query string; 0 is unlimited.</small></label>
+              <label><span>Maximum request headers (bytes)</span><input id="siteHttpMaxHeaderBytes" class="input" type="number" min="0" max="1048576" step="1" value="0" required><small class="muted">Limits the combined parsed request headers; 0 is unlimited.</small></label>
+            </div>
+            <div class="section-heading error-response-heading"><div><h3>Header policies</h3><p class="muted">Change headers at the origin boundary. BurrowGate keeps routing, framing, forwarding, and signed identity headers under proxy control.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Set request headers</span><textarea id="siteHttpRequestHeadersSet" class="input code-input" rows="6" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>
+              <label><span>Remove request headers</span><textarea id="siteHttpRequestHeadersRemove" class="input code-input" rows="6" spellcheck="false" placeholder="X-Legacy-Header"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
+              <label><span>Set response headers</span><textarea id="siteHttpResponseHeadersSet" class="input code-input" rows="6" spellcheck="false" placeholder="Strict-Transport-Security: max-age=31536000"></textarea><small class="muted">Applied to responses returned by the origin.</small></label>
+              <label><span>Remove response headers</span><textarea id="siteHttpResponseHeadersRemove" class="input code-input" rows="6" spellcheck="false" placeholder="X-Powered-By"></textarea><small class="muted">One header name per line or comma-separated. Removing <code>Set-Cookie</code> also removes origin cookies.</small></label>
+            </div>
           </section>
           <section class="error-response-editor hidden" data-site-editor-panel="access">
             <div class="section-heading error-response-heading"><div><h3>Origin trust and verification</h3><p class="muted">Sign trusted identity headers and define the default browser challenge chain.</p></div></div>
