@@ -7,7 +7,12 @@ import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
-import { meteredBody, type BandwidthContext } from "./bandwidth-service.ts";
+import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
+
+// Buffer ordinary forms and API payloads so Bun can derive an exact upstream
+// Content-Length even after the incoming body has passed through the proxy.
+// Larger uploads keep streaming to avoid unbounded per-request memory use.
+const FIXED_LENGTH_BODY_BUFFER_LIMIT = 1 * 1_024 * 1_024;
 
 export function upstreamUrl(site: SiteRecord, request: Request): URL {
 	return upstreamUrlForOrigin(site.origin_url, request);
@@ -147,6 +152,28 @@ function downstreamHeaders(response: Response, target: URL, incoming: URL, trans
 	return headers;
 }
 
+interface UpstreamRequestBody {
+	body: RequestInit["body"];
+	bufferedBytes: number;
+}
+
+async function upstreamRequestBody(request: Request, headers: Headers, bandwidth: BandwidthContext): Promise<UpstreamRequestBody> {
+	if (["GET", "HEAD"].includes(request.method) || !request.body) return { body: null, bufferedBytes: 0 };
+
+	const rawContentLength = request.headers.get("content-length");
+	const contentLength = rawContentLength === null ? null : Number(rawContentLength);
+	if (contentLength !== null && Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= FIXED_LENGTH_BODY_BUFFER_LIMIT) {
+		const body = new Uint8Array(await request.arrayBuffer());
+		headers.set("content-length", String(body.byteLength));
+		return { body, bufferedBytes: body.byteLength };
+	}
+
+	return {
+		body: meteredBody(request.body, bandwidth, (bytes) => ({ clientReceivedBytes: bytes, upstreamSentBytes: bytes })),
+		bufferedBytes: 0,
+	};
+}
+
 export async function proxyRequest(
 	request: Request,
 	site: SiteRecord,
@@ -180,14 +207,13 @@ export async function proxyRequest(
 	const transport = requestTransport(request);
 	const target = upstreamUrlForOrigin(originUrl, request);
 	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
-	const hasBody = !["GET", "HEAD"].includes(request.method);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
-	const requestBody = hasBody ? meteredBody(request.body, bandwidth, (bytes) => ({ clientReceivedBytes: bytes, upstreamSentBytes: bytes })) : null;
+	const requestBody = await upstreamRequestBody(request, headers, bandwidth);
 
 	const response = await fetch(target, {
 		method: request.method,
 		headers,
-		body: requestBody,
+		body: requestBody.body,
 		redirect: "manual",
 		signal: AbortSignal.timeout(config.originTimeoutMs),
 
@@ -198,6 +224,12 @@ export async function proxyRequest(
 		// results in ERR_CONTENT_DECODING_FAILED.
 		decompress: false,
 	});
+	if (requestBody.bufferedBytes > 0) {
+		recordBandwidth(bandwidth, {
+			clientReceivedBytes: requestBody.bufferedBytes,
+			upstreamSentBytes: requestBody.bufferedBytes,
+		});
+	}
 
 	const responseBody = meteredBody(response.body, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
 	return new Response(responseBody, {
