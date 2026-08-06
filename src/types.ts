@@ -8,6 +8,8 @@ export type RouteAccessMode = "inherit" | "challenge" | "bypass" | "block";
 export type RateLimitAlgorithm = "fixed-window" | "sliding-window" | "token-bucket";
 export type RateLimitKeyMode = "ip" | "session-or-ip" | "header-or-ip";
 export type RateLimitScope = "policy" | "path" | "method-path";
+export type SiteWebSocketMode = "allow" | "deny";
+export type RouteWebSocketMode = "inherit" | SiteWebSocketMode;
 
 export type ErrorResponseMode = "html" | "json";
 export type OriginHealthState = "unknown" | "healthy" | "degraded" | "unhealthy" | "disabled";
@@ -114,6 +116,7 @@ export interface SiteRecord {
 	health_alert_webhook_secret?: string | null;
 	load_balancing_algorithm?: LoadBalancingAlgorithm;
 	load_balancing_affinity?: number;
+	websocket_policy_json?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -200,6 +203,7 @@ export interface RoutePolicyRecord {
 	rate_limit_key_mode: RateLimitKeyMode;
 	rate_limit_key_header: string | null;
 	rate_limit_scope: RateLimitScope;
+	websocket_policy_json?: string | null;
 	priority: number;
 	enabled: number;
 	created_at: number;

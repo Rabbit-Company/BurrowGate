@@ -51,6 +51,7 @@ import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts"
 import { originHealthManager } from "../services/origin-health-service.ts";
 import { loadBalancer } from "../services/load-balancer-service.ts";
 import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
+import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
 
 async function guard(request: Request): Promise<Response | null> {
 	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
@@ -204,6 +205,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			items: (await repository.allSites()).map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
+			websocketDefaults: instanceWebSocketDefaults(),
 			errorResponseDefaults: {
 				mode: "json",
 				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,

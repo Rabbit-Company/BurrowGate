@@ -26,6 +26,7 @@ import {
 } from "./error-response-service.ts";
 import { DEFAULT_CHALLENGE_HTML_TEMPLATE, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
+import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -46,6 +47,7 @@ export interface SiteInput {
 	healthCheck?: unknown;
 	loadBalancer?: unknown;
 	ipExtractionPreset?: unknown;
+	websocket?: unknown;
 }
 
 export interface SiteView {
@@ -78,6 +80,7 @@ export interface SiteView {
 		alerts: { enabled: boolean; provider: HealthAlertProvider; webhookConfigured: boolean };
 	};
 	loadBalancer: { algorithm: LoadBalancingAlgorithm; affinity: boolean };
+	websocket: SiteWebSocketPolicyView;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -349,6 +352,7 @@ export function siteView(site: SiteRecord): SiteView {
 			algorithm: site.load_balancing_algorithm ?? "failover",
 			affinity: site.load_balancing_affinity !== 0,
 		},
+		websocket: siteWebSocketPolicyView(site),
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -395,6 +399,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		health_alert_webhook_secret: health.webhookSecret ? await encryptSecret(health.webhookSecret) : null,
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
+		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
@@ -463,6 +468,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 				: existing.health_alert_webhook_secret,
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
+		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket, existing.websocket_policy_json),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};

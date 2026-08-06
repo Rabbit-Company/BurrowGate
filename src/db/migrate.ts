@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS sites (
   health_alert_webhook_secret TEXT NULL,
   load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover',
   load_balancing_affinity INTEGER NOT NULL DEFAULT 1,
+  websocket_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS route_policies (
   rate_limit_key_mode VARCHAR(32) NOT NULL DEFAULT 'ip',
   rate_limit_key_header VARCHAR(255) NULL,
   rate_limit_scope VARCHAR(32) NOT NULL DEFAULT 'policy',
+  websocket_policy_json TEXT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
@@ -453,6 +455,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN health_alert_webhook_secret TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN load_balancing_algorithm VARCHAR(32) NOT NULL DEFAULT 'failover'",
 		"ALTER TABLE sites ADD COLUMN load_balancing_affinity INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -466,6 +469,14 @@ async function ensureSiteColumns(): Promise<void> {
 	await db`UPDATE sites SET error_html_template=${DEFAULT_ERROR_HTML_TEMPLATE} WHERE error_html_template IS NULL`;
 	await db`UPDATE sites SET error_json_fields_json=${JSON.stringify(DEFAULT_ERROR_JSON_FIELDS)} WHERE error_json_fields_json IS NULL`;
 	await db`UPDATE sites SET challenge_html_template=${DEFAULT_CHALLENGE_HTML_TEMPLATE} WHERE challenge_html_template IS NULL`;
+}
+
+async function ensureRoutePolicyColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
 }
 
 async function ensureGeoIpColumns(): Promise<void> {
@@ -540,6 +551,7 @@ async function createIndexes(): Promise<void> {
 export async function migrate(): Promise<void> {
 	await db.unsafe(schema);
 	await ensureSiteColumns();
+	await ensureRoutePolicyColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
 	await ensureRequestEventColumns();

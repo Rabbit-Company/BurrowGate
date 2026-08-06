@@ -11,6 +11,13 @@ import type {
 } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { parseChallengePolicy } from "./site-service.ts";
+import {
+	resolveWebSocketPolicy,
+	routeWebSocketPolicyView,
+	serializeRouteWebSocketPolicy,
+	type ResolvedWebSocketPolicy,
+	type RouteWebSocketPolicyView,
+} from "./websocket-policy-service.ts";
 
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 
@@ -34,6 +41,7 @@ export interface RoutePolicyInput {
 	rateLimitScope?: unknown;
 	priority?: unknown;
 	enabled?: unknown;
+	websocket?: unknown;
 }
 
 export interface RoutePolicyView {
@@ -56,6 +64,7 @@ export interface RoutePolicyView {
 		keyHeader: string | null;
 		scope: RateLimitScope;
 	};
+	websocket: RouteWebSocketPolicyView;
 	priority: number;
 	enabled: boolean;
 	createdAt: number;
@@ -66,6 +75,7 @@ export interface ResolvedRoutePolicy {
 	policy: RoutePolicyRecord | null;
 	accessMode: Exclude<RouteAccessMode, "inherit">;
 	challengePolicy: ChallengePolicyStep[];
+	websocket: ResolvedWebSocketPolicy;
 }
 
 function requiredString(value: unknown, label: string, maximum: number): string {
@@ -189,6 +199,7 @@ export function routePolicyView(policy: RoutePolicyRecord): RoutePolicyView {
 			keyHeader: policy.rate_limit_key_header,
 			scope: policy.rate_limit_scope,
 		},
+		websocket: routeWebSocketPolicyView(policy),
 		priority: Number(policy.priority),
 		enabled: policy.enabled === 1,
 		createdAt: Number(policy.created_at),
@@ -233,6 +244,7 @@ function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePo
 		rate_limit_key_mode: selectedKeyMode,
 		rate_limit_key_header: headerName(input.rateLimitKeyHeader, selectedKeyMode, existing?.rate_limit_key_header ?? null),
 		rate_limit_scope: scope(input.rateLimitScope, existing?.rate_limit_scope ?? "policy"),
+		websocket_policy_json: serializeRouteWebSocketPolicy(input.websocket, existing?.websocket_policy_json),
 		priority: integerValue(input.priority, "Priority", existing?.priority ?? 0, -100_000, 100_000),
 		enabled: booleanValue(input.enabled, existing?.enabled === 1) ? 1 : 0,
 		created_at: existing?.created_at ?? now,
@@ -341,5 +353,6 @@ export async function resolveRoutePolicy(site: SiteRecord, method: string, pathn
 		policy,
 		accessMode,
 		challengePolicy: policy?.challenge_policy_json ? parseChallengePolicy(policy.challenge_policy_json) : siteChallengePolicy(site),
+		websocket: resolveWebSocketPolicy(site, policy),
 	};
 }

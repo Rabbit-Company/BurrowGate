@@ -21,6 +21,15 @@ let challengeProviders = [];
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
 let challengeDefaults = { htmlTemplate: "", placeholders: [] };
+let websocketDefaults = {
+	available: true,
+	mode: "allow",
+	connectTimeoutMs: 15000,
+	idleTimeoutSeconds: 120,
+	maxPayloadBytes: 16777216,
+	preOpenQueueBytes: 1048576,
+	upstreamBufferBytes: 16777216,
+};
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
@@ -65,6 +74,11 @@ function formatBytes(value) {
 	const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
 	const scaled = bytes / 1024 ** index;
 	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function optionalNumberInput(id) {
+	const value = byId(id).value.trim();
+	return value ? Number(value) : null;
 }
 
 function twoDigits(value) {
@@ -350,7 +364,17 @@ function statusClass(status) {
 }
 
 function decisionClass(decision) {
-	if (["blocked", "route-blocked", "origin-error", "websocket-origin-error", "websocket-upgrade-failed", "access-login-failed"].includes(decision))
+	if (
+		[
+			"blocked",
+			"route-blocked",
+			"websocket-policy-denied",
+			"origin-error",
+			"websocket-origin-error",
+			"websocket-upgrade-failed",
+			"access-login-failed",
+		].includes(decision)
+	)
 		return "bad";
 	if (["challenge-required", "websocket-disabled", "rate-limited", "access-login-required", "access-login-rate-limited"].includes(decision)) return "warn";
 	if (["allowlisted", "websocket-allowlisted", "proxied-unprotected", "websocket-unprotected"].includes(decision)) return "info";
@@ -931,12 +955,33 @@ function renderSites() {
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span>${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Client IP: ${escapeHtml(site.ipExtractionPreset ?? "direct")} | Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Client IP: ${escapeHtml(site.ipExtractionPreset ?? "direct")} | WebSocket: ${escapeHtml(site.websocket?.mode ?? "allow")} | Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
 		)
 		.join("");
+}
+
+function applyWebSocketInputLimits() {
+	const limits = [
+		["ConnectTimeout", websocketDefaults.connectTimeoutMs],
+		["IdleTimeout", websocketDefaults.idleTimeoutSeconds],
+		["MaxPayload", websocketDefaults.maxPayloadBytes],
+		["PreOpenQueue", websocketDefaults.preOpenQueueBytes],
+		["UpstreamBuffer", websocketDefaults.upstreamBufferBytes],
+	];
+	for (const [suffix, maximum] of limits) {
+		byId(`siteWebSocket${suffix}`).max = String(maximum);
+		byId(`routeWebSocket${suffix}`).max = String(maximum);
+	}
+}
+
+function updateSiteWebSocketControls() {
+	byId("siteWebSocketSettings").classList.toggle("hidden", byId("siteWebSocketMode").value === "deny");
+	byId("siteWebSocketAvailability").textContent = websocketDefaults.available ? "Available" : "Instance disabled";
+	byId("siteWebSocketAvailability").className = `badge ${websocketDefaults.available ? "ok" : "warn"}`;
+	byId("siteWebSocketDisabledNotice").classList.toggle("hidden", websocketDefaults.available);
 }
 
 function resetSiteForm() {
@@ -950,6 +995,13 @@ function resetSiteForm() {
 	byId("siteIpExtractionPreset").value = "direct";
 	byId("siteLoadBalancingAlgorithm").value = "failover";
 	byId("siteLoadBalancingAffinity").checked = true;
+	byId("siteWebSocketMode").value = websocketDefaults.mode ?? "allow";
+	byId("siteWebSocketConnectTimeout").value = String(websocketDefaults.connectTimeoutMs);
+	byId("siteWebSocketIdleTimeout").value = String(websocketDefaults.idleTimeoutSeconds);
+	byId("siteWebSocketMaxPayload").value = String(websocketDefaults.maxPayloadBytes);
+	byId("siteWebSocketPreOpenQueue").value = String(websocketDefaults.preOpenQueueBytes);
+	byId("siteWebSocketUpstreamBuffer").value = String(websocketDefaults.upstreamBufferBytes);
+	updateSiteWebSocketControls();
 	byId("originPoolRuntime").classList.add("hidden");
 	siteOrigins = [];
 	resetOriginForm();
@@ -1006,6 +1058,14 @@ function editSite(id) {
 	byId("siteIpExtractionPreset").value = site.ipExtractionPreset ?? "direct";
 	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
 	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
+	const websocket = site.websocket ?? websocketDefaults;
+	byId("siteWebSocketMode").value = websocket.mode ?? "allow";
+	byId("siteWebSocketConnectTimeout").value = String(websocket.connectTimeoutMs ?? websocketDefaults.connectTimeoutMs);
+	byId("siteWebSocketIdleTimeout").value = String(websocket.idleTimeoutSeconds ?? websocketDefaults.idleTimeoutSeconds);
+	byId("siteWebSocketMaxPayload").value = String(websocket.maxPayloadBytes ?? websocketDefaults.maxPayloadBytes);
+	byId("siteWebSocketPreOpenQueue").value = String(websocket.preOpenQueueBytes ?? websocketDefaults.preOpenQueueBytes);
+	byId("siteWebSocketUpstreamBuffer").value = String(websocket.upstreamBufferBytes ?? websocketDefaults.upstreamBufferBytes);
+	updateSiteWebSocketControls();
 	byId("originPoolRuntime").classList.remove("hidden");
 	resetOriginForm();
 	const health = site.healthCheck ?? {};
@@ -1063,6 +1123,8 @@ async function loadSites() {
 	sites = response.items ?? [];
 	challengeProviders = response.challengeProviders ?? [];
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
+	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
+	applyWebSocketInputLimits();
 	const firstErrorOptionsLoad = !errorResponseOptionsLoaded;
 	const previousErrorJsonFields = errorResponseOptionsLoaded ? selectedErrorJsonFields() : null;
 	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
@@ -1201,6 +1263,14 @@ async function saveSite(event) {
 			algorithm: byId("siteLoadBalancingAlgorithm").value,
 			affinity: byId("siteLoadBalancingAffinity").checked,
 		},
+		websocket: {
+			mode: byId("siteWebSocketMode").value,
+			connectTimeoutMs: Number(byId("siteWebSocketConnectTimeout").value),
+			idleTimeoutSeconds: Number(byId("siteWebSocketIdleTimeout").value),
+			maxPayloadBytes: Number(byId("siteWebSocketMaxPayload").value),
+			preOpenQueueBytes: Number(byId("siteWebSocketPreOpenQueue").value),
+			upstreamBufferBytes: Number(byId("siteWebSocketUpstreamBuffer").value),
+		},
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1285,7 +1355,7 @@ function renderRoutePolicies() {
     <div class="route-policy-main">
       <div class="site-list-title"><strong>${escapeHtml(policy.name)}</strong><span class="badge ${policy.enabled ? "ok" : "warn"}">${policy.enabled ? "enabled" : "disabled"}</span><span class="badge ${policy.accessMode === "block" ? "bad" : policy.accessMode === "challenge" ? "warn" : "info"}">${escapeHtml(routeAccessLabel(policy.accessMode))}</span></div>
       <div class="route-policy-pattern"><code>${escapeHtml(policy.pathPattern)}</code><span>${policy.methods.length ? escapeHtml(policy.methods.join(", ")) : "All methods"}</span><span>Priority ${formatNumber(policy.priority)}</span></div>
-      <div class="site-list-meta"><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
+      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-route-edit="${escapeHtml(policy.id)}">Edit</button><button class="button danger compact" type="button" data-route-delete="${escapeHtml(policy.id)}">Delete</button></div>
   </div>`,
@@ -1302,6 +1372,7 @@ function updateRoutePolicyControls() {
 	document.querySelectorAll(".precision-setting").forEach((element) => element.classList.toggle("hidden", algorithm !== "sliding-window"));
 	byId("routeRateHeaderField").classList.toggle("hidden", byId("routeRateKeyMode").value !== "header-or-ip");
 	byId("routeChallengeSettings").classList.toggle("hidden", byId("routePolicyAccessMode").value !== "challenge");
+	byId("routeWebSocketSettings").classList.toggle("hidden", byId("routeWebSocketMode").value === "deny");
 }
 
 function resetRoutePolicyForm() {
@@ -1313,6 +1384,12 @@ function resetRoutePolicyForm() {
 	byId("routePolicyAccessMode").value = "inherit";
 	byId("routePolicyEnabled").checked = true;
 	byId("routePolicyChallenge").value = "";
+	byId("routeWebSocketMode").value = "inherit";
+	byId("routeWebSocketConnectTimeout").value = "";
+	byId("routeWebSocketIdleTimeout").value = "";
+	byId("routeWebSocketMaxPayload").value = "";
+	byId("routeWebSocketPreOpenQueue").value = "";
+	byId("routeWebSocketUpstreamBuffer").value = "";
 	byId("routeRateEnabled").checked = false;
 	byId("routeRateAlgorithm").value = "sliding-window";
 	byId("routeRateMax").value = "120";
@@ -1342,6 +1419,13 @@ function editRoutePolicy(id) {
 	byId("routePolicyAccessMode").value = policy.accessMode;
 	byId("routePolicyEnabled").checked = Boolean(policy.enabled);
 	byId("routePolicyChallenge").value = policy.challengePolicy ? JSON.stringify(policy.challengePolicy, null, 2) : "";
+	const websocket = policy.websocket ?? {};
+	byId("routeWebSocketMode").value = websocket.mode ?? "inherit";
+	byId("routeWebSocketConnectTimeout").value = websocket.connectTimeoutMs ?? "";
+	byId("routeWebSocketIdleTimeout").value = websocket.idleTimeoutSeconds ?? "";
+	byId("routeWebSocketMaxPayload").value = websocket.maxPayloadBytes ?? "";
+	byId("routeWebSocketPreOpenQueue").value = websocket.preOpenQueueBytes ?? "";
+	byId("routeWebSocketUpstreamBuffer").value = websocket.upstreamBufferBytes ?? "";
 	byId("routeRateEnabled").checked = Boolean(policy.rateLimit.enabled);
 	byId("routeRateAlgorithm").value = policy.rateLimit.algorithm;
 	byId("routeRateMax").value = String(policy.rateLimit.max);
@@ -1513,6 +1597,14 @@ async function saveRoutePolicy(event) {
 		rateLimitKeyMode: byId("routeRateKeyMode").value,
 		rateLimitKeyHeader: byId("routeRateKeyHeader").value.trim(),
 		rateLimitScope: byId("routeRateScope").value,
+		websocket: {
+			mode: byId("routeWebSocketMode").value,
+			connectTimeoutMs: optionalNumberInput("routeWebSocketConnectTimeout"),
+			idleTimeoutSeconds: optionalNumberInput("routeWebSocketIdleTimeout"),
+			maxPayloadBytes: optionalNumberInput("routeWebSocketMaxPayload"),
+			preOpenQueueBytes: optionalNumberInput("routeWebSocketPreOpenQueue"),
+			upstreamBufferBytes: optionalNumberInput("routeWebSocketUpstreamBuffer"),
+		},
 	};
 	try {
 		const editing = Boolean(editingRoutePolicyId);
@@ -2588,6 +2680,7 @@ function bindActions() {
 	byId("routeRateAlgorithm").addEventListener("change", updateRoutePolicyControls);
 	byId("routeRateKeyMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routePolicyAccessMode").addEventListener("change", updateRoutePolicyControls);
+	byId("routeWebSocketMode").addEventListener("change", updateRoutePolicyControls);
 	byId("refreshRoutePolicies").addEventListener(
 		"click",
 		(event) =>
@@ -2648,6 +2741,7 @@ function bindActions() {
 		}
 	});
 	byId("siteForm").addEventListener("submit", saveSite);
+	byId("siteWebSocketMode").addEventListener("change", updateSiteWebSocketControls);
 	byId("deleteSite").addEventListener("click", deleteEditingSite);
 	byId("saveOrigin").addEventListener("click", saveOrigin);
 	byId("newOrigin").addEventListener("click", () => {

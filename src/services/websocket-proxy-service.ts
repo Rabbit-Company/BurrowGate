@@ -25,6 +25,7 @@ import { Logger } from "../logger.ts";
 import { recordBandwidth } from "./bandwidth-service.ts";
 import { originHealthManager } from "./origin-health-service.ts";
 import { loadBalancer } from "./load-balancer-service.ts";
+import type { ResolvedWebSocketPolicy } from "./websocket-policy-service.ts";
 
 export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
@@ -43,6 +44,8 @@ export interface WebSocketBridgeData {
 	closed: boolean;
 	sessionExpiresAt: number | null;
 	sessionExpiryTimer: ReturnType<typeof setTimeout> | null;
+	idleTimer: ReturnType<typeof setTimeout> | null;
+	websocketPolicy: ResolvedWebSocketPolicy;
 }
 
 export interface WebSocketUpgradeServer {
@@ -126,6 +129,10 @@ function closeBridge(bridge: WebSocketBridgeData, code: number, reason: string, 
 		clearTimeout(bridge.sessionExpiryTimer);
 		bridge.sessionExpiryTimer = null;
 	}
+	if (bridge.idleTimer) {
+		clearTimeout(bridge.idleTimer);
+		bridge.idleTimer = null;
+	}
 	const safeReason = truncateCloseReason(reason);
 
 	if (initiator !== "upstream" && bridge.upstream.readyState < WebSocket.CLOSING) {
@@ -146,12 +153,26 @@ function closeBridge(bridge: WebSocketBridgeData, code: number, reason: string, 
 	}
 }
 
+function touchBridgeActivity(bridge: WebSocketBridgeData): void {
+	if (bridge.closed) return;
+	if (bridge.idleTimer) clearTimeout(bridge.idleTimer);
+	bridge.idleTimer = setTimeout(
+		() => closeBridge(bridge, 1001, "WebSocket connection was idle for too long", "proxy"),
+		bridge.websocketPolicy.idleTimeoutSeconds * 1_000,
+	);
+}
+
 function forwardToDownstream(bridge: WebSocketBridgeData, message: ProxiedWebSocketMessage): void {
 	if (bridge.closed) return;
+	const size = messageByteLength(message);
+	if (size > bridge.websocketPolicy.maxPayloadBytes) {
+		closeBridge(bridge, 1009, "WebSocket message exceeds the configured limit", "proxy");
+		return;
+	}
+	touchBridgeActivity(bridge);
 	const downstream = bridge.downstream;
 	if (!downstream || downstream.readyState !== WebSocket.OPEN) {
-		const size = messageByteLength(message);
-		if (bridge.preOpenQueueBytes + size > config.websocket.preOpenQueueLimitBytes) {
+		if (bridge.preOpenQueueBytes + size > bridge.websocketPolicy.preOpenQueueBytes) {
 			closeBridge(bridge, 1013, "WebSocket proxy pre-open queue exceeded", "proxy");
 			return;
 		}
@@ -210,7 +231,7 @@ export function offeredWebSocketProtocols(request: Request): string[] {
 		.filter(Boolean);
 }
 
-async function openUpstreamWebSocket(target: URL, headers: Headers, request: Request): Promise<WebSocket> {
+async function openUpstreamWebSocket(target: URL, headers: Headers, request: Request, connectTimeoutMs: number): Promise<WebSocket> {
 	return await new Promise<WebSocket>((resolve, reject) => {
 		let settled = false;
 		const BunWebSocket = WebSocket as unknown as BunWebSocketConstructor;
@@ -247,8 +268,8 @@ async function openUpstreamWebSocket(target: URL, headers: Headers, request: Req
 			} catch {
 				/* no-op */
 			}
-			finish(new Error(`WebSocket origin handshake timed out after ${config.websocket.connectTimeoutMs} ms`));
-		}, config.websocket.connectTimeoutMs);
+			finish(new Error(`WebSocket origin handshake timed out after ${connectTimeoutMs} ms`));
+		}, connectTimeoutMs);
 
 		socket.addEventListener("open", onOpen, { once: true });
 		socket.addEventListener("error", onError, { once: true });
@@ -404,6 +425,23 @@ export async function handleWebSocketUpgrade(
 	}
 
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);
+	if (route.websocket.mode === "deny") {
+		await recordEvent({
+			...eventBase,
+			sessionId: null,
+			status: 403,
+			decision: "websocket-policy-denied",
+			latencyMs: Math.round(performance.now() - started),
+		});
+		return siteErrorResponse(site, request, {
+			status: 403,
+			code: "websocket_not_allowed",
+			error: "WebSocket connections are not allowed for this route",
+			clientIp: ip,
+			routePolicy: route.policy?.name,
+			reason: route.policy?.name ? `WebSocket access is denied by route policy ${route.policy.name}.` : "WebSocket access is disabled for this site.",
+		});
+	}
 	if (route.accessMode === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "route-blocked", latencyMs: Math.round(performance.now() - started) });
 		return siteErrorResponse(site, request, {
@@ -540,7 +578,7 @@ export async function handleWebSocketUpgrade(
 		);
 		let upstream: WebSocket;
 		try {
-			upstream = await openUpstreamWebSocket(target, headers, request);
+			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		} catch (firstError) {
 			loadBalancer.reportPassiveFailure(selectedOrigin.id);
@@ -548,7 +586,7 @@ export async function handleWebSocketUpgrade(
 			if (!replacement) throw firstError;
 			selectedOrigin = replacement;
 			target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
-			upstream = await openUpstreamWebSocket(target, headers, request);
+			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		}
 		const offeredProtocols = offeredWebSocketProtocols(request);
@@ -584,6 +622,8 @@ export async function handleWebSocketUpgrade(
 			closed: false,
 			sessionExpiresAt: session?.expires_at ?? null,
 			sessionExpiryTimer: null,
+			idleTimer: null,
+			websocketPolicy: route.websocket,
 		};
 		attachUpstreamBridgeEvents(bridge);
 
@@ -681,6 +721,7 @@ export const websocketProxyHandler: Bun.WebSocketHandler<WebSocketBridgeData> = 
 		}
 		flushPreOpenQueue(bridge);
 		scheduleSessionExpiry(bridge);
+		touchBridgeActivity(bridge);
 	},
 
 	message(ws, message) {
@@ -690,8 +731,13 @@ export const websocketProxyHandler: Bun.WebSocketHandler<WebSocketBridgeData> = 
 			return;
 		}
 		const size = messageByteLength(message);
+		if (size > bridge.websocketPolicy.maxPayloadBytes) {
+			closeBridge(bridge, 1009, "WebSocket message exceeds the configured limit", "proxy");
+			return;
+		}
+		touchBridgeActivity(bridge);
 		recordBandwidth({ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" }, { clientReceivedBytes: size });
-		if (bridge.upstream.bufferedAmount + size > config.websocket.upstreamBufferLimitBytes) {
+		if (bridge.upstream.bufferedAmount + size > bridge.websocketPolicy.upstreamBufferBytes) {
 			closeBridge(bridge, 1013, "WebSocket origin is receiving data too slowly", "proxy");
 			return;
 		}

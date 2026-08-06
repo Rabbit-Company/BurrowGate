@@ -4,8 +4,10 @@ import {
 	clientIpForUpgrade,
 	offeredWebSocketProtocols,
 	selectedProtocolHeaders,
+	websocketProxyHandler,
 	websocketUpstreamHeaders,
 	websocketUpstreamUrl,
+	type WebSocketBridgeData,
 } from "../src/services/websocket-proxy-service.ts";
 import type { AccessSessionRecord, SiteRecord } from "../src/types.ts";
 import { hmacSha256Hex } from "../src/utils/crypto.ts";
@@ -170,5 +172,53 @@ describe("WebSocket reverse proxy", () => {
 
 		expect(headers.has("x-burrowgate-authenticated-user")).toBe(false);
 		expect(headers.has("x-burrowgate-identity-signature")).toBe(false);
+	});
+
+	test("enforces the resolved per-connection payload limit", () => {
+		const downstreamCloses: Array<[number, string]> = [];
+		const upstreamCloses: Array<[number, string]> = [];
+		const upstream = {
+			readyState: WebSocket.OPEN,
+			bufferedAmount: 0,
+			send: () => {},
+			close: (code: number, reason: string) => upstreamCloses.push([code, reason]),
+		} as unknown as WebSocket;
+		const bridge: WebSocketBridgeData = {
+			id: "bridge_payload_limit",
+			siteId: site.id,
+			sessionId: null,
+			clientIp: "203.0.113.10",
+			countryCode: null,
+			targetUrl: "ws://origin.example.test/ws",
+			openedAt: Date.now(),
+			upstream,
+			downstream: null,
+			preOpenQueue: [],
+			preOpenQueueBytes: 0,
+			closed: false,
+			sessionExpiresAt: null,
+			sessionExpiryTimer: null,
+			idleTimer: null,
+			websocketPolicy: {
+				mode: "allow",
+				connectTimeoutMs: 1_000,
+				idleTimeoutSeconds: 10,
+				maxPayloadBytes: 4,
+				preOpenQueueBytes: 1_024,
+				upstreamBufferBytes: 1_024,
+			},
+		};
+		const downstream = {
+			data: bridge,
+			readyState: WebSocket.OPEN,
+			close: (code: number, reason: string) => downstreamCloses.push([code, reason]),
+		} as unknown as Bun.ServerWebSocket<WebSocketBridgeData>;
+		bridge.downstream = downstream;
+
+		websocketProxyHandler.message?.(downstream, "12345");
+
+		expect(bridge.closed).toBe(true);
+		expect(downstreamCloses[0]?.[0]).toBe(1009);
+		expect(upstreamCloses[0]?.[0]).toBe(1000);
 	});
 });
