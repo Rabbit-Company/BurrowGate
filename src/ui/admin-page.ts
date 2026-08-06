@@ -261,20 +261,37 @@ export function adminPage(): string {
     <article class="card site-editor-card">
       <div class="pad">
         <div class="section-heading site-editor-heading"><div><h2 id="siteFormTitle">Create site</h2><p id="siteFormSubtitle" class="muted">Add another hostname and origin to BurrowGate.</p></div><button id="cancelSiteEdit" class="button secondary compact hidden" type="button">Cancel edit</button></div>
+        <nav class="site-editor-tabs" aria-label="Site settings" role="tablist">
+          <button class="site-editor-tab active" role="tab" type="button" data-site-editor-tab="general" aria-selected="true">General</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="access" aria-selected="false">Access</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="websocket" aria-selected="false">WebSocket</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="origins" aria-selected="false">Origins</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="health" aria-selected="false">Health</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="responses" aria-selected="false">Responses</button>
+          <button class="site-editor-tab" role="tab" type="button" data-site-editor-tab="tls" aria-selected="false">HTTPS</button>
+        </nav>
         <form id="originValidationForm"></form>
         <form id="siteForm" class="site-form">
           <input id="siteId" type="hidden">
-          <div class="site-form-grid">
-            <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required><small class="muted">A friendly name used throughout the admin dashboard.</small></label>
-            <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
-            <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
-            <label><span>Session lifetime (seconds)</span><input id="siteSessionTtl" class="input" name="sessionTtlSeconds" type="number" min="60" max="2592000" step="1" value="43200" required><small class="muted">How long a verified visitor session remains valid.</small></label>
-            <label><span>Traffic retention (days)</span><input id="siteEventRetentionDays" class="input" name="eventRetentionDays" type="number" min="1" max="365" step="1" value="7" required><small class="muted">Request events and bandwidth buckets older than this are removed for this site.</small></label>
-            <label><span>Default access mode</span><select id="siteDefaultAccessMode" class="select"><option value="challenge">Require challenge</option><option value="bypass">Disable browser verification</option></select><small class="muted">Route policies can override this per path.</small></label>
-            <label><span>Client IP source</span><select id="siteIpExtractionPreset" class="select"><option value="direct">Direct connection</option><option value="cloudflare">Cloudflare</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option><option value="azure">Azure</option><option value="vercel">Vercel</option><option value="nginx">nginx</option><option value="development">Development</option></select><small class="muted">Trusts the selected proxy's client-IP headers for this site. Keep Direct unless requests can only reach BurrowGate through that proxy.</small></label>
-          </div>
-          <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
-          <section class="error-response-editor">
+          <section class="error-response-editor" data-site-editor-panel="general">
+            <div class="section-heading error-response-heading"><div><h3>General settings</h3><p class="muted">Configure the site's public identity and primary origin.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required><small class="muted">A friendly name used throughout the admin dashboard.</small></label>
+              <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
+              <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
+            </div>
+            <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
+          </section>
+          <section class="error-response-editor hidden" data-site-editor-panel="access">
+            <div class="section-heading error-response-heading"><div><h3>Traffic and access</h3><p class="muted">Control client identity, verification defaults, session lifetime, and stored traffic history.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Session lifetime (seconds)</span><input id="siteSessionTtl" class="input" name="sessionTtlSeconds" type="number" min="60" max="2592000" step="1" value="43200" required><small class="muted">How long a verified visitor session remains valid.</small></label>
+              <label><span>Traffic retention (days)</span><input id="siteEventRetentionDays" class="input" name="eventRetentionDays" type="number" min="1" max="365" step="1" value="7" required><small class="muted">Request events and bandwidth buckets older than this are removed for this site.</small></label>
+              <label><span>Default access mode</span><select id="siteDefaultAccessMode" class="select"><option value="challenge">Require challenge</option><option value="bypass">Disable browser verification</option></select><small class="muted">Route policies can override this per path.</small></label>
+              <label><span>Client IP source</span><select id="siteIpExtractionPreset" class="select"><option value="direct">Direct connection</option><option value="cloudflare">Cloudflare</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option><option value="azure">Azure</option><option value="vercel">Vercel</option><option value="nginx">nginx</option><option value="development">Development</option></select><small class="muted">Trusts the selected proxy's client-IP headers for this site. Keep Direct unless requests can only reach BurrowGate through that proxy.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-site-editor-panel="websocket">
             <div class="section-heading error-response-heading"><div><h3>WebSocket transport</h3><p class="muted">Set the defaults for WebSocket connections to this site. Route policies can inherit or override them.</p></div><span id="siteWebSocketAvailability" class="badge ok">Available</span></div>
             <div class="site-form-grid">
               <label><span>WebSocket mode</span><select id="siteWebSocketMode" class="select"><option value="allow">Allow</option><option value="deny">Deny</option></select><small class="muted">Denying WebSockets does not affect ordinary HTTP traffic.</small></label>
@@ -288,9 +305,12 @@ export function adminPage(): string {
             </div>
             <p id="siteWebSocketDisabledNotice" class="notice muted hidden">WebSocket proxying is disabled for this BurrowGate instance. Site settings are saved but cannot enable it above the instance policy.</p>
           </section>
-          <label><span>Origin signing secret</span><div class="secret-row"><input id="siteSigningSecret" class="input" name="originSigningSecret" type="password" autocomplete="new-password" placeholder="Generated automatically for new sites"><button id="generateSiteSecret" class="button secondary" type="button">Generate</button></div><small id="siteSecretHelp" class="muted">Leave blank to generate a secure secret. The generated value is shown once after creation.</small></label>
-          <label><span>Challenge policy</span><textarea id="siteChallengePolicy" class="input code-input" name="challengePolicy" rows="11" spellcheck="false" required></textarea><small id="challengeProviderHelp" class="muted">Ordered JSON array. Each provider is completed before the visitor receives a session.</small></label>
-          <section class="error-response-editor">
+          <section class="error-response-editor hidden" data-site-editor-panel="access">
+            <div class="section-heading error-response-heading"><div><h3>Origin trust and verification</h3><p class="muted">Sign trusted identity headers and define the default browser challenge chain.</p></div></div>
+            <label><span>Origin signing secret</span><div class="secret-row"><input id="siteSigningSecret" class="input" name="originSigningSecret" type="password" autocomplete="new-password" placeholder="Generated automatically for new sites"><button id="generateSiteSecret" class="button secondary" type="button">Generate</button></div><small id="siteSecretHelp" class="muted">Leave blank to generate a secure secret. The generated value is shown once after creation.</small></label>
+            <label><span>Challenge policy</span><textarea id="siteChallengePolicy" class="input code-input" name="challengePolicy" rows="11" spellcheck="false" required></textarea><small id="challengeProviderHelp" class="muted">Ordered JSON array. Each provider is completed before the visitor receives a session.</small></label>
+          </section>
+          <section class="error-response-editor hidden" data-site-editor-panel="origins">
             <div class="section-heading error-response-heading"><div><h3>Load balancing</h3><p class="muted">Choose how BurrowGate selects from healthy origins.</p></div></div>
             <div class="site-form-grid">
               <label><span>Algorithm</span><select id="siteLoadBalancingAlgorithm" class="select"><option value="failover">Priority failover</option><option value="round-robin">Round robin</option><option value="weighted-round-robin">Weighted round robin</option></select><small class="muted">Priority failover uses the lowest healthy priority number.</small></label>
@@ -314,7 +334,7 @@ export function adminPage(): string {
               </div>
             </div>
           </section>
-          <section class="error-response-editor origin-health-editor">
+          <section class="error-response-editor origin-health-editor hidden" data-site-editor-panel="health">
             <div class="section-heading error-response-heading"><div><h3>Origin health</h3><p class="muted">Probe a path on the configured origin and optionally fail fast with the site error page.</p></div><span id="siteHealthStatusBadge" class="badge">Disabled</span></div>
             <label class="check-row"><input id="siteHealthEnabled" type="checkbox"><span><strong>Enable origin health checks</strong><small class="muted">Checks run directly against the origin and do not pass through visitor access policies.</small></span></label>
             <div id="siteHealthSettings" class="site-form-grid hidden">
@@ -331,7 +351,7 @@ export function adminPage(): string {
               <div><strong>Recent state changes</strong><div id="siteHealthEvents" class="health-event-list"><p class="muted">No health state changes yet.</p></div></div>
             </div>
           </section>
-          <section class="error-response-editor">
+          <section class="error-response-editor hidden" data-site-editor-panel="health">
             <div class="section-heading error-response-heading"><div><h3>Health alerts</h3><p class="muted">Send one alert when an incident opens and one when it recovers. Failed deliveries retry with backoff.</p></div></div>
             <label class="check-row"><input id="siteHealthAlertsEnabled" type="checkbox"><span><strong>Enable webhook alerts</strong><small id="siteHealthWebhookConfigured" class="muted">No webhook is configured.</small></span></label>
             <div id="siteHealthAlertSettings" class="site-form-grid hidden">
@@ -342,7 +362,7 @@ export function adminPage(): string {
             </div>
             <div id="siteHealthAlertRuntime" class="health-runtime hidden"><strong>Recent alert deliveries</strong><div id="siteHealthAlertDeliveries" class="health-event-list"><p class="muted">No alerts have been queued.</p></div></div>
           </section>
-          <section class="error-response-editor">
+          <section class="error-response-editor hidden" data-site-editor-panel="responses">
             <div class="section-heading error-response-heading"><div><h3>Error responses</h3><p class="muted">Customize errors generated by BurrowGate for this site.</p></div></div>
             <label><span>Response format</span><select id="siteErrorResponseMode" class="select"><option value="json">JSON</option><option value="html">HTML</option></select><small class="muted">Origin responses are not modified. This applies only to errors generated by BurrowGate.</small></label>
             <div id="siteErrorHtmlSettings" class="error-response-settings hidden">
@@ -355,7 +375,7 @@ export function adminPage(): string {
               <div id="errorJsonFieldList" class="json-field-grid"></div>
             </div>
           </section>
-					<section class="error-response-editor">
+					<section class="error-response-editor hidden" data-site-editor-panel="responses">
 						<div class="section-heading error-response-heading"><div><h3>Challenge page</h3><p class="muted">Customize the browser-verification page shown before a visitor receives a session.</p></div></div>
 						<div class="error-response-settings">
 							<div class="section-heading compact-heading"><div><h4>HTML template</h4><p class="muted">Placeholder values are HTML escaped. {{challengeScript}} is required.</p></div><button id="resetChallengeHtmlTemplate" class="button secondary compact" type="button">Reset template</button></div>
@@ -364,10 +384,10 @@ export function adminPage(): string {
 						</div>
 					</section>
           <div id="generatedSecretPanel" class="secret-panel hidden"><div><strong>Save this origin signing secret</strong><p class="muted">BurrowGate will not display it again. Configure it on the protected origin to verify signed headers.</p><code id="generatedSecretValue"></code></div><button id="copyGeneratedSecret" class="button secondary" type="button">Copy</button></div>
-          <div class="row site-form-actions"><button id="saveSite" class="button" type="submit">Create</button><button id="resetSiteForm" class="button secondary" type="button">Reset</button><button id="deleteSite" class="button danger hidden" type="button">Delete site</button></div>
+          <div id="siteFormActions" class="row site-form-actions"><span id="siteSaveHint" class="muted">Save applies changes from every settings tab.</span><button id="saveSite" class="button" type="submit">Create</button><button id="resetSiteForm" class="button secondary" type="button">Reset</button><button id="deleteSite" class="button danger hidden" type="button">Delete site</button></div>
         </form>
-        <section id="siteTlsPanel" class="tls-panel hidden">
-          <div class="section-heading tls-heading"><div><h2>TLS certificate</h2><p class="muted">Terminate HTTPS directly in BurrowGate using an uploaded certificate or ACME HTTP-01.</p></div><span id="tlsStatusBadge" class="badge">Not configured</span></div>
+        <section id="siteTlsPanel" class="tls-panel error-response-editor hidden" data-site-editor-panel="tls">
+          <div class="section-heading error-response-heading tls-heading"><div><h3>HTTPS and certificates</h3><p class="muted">Terminate HTTPS directly in BurrowGate using an uploaded certificate or ACME HTTP-01.</p></div><span id="tlsStatusBadge" class="badge">Not configured</span></div>
           <div class="tls-summary-grid">
             <div><span class="muted">Mode</span><strong id="tlsSummaryMode">Disabled</strong></div>
             <div><span class="muted">Certificate</span><strong id="tlsSummaryCertificate">None</strong></div>

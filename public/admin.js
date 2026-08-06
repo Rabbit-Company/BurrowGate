@@ -33,6 +33,7 @@ let websocketDefaults = {
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
+let activeSiteEditorTab = "general";
 let siteOrigins = [];
 let trafficHasMultipleOrigins = false;
 let editingOriginId = null;
@@ -954,13 +955,32 @@ function renderSites() {
 		.map(
 			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
-      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span>${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
-      <div class="site-list-meta"><code>${escapeHtml(site.publicHost)}</code><span>Primary origin: ${escapeHtml(site.originUrl)}</span><span>Client IP: ${escapeHtml(site.ipExtractionPreset ?? "direct")} | WebSocket: ${escapeHtml(site.websocket?.mode ?? "allow")} | Load balancing: ${escapeHtml(site.loadBalancer?.algorithm ?? "failover")}${site.loadBalancer?.affinity === false ? "" : " with session/IP affinity"} | Default: ${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"} | Session: ${formatDuration(Number(site.sessionTtlSeconds) * 1_000)} | Traffic: ${formatNumber(site.eventRetentionDays)} day${Number(site.eventRetentionDays) === 1 ? "" : "s"} | IP default: ${escapeHtml(site.defaultIpAction ?? "inherit")} | Country default: ${escapeHtml(site.defaultCountryAction ?? "inherit")} | Errors: ${escapeHtml(site.errorResponse?.mode ?? "json")} | ${formatNumber(site.challengePolicy.length)} challenge step${site.challengePolicy.length === 1 ? "" : "s"}</span></div>
+      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span><span class="badge info">${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"}</span>${site.websocket?.mode === "deny" ? '<span class="badge warn">WebSocket off</span>' : ""}${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
+      <div class="site-list-meta"><code title="${escapeHtml(site.publicHost)}">${escapeHtml(site.publicHost)}</code><span title="${escapeHtml(site.originUrl)}">${escapeHtml(site.originUrl)}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`,
 		)
 		.join("");
+}
+
+function setSiteEditorTab(name) {
+	if (name === "tls" && !editingSiteId) return;
+	activeSiteEditorTab = name;
+	document.querySelectorAll("[data-site-editor-panel]").forEach((panel) => {
+		panel.classList.toggle("hidden", panel.dataset.siteEditorPanel !== name);
+	});
+	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => {
+		const selected = tab.dataset.siteEditorTab === name;
+		tab.classList.toggle("active", selected);
+		tab.setAttribute("aria-selected", String(selected));
+		if (tab.dataset.siteEditorTab === "tls") {
+			tab.disabled = !editingSiteId;
+			tab.title = editingSiteId ? "Manage HTTPS for this site" : "Save the site before configuring HTTPS";
+		}
+	});
+	byId("siteFormActions").classList.toggle("hidden", name === "tls");
+	byId("generatedSecretPanel").classList.toggle("hidden", name !== "general" || byId("generatedSecretPanel").dataset.available !== "true");
 }
 
 function applyWebSocketInputLimits() {
@@ -1039,8 +1059,10 @@ function resetSiteForm() {
 	byId("deleteSite").classList.add("hidden");
 	byId("cancelSiteEdit").classList.add("hidden");
 	byId("generatedSecretPanel").classList.add("hidden");
+	byId("generatedSecretPanel").dataset.available = "false";
 	byId("siteTlsPanel").classList.add("hidden");
 	currentTls = null;
+	setSiteEditorTab("general");
 }
 
 function editSite(id) {
@@ -1103,7 +1125,8 @@ function editSite(id) {
 	byId("deleteSite").classList.remove("hidden");
 	byId("cancelSiteEdit").classList.remove("hidden");
 	byId("generatedSecretPanel").classList.add("hidden");
-	byId("siteTlsPanel").classList.remove("hidden");
+	byId("generatedSecretPanel").dataset.available = "false";
+	setSiteEditorTab("general");
 	byId("siteName").focus();
 	void loadSiteTls(site.id);
 	void loadSiteHealth(site.id);
@@ -1206,12 +1229,15 @@ async function chooseSite(id) {
 async function saveSite(event) {
 	event.preventDefault();
 	const submit = byId("saveSite");
+	const editorTabBeforeSave = activeSiteEditorTab;
 	submit.disabled = true;
 	byId("generatedSecretPanel").classList.add("hidden");
+	byId("generatedSecretPanel").dataset.available = "false";
 	let challengePolicy;
 	try {
 		challengePolicy = JSON.parse(byId("siteChallengePolicy").value);
 	} catch {
+		setSiteEditorTab("access");
 		showToast("Challenge policy must be valid JSON.", "bad");
 		submit.disabled = false;
 		return;
@@ -1219,11 +1245,13 @@ async function saveSite(event) {
 	const errorResponseMode = byId("siteErrorResponseMode").value;
 	const errorJsonFields = selectedErrorJsonFields();
 	if (errorResponseMode === "json" && errorJsonFields.length === 0) {
+		setSiteEditorTab("responses");
 		showToast("Select at least one JSON error field.", "bad");
 		submit.disabled = false;
 		return;
 	}
 	if (errorResponseMode === "html" && !byId("siteErrorHtmlTemplate").value.trim()) {
+		setSiteEditorTab("responses");
 		showToast("HTML error template cannot be empty.", "bad");
 		submit.disabled = false;
 		return;
@@ -1287,8 +1315,10 @@ async function saveSite(event) {
 		selectedSiteId = savedId;
 		await loadSites();
 		editSite(savedId);
+		if (editing) setSiteEditorTab(editorTabBeforeSave);
 		if (result.generatedSigningSecret) {
 			byId("generatedSecretValue").textContent = result.generatedSigningSecret;
+			byId("generatedSecretPanel").dataset.available = "true";
 			byId("generatedSecretPanel").classList.remove("hidden");
 		}
 		await reloadSelectedSite();
@@ -1684,7 +1714,7 @@ function renderTls(data) {
 
 async function loadSiteTls(siteId = editingSiteId) {
 	if (!siteId) return;
-	byId("siteTlsPanel").classList.remove("hidden");
+	if (activeSiteEditorTab === "tls") byId("siteTlsPanel").classList.remove("hidden");
 	const data = await api(`/sites/${encodeURIComponent(siteId)}/tls`, {}, false);
 	if (editingSiteId === siteId) renderTls(data);
 }
@@ -2662,6 +2692,7 @@ async function handleBodyClick(event) {
 
 function bindActions() {
 	document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
+	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setSiteEditorTab(tab.dataset.siteEditorTab)));
 	byId("siteSelector").addEventListener("change", (event) => void chooseSite(event.currentTarget.value));
 	byId("dateTimeFormat").addEventListener("change", (event) => {
 		saveDateTimeFormat(event.currentTarget.value);
@@ -2741,6 +2772,14 @@ function bindActions() {
 		}
 	});
 	byId("siteForm").addEventListener("submit", saveSite);
+	byId("siteForm").addEventListener(
+		"invalid",
+		(event) => {
+			const panel = event.target.closest("[data-site-editor-panel]");
+			if (panel?.dataset.siteEditorPanel) setSiteEditorTab(panel.dataset.siteEditorPanel);
+		},
+		true,
+	);
 	byId("siteWebSocketMode").addEventListener("change", updateSiteWebSocketControls);
 	byId("deleteSite").addEventListener("click", deleteEditingSite);
 	byId("saveOrigin").addEventListener("click", saveOrigin);
