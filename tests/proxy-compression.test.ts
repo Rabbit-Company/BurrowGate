@@ -4,11 +4,13 @@ import type { SiteRecord } from "../src/types.ts";
 
 const plainBody = new TextEncoder().encode("Compressed reverse-proxy response from a qBittorrent or Sonarr-like origin.");
 const compressedBody = Bun.gzipSync(plainBody);
+let receivedHost: string | null = null;
 
 const origin = Bun.serve({
 	hostname: "127.0.0.1",
 	port: 0,
-	fetch() {
+	fetch(request) {
+		receivedHost = request.headers.get("host");
 		return new Response(compressedBody, {
 			headers: {
 				"content-type": "text/plain; charset=utf-8",
@@ -58,5 +60,6 @@ describe("reverse-proxy compression", () => {
 		expect(response.headers.get("content-encoding")).toBe("gzip");
 		expect(response.headers.get("content-length")).toBe(String(compressedBody.byteLength));
 		expect(new Uint8Array(await response.arrayBuffer())).toEqual(compressedBody);
+		expect(receivedHost).toBe("proxy.test");
 	});
 });

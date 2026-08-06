@@ -4,7 +4,7 @@ import type { AccessSessionRecord, SiteRecord } from "../types.ts";
 export type OriginAccessStatus = "verified" | "allowlisted" | "bypass";
 import { removeCookieFromHeader, setCookieInHeader } from "../utils/cookies.ts";
 import { hmacSha256Hex } from "../utils/crypto.ts";
-import { copyProxyHeaders } from "../utils/http.ts";
+import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, type BandwidthContext } from "./bandwidth-service.ts";
@@ -44,10 +44,13 @@ export async function upstreamHeaders(
 ): Promise<Headers> {
 	const headers = copyProxyHeaders(request.headers);
 
-	headers.delete("host");
+	headers.delete("forwarded");
 	headers.delete("x-forwarded-for");
 	headers.delete("x-forwarded-host");
+	headers.delete("x-forwarded-port");
 	headers.delete("x-forwarded-proto");
+	headers.delete("x-forwarded-protocol");
+	headers.delete("x-real-ip");
 
 	let cookie = headers.get("cookie");
 	for (const name of visitorCookieNames) cookie = removeCookieFromHeader(cookie, name);
@@ -75,9 +78,21 @@ export async function upstreamHeaders(
 
 	const incoming = new URL(request.url);
 	const externalTransport = transport ?? requestTransport(request);
+	const externalHost = requestHost(request);
+	let externalPort = externalTransport === "https" ? "443" : "80";
+	try {
+		externalPort = new URL(`${externalTransport}://${externalHost}`).port || externalPort;
+	} catch {
+		// The site resolver validates request hosts before proxying. Retain the
+		// transport's default port if a custom caller supplies an invalid host.
+	}
+	headers.set("host", externalHost);
+	headers.set("x-real-ip", ip);
 	headers.set("x-forwarded-for", ip);
-	headers.set("x-forwarded-host", incoming.host);
+	headers.set("x-forwarded-host", externalHost);
+	headers.set("x-forwarded-port", externalPort);
 	headers.set("x-forwarded-proto", externalTransport);
+	headers.set("x-forwarded-protocol", externalTransport);
 
 	const timestamp = Math.floor(Date.now() / 1_000).toString();
 	const sessionId = session?.id ?? accessStatus;

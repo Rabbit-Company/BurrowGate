@@ -125,6 +125,9 @@ describe("WebSocket reverse proxy", () => {
 		expect(headers.has("sec-websocket-version")).toBe(false);
 		expect(headers.has("sec-websocket-extensions")).toBe(false);
 		expect(headers.get("sec-websocket-protocol")).toBe("graphql-ws, graphql-transport-ws");
+		expect(headers.get("host")).toBe("socket.example.test");
+		expect(headers.get("x-forwarded-host")).toBe("socket.example.test");
+		expect(headers.get("x-forwarded-port")).toBe("443");
 		expect(headers.get("x-forwarded-for")).toBe("203.0.113.7");
 		expect(headers.get("x-forwarded-proto")).toBe("https");
 		expect(headers.get("x-burrowgate-verified")).toBe("true");
