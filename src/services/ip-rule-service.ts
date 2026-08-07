@@ -2,7 +2,7 @@ import { repository } from "../db/repository.ts";
 import type { CountryRuleRecord, DefaultNetworkAction, IpRuleAction, IpRuleRecord, SiteRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
-import { geoIpAvailable, lookupCountryCode } from "./geoip-service.ts";
+import { countryCodeForStorage } from "./geoip-service.ts";
 
 interface CachedIpRule {
 	rule: IpRuleRecord;
@@ -75,7 +75,7 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 		};
 	}
 
-	const countryCode = geoIpAvailable() && ip !== "unknown" ? (lookupCountryCode(ip) ?? "ZZ") : null;
+	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
 	if (countryCode) {
 		const candidateCountryRule = rules.countryRules.get(countryCode) ?? null;
 		const countryRule = candidateCountryRule && active(candidateCountryRule, now) ? candidateCountryRule : null;

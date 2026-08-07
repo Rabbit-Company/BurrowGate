@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type { BandwidthMinuteRecord, BandwidthProtocol } from "../types.ts";
+import { UNKNOWN_COUNTRY_CODE } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 
 export interface BandwidthContext {
@@ -26,7 +27,7 @@ function positiveBytes(value: number | undefined): number {
 
 function storedCountryCode(value: string | null | undefined): string {
 	const code = value?.trim().toUpperCase();
-	return code && /^[A-Z]{2}$/u.test(code) ? code : "ZZ";
+	return code && /^[A-Z]{2}$/u.test(code) ? code : UNKNOWN_COUNTRY_CODE;
 }
 
 function recordKey(record: Pick<BandwidthMinuteRecord, "site_id" | "bucket_start" | "ip" | "country_code" | "protocol">): string {

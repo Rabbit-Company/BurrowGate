@@ -3,6 +3,10 @@ import maxmind, { type CountryResponse, type Reader } from "maxmind";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
+import { isPrivateIp } from "../utils/ip.ts";
+
+export const PRIVATE_COUNTRY_CODE = "XX";
+export const UNKNOWN_COUNTRY_CODE = "ZZ";
 
 let reader: Reader<CountryResponse> | null = null;
 let loadError: string | null = null;
@@ -62,6 +66,7 @@ export function geoIpAvailable(): boolean {
 }
 
 export function lookupCountryCode(ip: string): string | null {
+	if (isPrivateIp(ip)) return PRIVATE_COUNTRY_CODE;
 	if (!reader || !maxmind.validate(ip)) return null;
 	try {
 		const response = reader.get(ip);
@@ -73,8 +78,9 @@ export function lookupCountryCode(ip: string): string | null {
 }
 
 export function countryCodeForStorage(ip: string): string | null {
+	if (isPrivateIp(ip)) return PRIVATE_COUNTRY_CODE;
 	if (!reader) return null;
-	return lookupCountryCode(ip) ?? "ZZ";
+	return lookupCountryCode(ip) ?? UNKNOWN_COUNTRY_CODE;
 }
 
 export function geoIpStatus(): GeoIpStatus {
@@ -100,9 +106,9 @@ export async function backfillGeoIp(): Promise<void> {
 		repository.sessionsMissingCountry(config.geoip.backfillBatchSize),
 	]);
 	for (const event of events) {
-		await repository.updateEventCountry(event.id, lookupCountryCode(event.ip) ?? "ZZ");
+		await repository.updateEventCountry(event.id, lookupCountryCode(event.ip) ?? UNKNOWN_COUNTRY_CODE);
 	}
 	for (const session of sessions) {
-		await repository.updateSessionCountry(session.id, lookupCountryCode(session.initial_ip) ?? "ZZ");
+		await repository.updateSessionCountry(session.id, lookupCountryCode(session.initial_ip) ?? UNKNOWN_COUNTRY_CODE);
 	}
 }

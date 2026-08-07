@@ -1875,6 +1875,7 @@ async function importSelectedAccessUsers() {
 async function saveRoutePolicy(event) {
 	event.preventDefault();
 	const submit = byId("saveRoutePolicy");
+	const editorTabBeforeSave = activeRouteEditorTab;
 	submit.disabled = true;
 	let challengePolicy = null;
 	const challengeText = byId("routePolicyChallenge").value.trim();
@@ -1932,6 +1933,7 @@ async function saveRoutePolicy(event) {
 		});
 		await Promise.all([loadRoutePolicies(), loadMetrics()]);
 		editRoutePolicy(response.policy.id);
+		if (editing) setRouteEditorTab(editorTabBeforeSave);
 		showToast(editing ? "Route policy updated." : "Route policy created.");
 	} catch (error) {
 		showToast(error.message, "bad");
@@ -2561,6 +2563,7 @@ async function loadMetrics() {
 
 function countryDisplayName(code, fallback = "") {
 	if (code === "ZZ") return "Unknown";
+	if (code === "XX") return "Local / private network";
 	try {
 		return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? (fallback || code);
 	} catch {
@@ -2573,7 +2576,7 @@ function populateCountrySelects() {
 	const countries = [...geoMapGeometry.paths.entries()]
 		.map(([code, path]) => ({ code, name: path.dataset.name || countryDisplayName(code) }))
 		.sort((left, right) => left.name.localeCompare(right.name));
-	countries.push({ code: "ZZ", name: "Unknown / unmapped" });
+	countries.push({ code: "ZZ", name: "Unknown / unmapped" }, { code: "XX", name: "Local / private network" });
 	const configurations = [
 		["eventCountry", "All countries"],
 		["bandwidthCountry", "All countries"],
@@ -2615,7 +2618,7 @@ function renderGeoMap() {
 	const mode = byId("geoMetricMode").value;
 	const items = geoMetrics[mode] ?? [];
 	const values = new Map(items.map((item) => [String(item.countryCode).toUpperCase(), Number(item.count)]));
-	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ").map((item) => Number(item.count)));
+	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ" && item.countryCode !== "XX").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const rangeLabel = rangeDurationLabel(geoMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
 	const isBandwidth = mode === "bandwidth";

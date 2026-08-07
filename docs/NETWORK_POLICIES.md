@@ -61,7 +61,7 @@ An explicit IP rule has higher priority than country policy. This makes it possi
 
 Country policy requires the local GeoIP database. BurrowGate fails open for the country layer when the database is disabled or unavailable. Explicit IP rules and the default IP action continue to work.
 
-Private, invalid, and unmapped addresses use the country code `ZZ` when the GeoIP database is available. A rule for `ZZ` can be created from the dashboard.
+Private and loopback addresses (RFC 1918, link-local, and their IPv6 equivalents) are recognized directly and use the country code `XX`, without consulting the GeoIP database. Invalid and unmapped public addresses use `ZZ` when the GeoIP database is available. A rule for `XX` or `ZZ` can be created from the dashboard.
 
 ## Performance
 

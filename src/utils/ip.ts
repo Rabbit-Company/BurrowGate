@@ -84,3 +84,18 @@ export function cidrContains(cidr: ParsedCidr | string, ip: string): boolean {
 	const network = shift === 0n ? parsedIp.value : (parsedIp.value >> shift) << shift;
 	return network === parsedCidr.network;
 }
+
+const PRIVATE_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10"];
+
+function ipv4FromMapped(value: bigint): string | null {
+	if (value >> 32n !== 0xffffn) return null;
+	const ipv4 = value & 0xffffffffn;
+	return [24n, 16n, 8n, 0n].map((shift) => Number((ipv4 >> shift) & 0xffn)).join(".");
+}
+
+export function isPrivateIp(ip: string): boolean {
+	const parsed = parseIp(ip);
+	if (!parsed) return false;
+	const candidates = parsed.version === 6 ? [ip, ipv4FromMapped(parsed.value)].filter((value): value is string => value !== null) : [ip];
+	return candidates.some((candidate) => PRIVATE_CIDRS.some((cidr) => cidrContains(cidr, candidate)));
+}

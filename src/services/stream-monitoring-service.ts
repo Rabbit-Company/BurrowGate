@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type { StreamBandwidthMinuteRecord, StreamEventRecord, StreamProtocol } from "../types.ts";
+import { UNKNOWN_COUNTRY_CODE } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 
 export interface StreamTrafficContext {
@@ -28,7 +29,7 @@ function bytes(value: number | undefined): number {
 
 function country(value: string | null | undefined): string {
 	const code = value?.trim().toUpperCase();
-	return code && /^[A-Z]{2}$/u.test(code) ? code : "ZZ";
+	return code && /^[A-Z]{2}$/u.test(code) ? code : UNKNOWN_COUNTRY_CODE;
 }
 
 function bandwidthKey(record: StreamBandwidthMinuteRecord): string {

@@ -71,7 +71,7 @@ GeoIP uses the same normalized client IP as IP rules, rate limiting, sessions, a
 
 New events and sessions are enriched when they are created. Existing records with no country code are backfilled in bounded batches during maintenance.
 
-Records that use private addresses, loopback addresses, invalid addresses, or addresses not present in the database remain `Unknown`.
+Private and loopback addresses (RFC 1918, link-local, and their IPv6 equivalents) are detected directly from the address itself, without a database lookup, and are labeled `Local / private network` (country code `XX`). This works even when the GeoIP database is disabled or unavailable. Invalid addresses or public addresses not present in the database remain `Unknown` (country code `ZZ`).
 
 ## Dashboard map
 

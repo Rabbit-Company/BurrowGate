@@ -581,6 +581,7 @@ async function loadOverview() {
 
 function countryDisplayName(code, fallback = "") {
 	if (code === "ZZ") return "Unknown";
+	if (code === "XX") return "Local / private network";
 	try {
 		return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? (fallback || code);
 	} catch {
@@ -593,7 +594,7 @@ function populateCountrySelects() {
 	const countries = [...geoMapGeometry.paths.entries()]
 		.map(([code, path]) => ({ code, name: path.dataset.name || countryDisplayName(code) }))
 		.sort((left, right) => left.name.localeCompare(right.name));
-	countries.push({ code: "ZZ", name: "Unknown / unmapped" });
+	countries.push({ code: "ZZ", name: "Unknown / unmapped" }, { code: "XX", name: "Local / private network" });
 	for (const id of ["eventCountry", "bandwidthCountry"]) {
 		const select = byId(id);
 		const current = select.value;
@@ -628,7 +629,7 @@ function renderGeoMap() {
 	const mode = byId("geoMetricMode").value;
 	const items = geoData[mode] ?? [];
 	const values = new Map(items.map((item) => [String(item.countryCode).toUpperCase(), Number(item.count)]));
-	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ").map((item) => Number(item.count)));
+	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ" && item.countryCode !== "XX").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const bandwidth = mode === "bandwidth";
 	const title = mode === "active" ? "Active connections" : mode === "events" ? "Connections in traffic log" : "Proxied bandwidth";
