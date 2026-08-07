@@ -238,6 +238,7 @@ export function adminPage(): string {
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="websocket" aria-selected="false">WebSocket</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="protection" aria-selected="false">Protection</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="http" aria-selected="false">HTTP</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="cache" aria-selected="false">Cache</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="rate" aria-selected="false">Rate limiting</button>
         </nav>
         <form id="routePolicyForm" class="site-form">
@@ -283,18 +284,20 @@ export function adminPage(): string {
               <label><span>Maximum request target (bytes)</span><input id="routeHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the path and query string. Blank inherits; 0 is unlimited.</small></label>
               <label><span>Maximum request headers (bytes)</span><input id="routeHttpMaxHeaderBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the combined parsed request headers. Blank inherits; 0 is unlimited.</small></label>
             </div>
-            <div class="section-heading compact-heading"><div><h4>Safe static-asset cache</h4><p class="muted">Override cache behavior for matching assets. Safety checks remain mandatory.</p></div><button id="purgeRouteCache" class="button secondary compact hidden" type="button">Purge policy cache</button></div>
-            <div class="site-form-grid">
-              <label><span>Cache mode</span><select id="routeHttpCacheMode" class="select"><option value="inherit">Inherit site default</option><option value="enabled">Enable</option><option value="disabled">Disable</option></select><small class="muted">The route override applies only when this policy matches.</small></label>
-              <label><span>TTL (seconds)</span><input id="routeHttpCacheTtl" class="input" type="number" min="1" max="604800" step="1" placeholder="Inherit site"><small class="muted">Origin max-age or s-maxage can shorten this value.</small></label>
-              <label><span>Maximum object (bytes)</span><input id="routeHttpCacheMaxObject" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site maximum.</small></label>
-              <label><span>Cacheable extensions</span><textarea id="routeHttpCacheExtensions" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site extensions"></textarea><small class="muted">Comma or whitespace separated. Blank inherits.</small></label>
-            </div>
             <div class="site-form-grid">
               <label><span>Set request headers</span><textarea id="routeHttpRequestHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>
               <label><span>Remove request headers</span><textarea id="routeHttpRequestHeadersRemove" class="input code-input" rows="5" spellcheck="false" placeholder="X-Legacy-Header"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
               <label><span>Set response headers</span><textarea id="routeHttpResponseHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="Cache-Control: private"></textarea><small class="muted">Applied to responses returned by the origin.</small></label>
               <label><span>Remove response headers</span><textarea id="routeHttpResponseHeadersRemove" class="input code-input" rows="5" spellcheck="false" placeholder="X-Powered-By"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="cache">
+            <div class="section-heading error-response-heading"><div><h3>Safe static-asset cache</h3><p class="muted">Override cache behavior for matching assets. Safety checks remain mandatory.</p></div><button id="purgeRouteCache" class="button secondary compact hidden" type="button">Purge policy cache</button></div>
+            <div class="site-form-grid">
+              <label><span>Cache mode</span><select id="routeHttpCacheMode" class="select"><option value="inherit">Inherit site default</option><option value="enabled">Enable</option><option value="disabled">Disable</option></select><small class="muted">The route override applies only when this policy matches.</small></label>
+              <label><span>TTL (seconds)</span><input id="routeHttpCacheTtl" class="input" type="number" min="1" max="604800" step="1" placeholder="Inherit site"><small class="muted">Origin max-age or s-maxage can shorten this value.</small></label>
+              <label><span>Maximum object (bytes)</span><input id="routeHttpCacheMaxObject" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site maximum.</small></label>
+              <label><span>Cacheable extensions</span><textarea id="routeHttpCacheExtensions" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site extensions"></textarea><small class="muted">Comma or whitespace separated. Blank inherits.</small></label>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="rate">
