@@ -379,13 +379,16 @@ form.grid label {
 	border-bottom: 0;
 }
 .path-cell {
-	max-width: 420px;
+	max-width: 30ch;
 	overflow: hidden;
+	white-space: nowrap;
 	text-overflow: ellipsis;
 }
 .ip-cell {
-	white-space: normal !important;
-	overflow-wrap: anywhere;
+	max-width: 17ch;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 .empty-cell {
 	text-align: center !important;
