@@ -232,22 +232,32 @@ export function adminPage(): string {
     </article>
     <article class="card route-policy-editor-card">
       <div class="pad">
-        <div class="section-heading"><div><h2 id="routePolicyFormTitle">Create route policy</h2><p id="routePolicyFormSubtitle" class="muted">Configure route-specific verification and API limits.</p></div><button id="cancelRoutePolicyEdit" class="button secondary compact hidden" type="button">Cancel edit</button></div>
+        <div class="section-heading policy-editor-heading"><div><h2 id="routePolicyFormTitle">Create route policy</h2><p id="routePolicyFormSubtitle" class="muted">Configure route-specific verification and API limits.</p></div><button id="cancelRoutePolicyEdit" class="button secondary compact hidden" type="button">Cancel edit</button></div>
+        <nav class="site-editor-tabs" aria-label="Route policy settings" role="tablist">
+          <button class="site-editor-tab active" role="tab" type="button" data-route-editor-tab="general" aria-selected="true">General</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="websocket" aria-selected="false">WebSocket</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="protection" aria-selected="false">Protection</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="http" aria-selected="false">HTTP</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="rate" aria-selected="false">Rate limiting</button>
+        </nav>
         <form id="routePolicyForm" class="site-form">
           <input id="routePolicyId" type="hidden">
-          <div class="site-form-grid">
-            <label><span>Name</span><input id="routePolicyName" class="input" maxlength="255" placeholder="JSON API" required><small class="muted">A descriptive label shown in the admin dashboard.</small></label>
-            <label><span>Path pattern</span><input id="routePolicyPath" class="input" maxlength="2048" value="/api/**" placeholder="/api/**" required><small class="muted"><code>*</code> matches one path segment; <code>**</code> matches across segments.</small></label>
-            <label><span>HTTP methods</span><input id="routePolicyMethods" class="input" placeholder="GET, POST - blank means all"><small class="muted">Comma-separated. WebSocket upgrades use GET.</small></label>
-            <label><span>Priority</span><input id="routePolicyPriority" class="input" type="number" min="-100000" max="100000" value="0"><small class="muted">Higher-priority matching policies are evaluated first.</small></label>
-            <label><span>Access mode</span><select id="routePolicyAccessMode" class="select"><option value="inherit">Inherit site default</option><option value="challenge">Require challenge</option><option value="bypass">Bypass browser verification</option><option value="block">Block route</option></select><small class="muted">Choose how BurrowGate handles requests matching this path.</small></label>
-          </div>
-          <label class="check-row"><input id="routePolicyEnabled" type="checkbox" checked><span><strong>Policy enabled</strong><small class="muted">Disabled policies remain stored but do not match requests.</small></span></label>
-          <div id="routeChallengeSettings">
-            <label><span>Challenge policy override</span><textarea id="routePolicyChallenge" class="input code-input" rows="8" spellcheck="false" placeholder="Leave blank to inherit the site's challenge chain"></textarea><small id="routeChallengeHelp" class="muted">Only used when this route requires a challenge. A blank value inherits the site policy.</small></label>
-          </div>
-          <div class="policy-subsection">
-            <div class="section-heading compact-heading"><div><h3>WebSocket transport</h3><p class="muted">Override the site's WebSocket behavior for connections whose path matches this policy.</p></div></div>
+          <section class="error-response-editor" data-route-editor-panel="general">
+            <div class="section-heading error-response-heading"><div><h3>General settings</h3><p class="muted">Match requests by path and method, then choose the access mode for this route.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Name</span><input id="routePolicyName" class="input" maxlength="255" placeholder="JSON API" required><small class="muted">A descriptive label shown in the admin dashboard.</small></label>
+              <label><span>Path pattern</span><input id="routePolicyPath" class="input" maxlength="2048" value="/api/**" placeholder="/api/**" required><small class="muted"><code>*</code> matches one path segment; <code>**</code> matches across segments.</small></label>
+              <label><span>HTTP methods</span><input id="routePolicyMethods" class="input" placeholder="GET, POST - blank means all"><small class="muted">Comma-separated. WebSocket upgrades use GET.</small></label>
+              <label><span>Priority</span><input id="routePolicyPriority" class="input" type="number" min="-100000" max="100000" value="0"><small class="muted">Higher-priority matching policies are evaluated first.</small></label>
+              <label><span>Access mode</span><select id="routePolicyAccessMode" class="select"><option value="inherit">Inherit site default</option><option value="challenge">Require challenge</option><option value="bypass">Bypass browser verification</option><option value="block">Block route</option></select><small class="muted">Choose how BurrowGate handles requests matching this path.</small></label>
+            </div>
+            <label class="check-row"><input id="routePolicyEnabled" type="checkbox" checked><span><strong>Policy enabled</strong><small class="muted">Disabled policies remain stored but do not match requests.</small></span></label>
+            <div id="routeChallengeSettings">
+              <label><span>Challenge policy override</span><textarea id="routePolicyChallenge" class="input code-input" rows="8" spellcheck="false" placeholder="Leave blank to inherit the site's challenge chain"></textarea><small id="routeChallengeHelp" class="muted">Only used when this route requires a challenge. A blank value inherits the site policy.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="websocket">
+            <div class="section-heading error-response-heading"><div><h3>WebSocket transport</h3><p class="muted">Override the site's WebSocket behavior for connections whose path matches this policy.</p></div></div>
             <div class="site-form-grid">
               <label><span>WebSocket mode</span><select id="routeWebSocketMode" class="select"><option value="inherit">Inherit site default</option><option value="allow">Allow</option><option value="deny">Deny</option></select><small class="muted">A denied upgrade receives a BurrowGate 403 response before an origin connection is opened.</small></label>
             </div>
@@ -258,16 +268,16 @@ export function adminPage(): string {
               <label><span>Pre-open queue (bytes)</span><input id="routeWebSocketPreOpenQueue" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Buffers origin messages until the browser upgrade opens.</small></label>
               <label><span>Upstream buffer (bytes)</span><input id="routeWebSocketUpstreamBuffer" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Closes slow origin connections before memory use exceeds this value.</small></label>
             </div>
-          </div>
-			<div class="policy-subsection">
-				<div class="section-heading compact-heading"><div><h3>Managed request protection</h3><p class="muted">Override enforcement for this route or exclude specific managed rule IDs.</p></div></div>
-				<div class="site-form-grid">
-					<label><span>Protection mode</span><select id="routeHttpProtectionMode" class="select"><option value="inherit">Inherit site default</option><option value="disabled">Disabled</option><option value="monitor">Monitor only</option><option value="block">Block matches</option></select><small class="muted">Monitor records what would be blocked while continuing to the origin.</small></label>
-					<label><span>Additional excluded rule IDs</span><textarea id="routeHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Route exclusions are added to site exclusions.</small></label>
-				</div>
-			</div>
-          <div class="policy-subsection">
-            <div class="section-heading compact-heading"><div><h3>HTTP headers and request limits</h3><p class="muted">Add route-specific header rules and override the site's request limits. Route header rules take precedence over matching site rules.</p></div></div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="protection">
+            <div class="section-heading error-response-heading"><div><h3>Managed request protection</h3><p class="muted">Override enforcement for this route or exclude specific managed rule IDs.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Protection mode</span><select id="routeHttpProtectionMode" class="select"><option value="inherit">Inherit site default</option><option value="disabled">Disabled</option><option value="monitor">Monitor only</option><option value="block">Block matches</option></select><small class="muted">Monitor records what would be blocked while continuing to the origin.</small></label>
+              <label><span>Additional excluded rule IDs</span><textarea id="routeHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Route exclusions are added to site exclusions.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="http">
+            <div class="section-heading error-response-heading"><div><h3>HTTP headers and request limits</h3><p class="muted">Add route-specific header rules and override the site's request limits. Route header rules take precedence over matching site rules.</p></div></div>
             <div class="site-form-grid">
               <label><span>Maximum body (bytes)</span><input id="routeHttpMaxBodyBytes" class="input" type="number" min="0" max="1099511627776" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site. Use 0 for unlimited.</small></label>
               <label><span>Maximum request target (bytes)</span><input id="routeHttpMaxRequestTargetBytes" class="input" type="number" min="0" max="1048576" step="1" placeholder="Inherit site"><small class="muted">Limits the path and query string. Blank inherits; 0 is unlimited.</small></label>
@@ -286,9 +296,10 @@ export function adminPage(): string {
               <label><span>Set response headers</span><textarea id="routeHttpResponseHeadersSet" class="input code-input" rows="5" spellcheck="false" placeholder="Cache-Control: private"></textarea><small class="muted">Applied to responses returned by the origin.</small></label>
               <label><span>Remove response headers</span><textarea id="routeHttpResponseHeadersRemove" class="input code-input" rows="5" spellcheck="false" placeholder="X-Powered-By"></textarea><small class="muted">One header name per line or comma-separated.</small></label>
             </div>
-          </div>
-          <div class="policy-subsection">
-            <label class="check-row"><input id="routeRateEnabled" type="checkbox"><span><strong>Enable rate limiting</strong><small class="muted">Rate limiting is independent of browser verification and works for JSON APIs and WebSocket handshakes. Counters are currently in-memory per BurrowGate process.</small></span></label>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="rate">
+            <div class="section-heading error-response-heading"><div><h3>Rate limiting</h3><p class="muted">Rate limiting is independent of browser verification and works for JSON APIs and WebSocket handshakes. Counters are currently in-memory per BurrowGate process.</p></div></div>
+            <label class="check-row"><input id="routeRateEnabled" type="checkbox"><span><strong>Enable rate limiting</strong></span></label>
             <div id="routeRateSettings" class="site-form-grid hidden">
               <label><span>Algorithm</span><select id="routeRateAlgorithm" class="select"><option value="sliding-window">Sliding window</option><option value="fixed-window">Fixed window</option><option value="token-bucket">Token bucket</option></select><small class="muted">Controls how request capacity is measured over time.</small></label>
               <label><span>Maximum / capacity</span><input id="routeRateMax" class="input" type="number" min="1" max="1000000" value="120"><small class="muted">Maximum requests per window, or token-bucket capacity.</small></label>
@@ -300,7 +311,7 @@ export function adminPage(): string {
               <label id="routeRateHeaderField" class="hidden"><span>Identity header</span><input id="routeRateKeyHeader" class="input" placeholder="x-api-key"><small class="muted">The value is hashed before it becomes an in-memory key. Use only a stable credential that your application validates; clients can rotate arbitrary header values.</small></label>
               <label><span>Counter scope</span><select id="routeRateScope" class="select"><option value="policy">Shared across this policy</option><option value="path">Separate per exact path</option><option value="method-path">Separate per method and path</option></select><small class="muted">Controls whether matching paths and methods share capacity.</small></label>
             </div>
-          </div>
+          </section>
           <div class="row site-form-actions"><button id="saveRoutePolicy" class="button" type="submit">Create</button><button id="resetRoutePolicyForm" class="button secondary" type="button">Reset</button></div>
         </form>
       </div>

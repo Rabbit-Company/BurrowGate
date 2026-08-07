@@ -62,6 +62,7 @@ let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
 let editingSiteId = null;
 let activeSiteEditorTab = "general";
+let activeRouteEditorTab = "general";
 let siteOrigins = [];
 let trafficHasMultipleOrigins = false;
 let editingOriginId = null;
@@ -1138,6 +1139,18 @@ function setSiteEditorTab(name) {
 	byId("generatedSecretPanel").classList.toggle("hidden", name !== "general" || byId("generatedSecretPanel").dataset.available !== "true");
 }
 
+function setRouteEditorTab(name) {
+	activeRouteEditorTab = name;
+	document.querySelectorAll("[data-route-editor-panel]").forEach((panel) => {
+		panel.classList.toggle("hidden", panel.dataset.routeEditorPanel !== name);
+	});
+	document.querySelectorAll("[data-route-editor-tab]").forEach((tab) => {
+		const selected = tab.dataset.routeEditorTab === name;
+		tab.classList.toggle("active", selected);
+		tab.setAttribute("aria-selected", String(selected));
+	});
+}
+
 function applyWebSocketInputLimits() {
 	const limits = [
 		["ConnectTimeout", websocketDefaults.connectTimeoutMs],
@@ -1695,6 +1708,7 @@ function resetRoutePolicyForm() {
 	byId("saveRoutePolicy").textContent = "Create";
 	byId("cancelRoutePolicyEdit").classList.add("hidden");
 	updateRoutePolicyControls();
+	setRouteEditorTab("general");
 }
 
 function editRoutePolicy(id) {
@@ -1734,6 +1748,7 @@ function editRoutePolicy(id) {
 	byId("saveRoutePolicy").textContent = "Save policy";
 	byId("cancelRoutePolicyEdit").classList.remove("hidden");
 	updateRoutePolicyControls();
+	setRouteEditorTab("general");
 	byId("routePolicyName").focus();
 }
 
@@ -3032,6 +3047,7 @@ async function handleBodyClick(event) {
 function bindActions() {
 	document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
 	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setSiteEditorTab(tab.dataset.siteEditorTab)));
+	document.querySelectorAll("[data-route-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setRouteEditorTab(tab.dataset.routeEditorTab)));
 	byId("siteSelector").addEventListener("change", (event) => void chooseSite(event.currentTarget.value));
 	byId("dateTimeFormat").addEventListener("change", (event) => {
 		saveDateTimeFormat(event.currentTarget.value);
@@ -3046,6 +3062,14 @@ function bindActions() {
 	byId("cancelRoutePolicyEdit").addEventListener("click", resetRoutePolicyForm);
 	byId("resetRoutePolicyForm").addEventListener("click", () => (editingRoutePolicyId ? editRoutePolicy(editingRoutePolicyId) : resetRoutePolicyForm()));
 	byId("routePolicyForm").addEventListener("submit", saveRoutePolicy);
+	byId("routePolicyForm").addEventListener(
+		"invalid",
+		(event) => {
+			const panel = event.target.closest("[data-route-editor-panel]");
+			if (panel?.dataset.routeEditorPanel) setRouteEditorTab(panel.dataset.routeEditorPanel);
+		},
+		true,
+	);
 	byId("routeRateEnabled").addEventListener("change", updateRoutePolicyControls);
 	byId("routeRateAlgorithm").addEventListener("change", updateRoutePolicyControls);
 	byId("routeRateKeyMode").addEventListener("change", updateRoutePolicyControls);

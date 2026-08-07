@@ -1267,20 +1267,12 @@ form.grid label {
 	overflow-wrap: anywhere;
 	color: #c4b5fd;
 }
+.policy-editor-heading {
+	margin-bottom: 14px;
+}
 .route-policy-editor-card {
 	position: sticky;
 	top: 18px;
-}
-.policy-subsection {
-	display: grid;
-	gap: 14px;
-	padding-top: 4px;
-}
-.policy-subsection .site-form-grid {
-	padding: 14px;
-	border: 1px solid #2b3648;
-	border-radius: 12px;
-	background: rgba(11, 18, 32, 0.42);
 }
 .access-user-fields {
 	display: grid;
