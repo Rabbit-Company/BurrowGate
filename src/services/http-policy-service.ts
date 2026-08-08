@@ -343,11 +343,8 @@ function assertMutableHeader(name: string, direction: "request" | "response", op
 	if (direction === "request" && (protectedRequestHeaders.has(name) || name.startsWith("x-burrowgate-"))) {
 		throw new Error(`Request header ${name} is managed by BurrowGate and cannot be changed`);
 	}
-	if (direction === "response" && operation === "set" && protectedResponseSetHeaders.has(name)) {
-		throw new Error(`Response header ${name} cannot be set by a header policy`);
-	}
-	if (direction === "response" && operation === "set" && name === "x-burrowgate-cache") {
-		throw new Error("Response header x-burrowgate-cache is managed by BurrowGate and cannot be changed");
+	if (direction === "response" && operation === "set" && (protectedResponseSetHeaders.has(name) || name.startsWith("x-burrowgate-"))) {
+		throw new Error(`Response header ${name} is managed by BurrowGate and cannot be changed`);
 	}
 }
 

@@ -555,7 +555,7 @@ async function gateway(ctx: any): Promise<Response> {
 async function gatewayWithRequestId(ctx: any): Promise<Response> {
 	const requestId = resolveRequestId(ctx.req);
 	const response = await gateway(ctx);
-	response.headers.set("x-request-id", requestId);
+	response.headers.set("x-burrowgate-request-id", requestId);
 	return response;
 }
 

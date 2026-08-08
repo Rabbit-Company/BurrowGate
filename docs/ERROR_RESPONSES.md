@@ -136,7 +136,7 @@ The generated headers are:
 
 ```text
 X-BurrowGate-Error-Code
-X-Request-Id
+X-BurrowGate-Request-Id
 ```
 
 Rate-limit headers and the `BurrowGate-Verification` header remain available when applicable.

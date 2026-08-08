@@ -47,12 +47,14 @@ describe("reverse-proxy authority headers", () => {
 	});
 
 	test("forwards BurrowGate's own request ID upstream and ignores a client-supplied one", async () => {
-		const request = new Request("https://example.com/", { headers: { host: "example.com", "x-request-id": "attacker-controlled" } });
+		const request = new Request("https://example.com/", {
+			headers: { host: "example.com", "x-burrowgate-request-id": "attacker-controlled" },
+		});
 		const expectedId = resolveRequestId(request);
 
 		const headers = await upstreamHeaders(request, site, "203.0.113.9", null, "allowlisted", "https");
 
-		expect(headers.get("x-request-id")).toBe(expectedId);
-		expect(headers.get("x-request-id")).not.toBe("attacker-controlled");
+		expect(headers.get("x-burrowgate-request-id")).toBe(expectedId);
+		expect(headers.get("x-burrowgate-request-id")).not.toBe("attacker-controlled");
 	});
 });

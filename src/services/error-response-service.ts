@@ -248,7 +248,7 @@ export function siteErrorResponse(site: SiteRecord, request: Request, input: Sit
 	responseHeaders.set("cache-control", "no-store");
 	responseHeaders.set("x-content-type-options", "nosniff");
 	responseHeaders.set("x-burrowgate-error-code", input.code);
-	responseHeaders.set("x-request-id", context.requestId);
+	responseHeaders.set("x-burrowgate-request-id", context.requestId);
 
 	if ((site.error_response_mode ?? "json") === "html") {
 		responseHeaders.set("content-type", "text/html; charset=utf-8");

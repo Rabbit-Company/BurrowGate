@@ -695,7 +695,7 @@ export async function handleWebSocketUpgrade(
 			for (const cookie of clearAccessIdentityCookies(request)) upgradeHeaders.append("set-cookie", cookie);
 		}
 		if (upstream.protocol) upgradeHeaders.set("sec-websocket-protocol", upstream.protocol);
-		upgradeHeaders.set("x-request-id", eventBase.requestId);
+		upgradeHeaders.set("x-burrowgate-request-id", eventBase.requestId);
 		const upgraded = server.upgrade(request, { data: bridge, headers: upgradeHeaders });
 		if (!upgraded) {
 			closeBridge(bridge, 1011, "BurrowGate could not upgrade the downstream connection", "proxy");

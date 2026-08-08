@@ -107,7 +107,7 @@ export async function upstreamHeaders(
 	headers.set("x-forwarded-port", externalPort);
 	headers.set("x-forwarded-proto", externalTransport);
 	headers.set("x-forwarded-protocol", externalTransport);
-	headers.set("x-request-id", resolveRequestId(request));
+	headers.set("x-burrowgate-request-id", resolveRequestId(request));
 
 	const timestamp = Math.floor(Date.now() / 1_000).toString();
 	const sessionId = session?.id ?? accessStatus;

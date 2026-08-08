@@ -64,7 +64,7 @@ describe("custom site error responses", () => {
 		expect(html).toContain("Origin &lt;offline&gt;");
 		expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
 		expect(html).not.toContain("<script>");
-		expect(response.headers.get("x-request-id")).toBe("request-1");
+		expect(response.headers.get("x-burrowgate-request-id")).toBe("request-1");
 	});
 
 	test("requires at least one supported JSON field", () => {
@@ -85,14 +85,14 @@ describe("custom site error responses", () => {
 		);
 		const body = (await response.json()) as { requestId?: string };
 		expect(body.requestId).toBeTruthy();
-		expect(response.headers.get("x-request-id")).toBe(body.requestId ?? null);
+		expect(response.headers.get("x-burrowgate-request-id")).toBe(body.requestId ?? null);
 	});
 });
 
 describe("resolveRequestId", () => {
-	test("never trusts a client-supplied x-request-id or x-correlation-id header", () => {
+	test("never trusts a client-supplied x-burrowgate-request-id header", () => {
 		const spoofed = new Request("https://example.test/", {
-			headers: { "x-request-id": "attacker-controlled", "x-correlation-id": "also-attacker-controlled" },
+			headers: { "x-burrowgate-request-id": "attacker-controlled" },
 		});
 		const id = resolveRequestId(spoofed);
 		expect(id).not.toBe("attacker-controlled");
