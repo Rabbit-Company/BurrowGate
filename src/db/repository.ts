@@ -524,10 +524,11 @@ export const repository = {
 	},
 	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord>> {
 		const pattern = searchPattern(query.search);
+		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const now = Date.now();
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(id) LIKE ${pattern} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern} OR LOWER(user_agent_hash) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
+			? db`AND (id=${exactSearch} OR user_agent_hash=${exactSearch} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern})`
 			: db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
 		const stateFilter =
@@ -681,9 +682,10 @@ export const repository = {
 	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
 		const pattern = searchPattern(query.search);
+		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(id) LIKE ${pattern} OR LOWER(ip) LIKE ${pattern} OR LOWER(method) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(decision) LIKE ${pattern} OR LOWER(COALESCE(cache_status,'')) LIKE ${pattern} OR LOWER(COALESCE(protection_status,'')) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(session_id,'')) LIKE ${pattern} OR LOWER(COALESCE(country_code,'ZZ')) LIKE ${pattern})`
+			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR session_id=${exactSearch})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
 		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;
@@ -994,7 +996,7 @@ export const repository = {
 	async pagedBandwidthIps(query: BandwidthIpQuery): Promise<PageResult<BandwidthIpRow>> {
 		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
 		const pattern = searchPattern(query.search);
-		const searchFilter = pattern ? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(country_code) LIKE ${pattern})` : db``;
+		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
@@ -1773,12 +1775,13 @@ export const repository = {
 	},
 	async pagedStreamEvents(query: StreamEventQuery): Promise<PageResult<StreamEventRecord>> {
 		const pattern = searchPattern(query.search);
+		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR LOWER(COALESCE(connection_id,'')) LIKE ${pattern})`
+			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR connection_id=${exactSearch})`
 			: db``;
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
@@ -1796,7 +1799,7 @@ export const repository = {
 		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
-		const searchFilter = pattern ? db`AND (LOWER(ip) LIKE ${pattern} OR LOWER(country_code) LIKE ${pattern})` : db``;
+		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const [countRow] =

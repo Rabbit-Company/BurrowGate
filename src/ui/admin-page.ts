@@ -94,7 +94,7 @@ export function adminPage(): string {
   <article class="card">
     <div class="pad section-heading"><div><h2>Recent traffic</h2><p id="retentionNote" class="muted">Only a paginated result set is loaded.</p></div><button id="refreshTraffic" class="button secondary">Refresh</button></div>
     <div class="toolbar traffic-toolbar">
-      <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="IP, path, decision, session, request ID..."></label>
+      <label class="search-field"><span>Search</span><input id="eventSearch" class="input" placeholder="ID, IP, path or session ID..."></label>
 		<label><span>Decision</span><select id="eventDecision" class="select"><option value="">All</option><option value="proxied">HTTP verified</option><option value="proxied-authenticated">HTTP user authenticated</option><option value="proxied-unprotected">HTTP unprotected</option><option value="websocket-proxied">WebSocket verified</option><option value="websocket-authenticated">WebSocket user authenticated</option><option value="websocket-unprotected">WebSocket unprotected</option><option value="access-login-required">User login required</option><option value="access-login-failed">User login failed</option><option value="access-login-rate-limited">User login rate limited</option><option value="access-authenticated">User login succeeded</option><option value="blocked">IP blocked</option><option value="route-blocked">Route blocked</option><option value="managed-protection-blocked">Managed protection blocked</option><option value="websocket-policy-denied">WebSocket policy denied</option><option value="rate-limited">Rate limited</option><option value="request-limited">Request limited</option><option value="challenge-required">Challenge required</option><option value="allowlisted">HTTP allowlisted</option><option value="websocket-allowlisted">WebSocket allowlisted</option><option value="origin-unhealthy">Origin health maintenance</option><option value="origin-pool-unavailable">Origin pool unavailable</option><option value="origin-error">HTTP origin error</option><option value="websocket-origin-error">WebSocket origin error</option><option value="websocket-upgrade-failed">WebSocket upgrade failed</option><option value="websocket-disabled">WebSocket disabled</option></select></label>
 		<label><span>Cache</span><select id="eventCacheStatus" class="select"><option value="">All</option><option value="hit">Hit</option><option value="miss">Miss</option><option value="bypass">Bypass</option></select></label>
 		<label><span>Protection</span><select id="eventProtectionStatus" class="select"><option value="">All</option><option value="clean">Clean</option><option value="monitored">Would block</option><option value="blocked">Blocked</option></select></label>
@@ -119,7 +119,7 @@ export function adminPage(): string {
   <article class="card">
     <div class="pad section-heading"><div><h2>Client bandwidth by IP</h2><p class="muted">HTTP and WebSocket payload bytes are counted. HTTP/TLS headers and transport framing are intentionally excluded.</p></div><button id="refreshBandwidth" class="button secondary">Refresh</button></div>
     <div class="toolbar bandwidth-toolbar">
-      <label class="search-field"><span>Search</span><input id="bandwidthSearch" class="input" placeholder="IP or country code..."></label>
+      <label class="search-field"><span>Search</span><input id="bandwidthSearch" class="input" placeholder="IP..."></label>
       <label><span>Protocol</span><select id="bandwidthProtocol" class="select"><option value="">All</option><option value="http">HTTP</option><option value="websocket">WebSocket</option></select></label>
       <label><span>Country</span><select id="bandwidthCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="bandwidthPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
@@ -183,7 +183,7 @@ export function adminPage(): string {
   <article class="card">
     <div class="pad section-heading"><div><h2>Active and recent sessions</h2><p class="muted"><span class="state-swatch active"></span>Active <span class="state-swatch expired"></span>Expired <span class="state-swatch revoked"></span>Revoked</p></div><button id="refreshSessions" class="button secondary">Refresh</button></div>
     <div class="toolbar compact-toolbar">
-      <label class="search-field"><span>Search</span><input id="sessionSearch" class="input" placeholder="Session ID or IP..."></label>
+      <label class="search-field"><span>Search</span><input id="sessionSearch" class="input" placeholder="ID, IP..."></label>
       <label><span>State</span><select id="sessionState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label>
       <label><span>Country</span><select id="sessionCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="sessionPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
@@ -209,7 +209,7 @@ export function adminPage(): string {
   <article class="card rules-list-card">
     <div class="pad section-heading"><div><h2>IP rules</h2><p class="muted">The longest matching CIDR wins. Explicit IP rules have the highest network-policy priority.</p></div><div class="row"><button id="bulkUnbanRules" class="button danger" type="button" disabled>Unban selected (0)</button><button id="refreshRules" class="button secondary">Refresh</button></div></div>
     <div class="toolbar compact-toolbar">
-      <label class="search-field"><span>Search</span><input id="ruleSearch" class="input" placeholder="Network, reason, or rule ID..."></label>
+      <label class="search-field"><span>Search</span><input id="ruleSearch" class="input" placeholder="Network, reason, rule ID..."></label>
       <label><span>Action</span><select id="ruleAction" class="select"><option value="">All</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass</option><option value="block">Block</option><option value="challenge">Challenge</option></select></label>
       <label><span>State</span><select id="ruleState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option></select></label>
       <label><span>Rows</span><select id="rulePageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
