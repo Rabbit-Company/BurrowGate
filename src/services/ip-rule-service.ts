@@ -151,19 +151,38 @@ export async function addIpRule(
 	return record;
 }
 
+function humanizeDurationSeconds(totalSeconds: number): string {
+	if (totalSeconds < 60) return `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
+	if (totalSeconds < 3_600) {
+		const minutes = Math.round(totalSeconds / 60);
+		return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+	}
+	if (totalSeconds < 86_400) {
+		const hours = Math.round(totalSeconds / 3_600);
+		return `${hours} hour${hours === 1 ? "" : "s"}`;
+	}
+	const days = Math.round(totalSeconds / 86_400);
+	return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+export function formatBanExpiry(expiresAt: number): string {
+	const date = new Date(expiresAt);
+	return date.toISOString().slice(0, 19).replace("T", " ") + " UTC";
+}
+
 export async function banIpForProtectionMatch(
 	site: SiteRecord,
 	ip: string,
 	match: ManagedProtectionMatch,
 	banDurations: Record<BanDurationSeverity, number>,
-): Promise<void> {
-	if (ip === "unknown") return;
+): Promise<IpRuleRecord | null> {
+	if (ip === "unknown") return null;
 	const banSeconds = banDurations[match.severity];
-	if (!banSeconds || banSeconds <= 0) return;
+	if (!banSeconds || banSeconds <= 0) return null;
 	const existing = await evaluateIp(site, ip);
-	if (existing.source === "ip-rule" && existing.action === "block") return;
-	const reason = `Auto-banned for ${banSeconds}s after matching WAF rule ${match.ruleId} (${match.category}, ${match.severity})`;
-	await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000, match.ruleId);
+	if (existing.source === "ip-rule" && existing.action === "block") return null;
+	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching WAF rule ${match.ruleId} (${match.category}, ${match.severity}).`;
+	return await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000, match.ruleId);
 }
 
 export async function addCountryRule(

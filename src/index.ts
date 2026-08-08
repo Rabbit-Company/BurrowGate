@@ -13,7 +13,7 @@ import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
 import { siteErrorResponse } from "./services/error-response-service.ts";
-import { banIpForProtectionMatch, evaluateIp } from "./services/ip-rule-service.ts";
+import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
@@ -201,13 +201,22 @@ async function gateway(ctx: any): Promise<Response> {
 	eventBase.countryCode = ipRule.countryCode;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
-		return siteErrorResponse(site, request, {
-			status: 403,
-			code: "network_blocked",
-			error: "Access blocked by BurrowGate",
-			clientIp: ip,
-			reason: ipRule.reason || "This request was blocked by network policy.",
-		});
+		const expiresAt = ipRule.ipRule?.expires_at ?? ipRule.countryRule?.expires_at ?? null;
+		const retryAfterSeconds = expiresAt ? Math.max(1, Math.ceil((expiresAt - Date.now()) / 1_000)) : null;
+		const baseReason = ipRule.reason || "This request was blocked by network policy.";
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 403,
+				code: "network_blocked",
+				error: "Access blocked by BurrowGate",
+				clientIp: ip,
+				reason: expiresAt ? `${baseReason} This IP address will be automatically unblocked at ${formatBanExpiry(expiresAt)}.` : baseReason,
+				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
+			},
+			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
+		);
 	}
 
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);
@@ -251,7 +260,7 @@ async function gateway(ctx: any): Promise<Response> {
 		eventBase.protectionMatches = protection.matches;
 	}
 	if (protection.status === "blocked") {
-		if (protection.primaryMatch) await banIpForProtectionMatch(site, ip, protection.primaryMatch, route.http.banDurations);
+		const ban = protection.primaryMatch ? await banIpForProtectionMatch(site, ip, protection.primaryMatch, route.http.banDurations) : null;
 		await recordEvent({
 			...eventBase,
 			sessionId: null,
@@ -259,14 +268,22 @@ async function gateway(ctx: any): Promise<Response> {
 			decision: "managed-protection-blocked",
 			latencyMs: Math.round(performance.now() - started),
 		});
-		return siteErrorResponse(site, request, {
-			status: 403,
-			code: "managed_request_blocked",
-			error: "Request blocked by BurrowGate",
-			clientIp: ip,
-			routePolicy: route.policy?.name,
-			reason: "The request matched a managed request-protection rule.",
-		});
+		const retryAfterSeconds = ban?.expires_at ? Math.max(1, Math.ceil((ban.expires_at - Date.now()) / 1_000)) : null;
+		const baseReason = "The request matched a managed request-protection rule.";
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 403,
+				code: "managed_request_blocked",
+				error: "Request blocked by BurrowGate",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: ban?.expires_at ? `${baseReason} This IP address will be automatically unblocked at ${formatBanExpiry(ban.expires_at)}.` : baseReason,
+				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
+			},
+			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
+		);
 	}
 	const accessSettings = await accessSettingsForSite(site.id);
 	const accessAuthenticationEnabled = accessSettings.enabled === 1;
