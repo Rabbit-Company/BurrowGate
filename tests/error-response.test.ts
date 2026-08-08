@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_ERROR_HTML_TEMPLATE, siteErrorResponse, validateErrorJsonFields } from "../src/services/error-response-service.ts";
+import { DEFAULT_ERROR_HTML_TEMPLATE, resolveRequestId, siteErrorResponse, validateErrorJsonFields } from "../src/services/error-response-service.ts";
 import type { SiteRecord } from "../src/types.ts";
 
 function site(overrides: Partial<SiteRecord> = {}): SiteRecord {
@@ -71,5 +71,48 @@ describe("custom site error responses", () => {
 		expect(() => validateErrorJsonFields([])).toThrow();
 		expect(() => validateErrorJsonFields(["not-a-field"])).toThrow();
 		expect(validateErrorJsonFields(["status", "status", "error"])).toEqual(["status", "error"]);
+	});
+
+	test("includes a generated requestId in the default JSON fields", async () => {
+		const response = siteErrorResponse(
+			site({ error_json_fields_json: JSON.stringify(["error", "code", "status", "requestId"]) }),
+			new Request("https://example.test/"),
+			{
+				status: 403,
+				code: "network_blocked",
+				error: "Blocked",
+			},
+		);
+		const body = (await response.json()) as { requestId?: string };
+		expect(body.requestId).toBeTruthy();
+		expect(response.headers.get("x-request-id")).toBe(body.requestId ?? null);
+	});
+});
+
+describe("resolveRequestId", () => {
+	test("never trusts a client-supplied x-request-id or x-correlation-id header", () => {
+		const spoofed = new Request("https://example.test/", {
+			headers: { "x-request-id": "attacker-controlled", "x-correlation-id": "also-attacker-controlled" },
+		});
+		const id = resolveRequestId(spoofed);
+		expect(id).not.toBe("attacker-controlled");
+		expect(id).not.toBe("also-attacker-controlled");
+	});
+
+	test("returns the same ID for repeated calls on the same request", () => {
+		const request = new Request("https://example.test/");
+		expect(resolveRequestId(request)).toBe(resolveRequestId(request));
+	});
+
+	test("returns a different ID for a different request", () => {
+		const first = resolveRequestId(new Request("https://example.test/a"));
+		const second = resolveRequestId(new Request("https://example.test/b"));
+		expect(first).not.toBe(second);
+	});
+
+	test("caps an explicitly supplied ID at 128 characters", () => {
+		const request = new Request("https://example.test/");
+		const id = resolveRequestId(request, "x".repeat(500));
+		expect(id.length).toBe(128);
 	});
 });

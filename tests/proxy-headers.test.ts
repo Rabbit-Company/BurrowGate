@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveRequestId } from "../src/services/error-response-service.ts";
 import { upstreamHeaders } from "../src/services/proxy-service.ts";
 import type { SiteRecord } from "../src/types.ts";
 
@@ -43,5 +44,15 @@ describe("reverse-proxy authority headers", () => {
 		expect(headers.get("host")).toBe("example.com:8443");
 		expect(headers.get("x-forwarded-host")).toBe("example.com:8443");
 		expect(headers.get("x-forwarded-port")).toBe("8443");
+	});
+
+	test("forwards BurrowGate's own request ID upstream and ignores a client-supplied one", async () => {
+		const request = new Request("https://example.com/", { headers: { host: "example.com", "x-request-id": "attacker-controlled" } });
+		const expectedId = resolveRequestId(request);
+
+		const headers = await upstreamHeaders(request, site, "203.0.113.9", null, "allowlisted", "https");
+
+		expect(headers.get("x-request-id")).toBe(expectedId);
+		expect(headers.get("x-request-id")).not.toBe("attacker-controlled");
 	});
 });

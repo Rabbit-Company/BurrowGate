@@ -6,7 +6,7 @@ import { jsonResponse, normalizeHost, requestHost } from "../utils/http.ts";
 import { createFlow } from "./challenge-service.ts";
 import { siteHostname } from "./certificate-service.ts";
 import { recordEvent } from "./event-service.ts";
-import { siteErrorResponse } from "./error-response-service.ts";
+import { resolveRequestId, siteErrorResponse } from "./error-response-service.ts";
 import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./ip-rule-service.ts";
 import { upstreamHeaders, upstreamUrl, type OriginAccessStatus } from "./proxy-service.ts";
 import { resolveRoutePolicy } from "./route-policy-service.ts";
@@ -358,11 +358,13 @@ export async function handleWebSocketUpgrade(
 
 	const ip = await clientIpForUpgrade(request, server, site.ip_extraction_preset ?? "direct");
 	const url = incomingUrl;
+	const requestId = resolveRequestId(request);
 	const eventBase: {
 		siteId: string;
 		ip: string;
 		method: string;
 		path: string;
+		requestId: string;
 		countryCode?: string | null;
 		protectionStatus?: ManagedProtectionStatus | null;
 		protectionRuleId?: string | null;
@@ -376,6 +378,7 @@ export async function handleWebSocketUpgrade(
 		ip,
 		method: request.method,
 		path: url.pathname + url.search,
+		requestId,
 	};
 
 	if (!config.websocket.enabled) {
@@ -692,7 +695,8 @@ export async function handleWebSocketUpgrade(
 			for (const cookie of clearAccessIdentityCookies(request)) upgradeHeaders.append("set-cookie", cookie);
 		}
 		if (upstream.protocol) upgradeHeaders.set("sec-websocket-protocol", upstream.protocol);
-		const upgraded = server.upgrade(request, [...upgradeHeaders].length > 0 ? { data: bridge, headers: upgradeHeaders } : { data: bridge });
+		upgradeHeaders.set("x-request-id", eventBase.requestId);
+		const upgraded = server.upgrade(request, { data: bridge, headers: upgradeHeaders });
 		if (!upgraded) {
 			closeBridge(bridge, 1011, "BurrowGate could not upgrade the downstream connection", "proxy");
 			await recordEvent({

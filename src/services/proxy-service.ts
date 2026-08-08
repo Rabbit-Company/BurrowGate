@@ -5,7 +5,7 @@ export type OriginAccessStatus = "verified" | "allowlisted" | "bypass";
 import { removeCookieFromHeader, setCookieInHeader } from "../utils/cookies.ts";
 import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders, requestHost } from "../utils/http.ts";
-import { siteErrorResponse } from "./error-response-service.ts";
+import { resolveRequestId, siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
 import { applyHeaderPolicy, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
@@ -107,6 +107,7 @@ export async function upstreamHeaders(
 	headers.set("x-forwarded-port", externalPort);
 	headers.set("x-forwarded-proto", externalTransport);
 	headers.set("x-forwarded-protocol", externalTransport);
+	headers.set("x-request-id", resolveRequestId(request));
 
 	const timestamp = Math.floor(Date.now() / 1_000).toString();
 	const sessionId = session?.id ?? accessStatus;

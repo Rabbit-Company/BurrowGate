@@ -35,13 +35,14 @@ export async function recordEvent(input: {
 	protectionRulesetId?: string | null;
 	protectionRulesetVersion?: string | null;
 	protectionMatches?: ManagedProtectionMatch[] | null;
+	requestId?: string | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
 	if (input.protectionStatus) openMetrics.recordHttpProtectionRequest(input.siteId, input.protectionStatus);
 	try {
 		await repository.insertEvent({
-			id: randomId("evt"),
+			id: input.requestId || randomId("evt"),
 			site_id: input.siteId,
 			session_id: input.sessionId,
 			ip: input.ip,

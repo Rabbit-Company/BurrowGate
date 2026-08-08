@@ -150,8 +150,14 @@ function escapeHtml(value: unknown): string {
 		.replaceAll("'", "&#39;");
 }
 
-function requestId(request: Request, supplied?: string | null): string {
-	return supplied?.trim() || request.headers.get("x-request-id")?.trim() || request.headers.get("x-correlation-id")?.trim() || crypto.randomUUID();
+const requestIdCache = new WeakMap<Request, string>();
+
+export function resolveRequestId(request: Request, supplied?: string | null): string {
+	const cached = requestIdCache.get(request);
+	if (cached) return cached;
+	const id = (supplied?.trim() || crypto.randomUUID()).slice(0, 128);
+	requestIdCache.set(request, id);
+	return id;
 }
 
 function contextFor(site: SiteRecord, request: Request, input: SiteErrorInput): ErrorContext {
@@ -163,7 +169,7 @@ function contextFor(site: SiteRecord, request: Request, input: SiteErrorInput): 
 		statusText: STATUS_TEXT[input.status] ?? "Request Failed",
 		code: input.code,
 		error: input.error,
-		requestId: requestId(request, input.requestId),
+		requestId: resolveRequestId(request, input.requestId),
 		timestamp: new Date().toISOString(),
 		method: request.method,
 		path: url.pathname + url.search,

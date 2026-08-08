@@ -12,7 +12,7 @@ import { registerChallengeRoutes } from "./routes/challenge-routes.ts";
 import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
-import { siteErrorResponse } from "./services/error-response-service.ts";
+import { resolveRequestId, siteErrorResponse } from "./services/error-response-service.ts";
 import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
@@ -142,11 +142,13 @@ async function gateway(ctx: any): Promise<Response> {
 
 	const ip = getClientIp(ctx) ?? "unknown";
 	const url = new URL(request.url);
+	const requestId = resolveRequestId(request);
 	const eventBase: {
 		siteId: string;
 		ip: string;
 		method: string;
 		path: string;
+		requestId: string;
 		countryCode?: string | null;
 		protectionStatus?: ManagedProtectionStatus | null;
 		protectionRuleId?: string | null;
@@ -160,6 +162,7 @@ async function gateway(ctx: any): Promise<Response> {
 		ip,
 		method: request.method,
 		path: url.pathname + url.search,
+		requestId,
 	};
 
 	if (!requestIsSecure(request) && config.https.enabled) {
@@ -549,9 +552,16 @@ async function gateway(ctx: any): Promise<Response> {
 	}
 }
 
+async function gatewayWithRequestId(ctx: any): Promise<Response> {
+	const requestId = resolveRequestId(ctx.req);
+	const response = await gateway(ctx);
+	response.headers.set("x-request-id", requestId);
+	return response;
+}
+
 for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const) {
-	app.addRoute(method, "/", gateway);
-	app.addRoute(method, "/*", gateway);
+	app.addRoute(method, "/", gatewayWithRequestId);
+	app.addRoute(method, "/*", gatewayWithRequestId);
 }
 
 const listenerManager = new TlsListenerManager(app);
