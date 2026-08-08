@@ -72,6 +72,7 @@ describe("HTTP header and request-limit policies", () => {
 			limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
 			cache,
 			protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
+			banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
 		});
 	});
 

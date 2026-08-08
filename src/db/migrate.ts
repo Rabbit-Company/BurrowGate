@@ -408,6 +408,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_created ON ip_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_action_created ON ip_rules (site_id, action, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_expiry ON ip_rules (site_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_rule_id ON ip_rules (site_id, rule_id)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_created ON country_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_action ON country_rules (site_id, action, country_code)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
@@ -498,6 +499,14 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 	}
 }
 
+async function ensureIpRuleColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE ip_rules ADD COLUMN rule_id VARCHAR(128) NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
+}
+
 async function ensureGeoIpColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE request_events ADD COLUMN country_code VARCHAR(2) NULL",
@@ -583,6 +592,7 @@ export async function migrate(): Promise<void> {
 	await db.unsafe(schema);
 	await ensureSiteColumns();
 	await ensureRoutePolicyColumns();
+	await ensureIpRuleColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
 	await ensureRequestEventColumns();

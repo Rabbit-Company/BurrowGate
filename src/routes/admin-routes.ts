@@ -1228,6 +1228,20 @@ export function registerAdminRoutes(app: Web<any>): void {
 		return jsonResponse({ deleted: true });
 	});
 
+	app.post("/_burrowgate/api/admin/rules/bulk-delete", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedSite(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const body = (await ctx.req.json()) as { ids?: unknown };
+		const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
+		if (ids.length === 0 || ids.length > 200) return jsonResponse({ error: "Provide 1 to 200 rule IDs" }, 400);
+		const deleted = await repository.deleteRulesForSite(ids, selection.site.id);
+		invalidateNetworkPolicy(selection.site.id);
+		return jsonResponse({ deleted });
+	});
+
 	app.post("/_burrowgate/api/admin/sessions/:id/revoke", async (ctx) => {
 		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
 		if (denied) return denied;

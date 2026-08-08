@@ -3,6 +3,8 @@ import type { CountryRuleRecord, DefaultNetworkAction, IpRuleAction, IpRuleRecor
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
+import type { BanDurationSeverity } from "./http-policy-service.ts";
+import type { ManagedProtectionMatch } from "./managed-protection-service.ts";
 
 interface CachedIpRule {
 	rule: IpRuleRecord;
@@ -125,7 +127,14 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 	};
 }
 
-export async function addIpRule(siteId: string, networkCidr: string, action: IpRuleAction, reason: string, expiresAt: number | null): Promise<IpRuleRecord> {
+export async function addIpRule(
+	siteId: string,
+	networkCidr: string,
+	action: IpRuleAction,
+	reason: string,
+	expiresAt: number | null,
+	ruleId: string | null = null,
+): Promise<IpRuleRecord> {
 	if (!parseCidr(networkCidr)) throw new Error("Invalid IP address or CIDR");
 	const record: IpRuleRecord = {
 		id: randomId("rule"),
@@ -135,10 +144,26 @@ export async function addIpRule(siteId: string, networkCidr: string, action: IpR
 		reason,
 		created_at: Date.now(),
 		expires_at: expiresAt,
+		rule_id: ruleId,
 	};
 	await repository.insertRule(record);
 	invalidateNetworkPolicy(siteId);
 	return record;
+}
+
+export async function banIpForProtectionMatch(
+	site: SiteRecord,
+	ip: string,
+	match: ManagedProtectionMatch,
+	banDurations: Record<BanDurationSeverity, number>,
+): Promise<void> {
+	if (ip === "unknown") return;
+	const banSeconds = banDurations[match.severity];
+	if (!banSeconds || banSeconds <= 0) return;
+	const existing = await evaluateIp(site, ip);
+	if (existing.source === "ip-rule" && existing.action === "block") return;
+	const reason = `Auto-banned for ${banSeconds}s after matching WAF rule ${match.ruleId} (${match.category}, ${match.severity})`;
+	await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000, match.ruleId);
 }
 
 export async function addCountryRule(

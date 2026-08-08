@@ -13,7 +13,7 @@ import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent } from "./services/event-service.ts";
 import { siteErrorResponse } from "./services/error-response-service.ts";
-import { evaluateIp } from "./services/ip-rule-service.ts";
+import { banIpForProtectionMatch, evaluateIp } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
@@ -251,6 +251,7 @@ async function gateway(ctx: any): Promise<Response> {
 		eventBase.protectionMatches = protection.matches;
 	}
 	if (protection.status === "blocked") {
+		if (protection.primaryMatch) await banIpForProtectionMatch(site, ip, protection.primaryMatch, route.http.banDurations);
 		await recordEvent({
 			...eventBase,
 			sessionId: null,

@@ -207,14 +207,14 @@ export function adminPage(): string {
     <div class="pad"><h2>Add an IP rule</h2><form id="ruleForm" class="rule-form"><label><span>IP address or CIDR</span><input class="input" name="networkCidr" placeholder="203.0.113.4 or 203.0.113.0/24" required></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="pass">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
   </article>
   <article class="card rules-list-card">
-    <div class="pad section-heading"><div><h2>IP rules</h2><p class="muted">The longest matching CIDR wins. Explicit IP rules have the highest network-policy priority.</p></div><button id="refreshRules" class="button secondary">Refresh</button></div>
+    <div class="pad section-heading"><div><h2>IP rules</h2><p class="muted">The longest matching CIDR wins. Explicit IP rules have the highest network-policy priority.</p></div><div class="row"><button id="bulkUnbanRules" class="button danger" type="button" disabled>Unban selected (0)</button><button id="refreshRules" class="button secondary">Refresh</button></div></div>
     <div class="toolbar compact-toolbar">
-      <label class="search-field"><span>Search</span><input id="ruleSearch" class="input" placeholder="Network or reason..."></label>
+      <label class="search-field"><span>Search</span><input id="ruleSearch" class="input" placeholder="Network, reason, or rule ID..."></label>
       <label><span>Action</span><select id="ruleAction" class="select"><option value="">All</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass</option><option value="block">Block</option><option value="challenge">Challenge</option></select></label>
       <label><span>State</span><select id="ruleState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option></select></label>
       <label><span>Rows</span><select id="rulePageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>${sortButton("Network", "network_cidr")}</th><th>${sortButton("Action", "action")}</th><th>Reason</th><th>${sortButton("Created", "created_at")}</th><th>${sortButton("Expires", "expires_at")}</th><th></th></tr></thead><tbody id="rules"><tr><td colspan="7" class="empty-cell">Open the tab to load rules.</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th><input id="rulesSelectAll" type="checkbox"></th><th>State</th><th>${sortButton("Network", "network_cidr")}</th><th>${sortButton("Action", "action")}</th><th>Reason</th><th>Rule ID</th><th>${sortButton("Created", "created_at")}</th><th>${sortButton("Expires", "expires_at")}</th><th></th></tr></thead><tbody id="rules"><tr><td colspan="9" class="empty-cell">Open the tab to load rules.</td></tr></tbody></table></div>
     ${pagination("rules")}
   </article>
 
@@ -275,6 +275,13 @@ export function adminPage(): string {
             <div class="site-form-grid">
               <label><span>Protection mode</span><select id="routeHttpProtectionMode" class="select"><option value="inherit">Inherit site default</option><option value="disabled">Disabled</option><option value="monitor">Monitor only</option><option value="block">Block matches</option></select><small class="muted">Monitor records what would be blocked while continuing to the origin.</small></label>
               <label><span>Additional excluded rule IDs</span><textarea id="routeHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Route exclusions are added to site exclusions.</small></label>
+            </div>
+            <div class="section-heading error-response-heading"><div><h3>Auto temp-ban durations</h3><p class="muted">When Protection mode is Block, the source IP is temporarily banned for a duration based on the matched rule's severity. Blank inherits the site.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Low severity (seconds)</span><input id="routeHttpBanDurationLow" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
+              <label><span>Medium severity (seconds)</span><input id="routeHttpBanDurationMedium" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
+              <label><span>High severity (seconds)</span><input id="routeHttpBanDurationHigh" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
+              <label><span>Critical severity (seconds)</span><input id="routeHttpBanDurationCritical" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="http">
@@ -385,6 +392,13 @@ export function adminPage(): string {
 							<label><span>Protection mode</span><select id="siteHttpProtectionMode" class="select"><option value="disabled">Disabled</option><option value="monitor" selected>Monitor only</option><option value="block">Block matches</option></select><small class="muted">Start in Monitor. Requests continue normally while potential blocks are recorded.</small></label>
 							<label><span>Managed ruleset</span><select id="siteHttpProtectionRuleset" class="select"><option value="default">Default managed ruleset</option></select><small id="siteProtectionRulesetHelp" class="muted">The active default ruleset is loaded by BurrowGate.</small></label>
 							<label class="site-origin-field"><span>Excluded rule IDs</span><textarea id="siteHttpProtectionExcludedRules" class="input code-input compact-code-input" rows="5" spellcheck="false" placeholder="BG-CORE-2002"></textarea><small class="muted">Comma or whitespace separated. Use narrow route exclusions when only one endpoint requires an exception.</small></label>
+						</div>
+						<div class="section-heading error-response-heading"><div><h3>Auto temp-ban durations</h3><p class="muted">When Protection mode is Block and a request matches a rule, the source IP is added to IP rules as a temporary block for the duration below, based on the matched rule's severity. Use 0 to disable auto-banning for that severity.</p></div></div>
+						<div class="site-form-grid">
+							<label><span>Low severity (seconds)</span><input id="siteHttpBanDurationLow" class="input" type="number" min="0" max="2592000" step="1" value="0" required></label>
+							<label><span>Medium severity (seconds)</span><input id="siteHttpBanDurationMedium" class="input" type="number" min="0" max="2592000" step="1" value="600" required></label>
+							<label><span>High severity (seconds)</span><input id="siteHttpBanDurationHigh" class="input" type="number" min="0" max="2592000" step="1" value="3600" required></label>
+							<label><span>Critical severity (seconds)</span><input id="siteHttpBanDurationCritical" class="input" type="number" min="0" max="2592000" step="1" value="86400" required></label>
 						</div>
 						<button id="openProtectionDashboard" class="button secondary" type="button">Open Protection dashboard</button>
 					</section>

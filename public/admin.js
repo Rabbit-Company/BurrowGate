@@ -2,6 +2,7 @@ const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
 const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
 const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
+const DEFAULT_BAN_DURATIONS = { low: 0, medium: 600, high: 3600, critical: 86400 };
 
 const tableState = {
 	traffic: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
@@ -9,6 +10,8 @@ const tableState = {
 	sessions: { page: 1, pageSize: 50, sortBy: "last_seen_at", sortDirection: "desc" },
 	rules: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
+
+const selectedRuleIds = new Set();
 
 let activeTab = "traffic";
 let latestMetrics = null;
@@ -197,6 +200,12 @@ function readHttpPolicy(prefix, routeOverrides) {
 					rulesetId: byId(`${prefix}ProtectionRuleset`).value,
 					excludedRuleIds: parseRuleIds(`${prefix}ProtectionExcludedRules`),
 				},
+		banDurations: {
+			low: routeOverrides ? optionalNumberInput(`${prefix}BanDurationLow`) : Number(byId(`${prefix}BanDurationLow`).value),
+			medium: routeOverrides ? optionalNumberInput(`${prefix}BanDurationMedium`) : Number(byId(`${prefix}BanDurationMedium`).value),
+			high: routeOverrides ? optionalNumberInput(`${prefix}BanDurationHigh`) : Number(byId(`${prefix}BanDurationHigh`).value),
+			critical: routeOverrides ? optionalNumberInput(`${prefix}BanDurationCritical`) : Number(byId(`${prefix}BanDurationCritical`).value),
+		},
 	};
 }
 
@@ -226,6 +235,16 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 	byId(`${prefix}ProtectionMode`).value = protection.mode ?? (routeOverrides ? "inherit" : "monitor");
 	if (!routeOverrides) byId(`${prefix}ProtectionRuleset`).value = protection.rulesetId ?? "default";
 	byId(`${prefix}ProtectionExcludedRules`).value = protection.excludedRuleIds?.join("\n") ?? "";
+	const banDurations = http.banDurations ?? {};
+	for (const [suffix, key] of [
+		["BanDurationLow", "low"],
+		["BanDurationMedium", "medium"],
+		["BanDurationHigh", "high"],
+		["BanDurationCritical", "critical"],
+	]) {
+		const value = banDurations[key];
+		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? DEFAULT_BAN_DURATIONS[key]);
+	}
 	if (!routeOverrides) updateSiteHttpCacheControls();
 	if (!routeOverrides) updateSiteProtectionControls();
 }
@@ -730,16 +749,29 @@ function ruleState(rule) {
 	return rule.expires_at !== null && Number(rule.expires_at) <= Date.now() ? "expired" : "active";
 }
 
+function updateBulkUnbanRulesButton() {
+	const button = byId("bulkUnbanRules");
+	button.disabled = selectedRuleIds.size === 0;
+	button.textContent = `Unban selected (${selectedRuleIds.size})`;
+	const rowCheckboxes = [...document.querySelectorAll("#rules .rule-select")];
+	const selectAll = byId("rulesSelectAll");
+	const selectedOnPage = rowCheckboxes.filter((checkbox) => selectedRuleIds.has(checkbox.dataset.ruleId));
+	selectAll.checked = rowCheckboxes.length > 0 && selectedOnPage.length === rowCheckboxes.length;
+	selectAll.indeterminate = selectedOnPage.length > 0 && selectedOnPage.length < rowCheckboxes.length;
+}
+
 async function loadRules() {
 	const state = tableState.rules;
+	selectedRuleIds.clear();
+	updateBulkUnbanRulesButton();
 	if (!selectedSiteId) {
-		byId("rules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding IP rules.</td></tr>';
+		byId("rules").innerHTML = '<tr><td colspan="9" class="empty-cell">Create or select a site before adding IP rules.</td></tr>';
 		byId("countryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding country rules.</td></tr>';
 		byId("saveNetworkDefaults").disabled = true;
 		return;
 	}
 	byId("saveNetworkDefaults").disabled = false;
-	setTableLoading("rules", 7);
+	setTableLoading("rules", 9);
 	setTableLoading("countryRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
@@ -764,15 +796,17 @@ async function loadRules() {
 		}
 		byId("rules").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="7" class="empty-cell">No IP rules match these filters.</td></tr>'
+				? '<tr><td colspan="9" class="empty-cell">No IP rules match these filters.</td></tr>'
 				: result.items
 						.map((rule) => {
 							const currentState = ruleState(rule);
 							return `<tr class="rule-row ${currentState}">
+          <td><input type="checkbox" class="rule-select" data-rule-id="${escapeHtml(rule.id)}"></td>
           <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
           <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
           <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
           <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+          <td>${rule.rule_id ? `<code>${escapeHtml(rule.rule_id)}</code>` : '<span class="badge">Manual</span>'}</td>
           <td>${formatDate(rule.created_at)}</td>
           <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
           <td><button class="button danger compact" data-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
@@ -781,7 +815,7 @@ async function loadRules() {
 						.join("");
 		updatePagination("rules", result, loadRules);
 	} catch (error) {
-		setTableError("rules", 7, error);
+		setTableError("rules", 9, error);
 		setTableError("countryRules", 7, error);
 	}
 }
@@ -3047,6 +3081,44 @@ async function handleBodyClick(event) {
 	}
 }
 
+function handleBodyChange(event) {
+	const ruleCheckbox = event.target.closest(".rule-select");
+	if (ruleCheckbox) {
+		if (ruleCheckbox.checked) selectedRuleIds.add(ruleCheckbox.dataset.ruleId);
+		else selectedRuleIds.delete(ruleCheckbox.dataset.ruleId);
+		updateBulkUnbanRulesButton();
+		return;
+	}
+	if (event.target.id === "rulesSelectAll") {
+		const checked = event.target.checked;
+		for (const checkbox of document.querySelectorAll("#rules .rule-select")) {
+			checkbox.checked = checked;
+			if (checked) selectedRuleIds.add(checkbox.dataset.ruleId);
+			else selectedRuleIds.delete(checkbox.dataset.ruleId);
+		}
+		updateBulkUnbanRulesButton();
+	}
+}
+
+async function handleBulkUnbanRules() {
+	if (selectedRuleIds.size === 0) return;
+	if (!confirm(`Unban ${selectedRuleIds.size} selected IP rule(s)?`)) return;
+	const button = byId("bulkUnbanRules");
+	button.disabled = true;
+	try {
+		await api("/rules/bulk-delete", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ ids: [...selectedRuleIds] }),
+		});
+		showToast("Selected IP rules unbanned.");
+		await Promise.all([loadRules(), loadOverview(), loadMetrics()]);
+	} catch (error) {
+		showToast(error.message, "bad");
+		updateBulkUnbanRulesButton();
+	}
+}
+
 function bindActions() {
 	document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
 	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setSiteEditorTab(tab.dataset.siteEditorTab)));
@@ -3335,7 +3407,9 @@ function bindActions() {
 			submit.disabled = false;
 		}
 	});
+	byId("bulkUnbanRules").addEventListener("click", () => void handleBulkUnbanRules());
 	document.body.addEventListener("click", handleBodyClick);
+	document.body.addEventListener("change", handleBodyChange);
 	window.addEventListener(
 		"pagehide",
 		() => {

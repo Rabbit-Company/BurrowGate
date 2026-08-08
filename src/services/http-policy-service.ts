@@ -54,6 +54,22 @@ export interface ResolvedManagedProtectionPolicy {
 	excludedRuleIds: string[];
 }
 
+export type BanDurationSeverity = "low" | "medium" | "high" | "critical";
+
+export interface SiteBanDurationsPolicy {
+	low: number;
+	medium: number;
+	high: number;
+	critical: number;
+}
+
+export interface RouteBanDurationsPolicy {
+	low: number | null;
+	medium: number | null;
+	high: number | null;
+	critical: number | null;
+}
+
 export const DEFAULT_STATIC_CACHE_EXTENSIONS = [
 	".css",
 	".js",
@@ -82,6 +98,7 @@ export interface SiteHttpPolicyView {
 	limits: RequestLimits;
 	cache: SiteStaticCachePolicy;
 	protection: SiteManagedProtectionPolicy;
+	banDurations: SiteBanDurationsPolicy;
 }
 
 export interface RouteHttpPolicyView {
@@ -90,6 +107,7 @@ export interface RouteHttpPolicyView {
 	limits: { [K in keyof RequestLimits]: number | null };
 	cache: RouteStaticCachePolicy;
 	protection: RouteManagedProtectionPolicy;
+	banDurations: RouteBanDurationsPolicy;
 }
 
 export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection"> {
@@ -166,6 +184,7 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 		extensions: [...DEFAULT_STATIC_CACHE_EXTENSIONS],
 	},
 	protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
+	banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
@@ -174,6 +193,7 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	limits: { maxBodyBytes: null, maxRequestTargetBytes: null, maxHeaderBytes: null },
 	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
 	protection: { mode: "inherit", excludedRuleIds: [] },
+	banDurations: { low: null, medium: null, high: null, critical: null },
 });
 
 function protectionMode(
@@ -221,6 +241,29 @@ function parseRouteProtection(value: unknown): RouteManagedProtectionPolicy {
 	return {
 		mode: protectionMode(input.mode, true, "inherit") as RouteManagedProtectionMode,
 		excludedRuleIds: protectionRuleIds(input.excludedRuleIds),
+	};
+}
+
+const MAX_BAN_DURATION_SECONDS = 2_592_000; // 30 days
+
+function parseSiteBanDurations(value: unknown): SiteBanDurationsPolicy {
+	const defaults = defaultSitePolicy().banDurations;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		low: cacheInteger(input.low, "Low severity ban duration", defaults.low, 0, MAX_BAN_DURATION_SECONDS, false)!,
+		medium: cacheInteger(input.medium, "Medium severity ban duration", defaults.medium, 0, MAX_BAN_DURATION_SECONDS, false)!,
+		high: cacheInteger(input.high, "High severity ban duration", defaults.high, 0, MAX_BAN_DURATION_SECONDS, false)!,
+		critical: cacheInteger(input.critical, "Critical severity ban duration", defaults.critical, 0, MAX_BAN_DURATION_SECONDS, false)!,
+	};
+}
+
+function parseRouteBanDurations(value: unknown): RouteBanDurationsPolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		low: cacheInteger(input.low, "Low severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
+		medium: cacheInteger(input.medium, "Medium severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
+		high: cacheInteger(input.high, "High severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
+		critical: cacheInteger(input.critical, "Critical severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
 	};
 }
 
@@ -359,6 +402,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 		},
 		cache: parseSiteCache(input.cache),
 		protection: parseSiteProtection(input.protection),
+		banDurations: parseSiteBanDurations(input.banDurations),
 	};
 }
 
@@ -375,6 +419,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 		},
 		cache: parseRouteCache(input.cache),
 		protection: parseRouteProtection(input.protection),
+		banDurations: parseRouteBanDurations(input.banDurations),
 	};
 }
 
@@ -402,6 +447,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Site request limits");
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Site static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Site managed protection policy");
+	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Site ban duration policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -409,6 +455,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			limits: { ...current.limits, ...suppliedLimits },
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
+			banDurations: { ...current.banDurations, ...suppliedBanDurations },
 		}),
 	);
 }
@@ -421,6 +468,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const suppliedLimits = value.limits === undefined ? {} : objectValue(value.limits, "Route request limits");
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Route static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Route managed protection policy");
+	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Route ban duration policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -428,6 +476,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			limits: { ...current.limits, ...suppliedLimits },
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
+			banDurations: { ...current.banDurations, ...suppliedBanDurations },
 		}),
 	);
 }
@@ -475,6 +524,12 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			mode: routePolicy.protection.mode === "inherit" ? sitePolicy.protection.mode : routePolicy.protection.mode,
 			rulesetId: sitePolicy.protection.rulesetId,
 			excludedRuleIds: [...new Set([...sitePolicy.protection.excludedRuleIds, ...routePolicy.protection.excludedRuleIds])],
+		},
+		banDurations: {
+			low: routePolicy.banDurations.low ?? sitePolicy.banDurations.low,
+			medium: routePolicy.banDurations.medium ?? sitePolicy.banDurations.medium,
+			high: routePolicy.banDurations.high ?? sitePolicy.banDurations.high,
+			critical: routePolicy.banDurations.critical ?? sitePolicy.banDurations.critical,
 		},
 	};
 }

@@ -593,7 +593,7 @@ export const repository = {
 	async pagedRules(query: RuleQuery): Promise<PageResult<IpRuleRecord>> {
 		const pattern = searchPattern(query.search);
 		const now = Date.now();
-		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern})` : db``;
+		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern} OR LOWER(rule_id) LIKE ${pattern})` : db``;
 		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
 		const stateFilter =
 			query.state === "active"
@@ -619,13 +619,21 @@ export const repository = {
 		return (await db`SELECT * FROM ip_rules WHERE site_id=${siteId} ORDER BY created_at DESC`) as IpRuleRecord[];
 	},
 	async insertRule(rule: IpRuleRecord): Promise<void> {
-		await db`INSERT INTO ip_rules (id,site_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		await db`INSERT INTO ip_rules (id,site_id,network_cidr,action,reason,created_at,expires_at,rule_id) VALUES (${rule.id},${rule.site_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at},${rule.rule_id})`;
 	},
 	async deleteRule(id: string): Promise<void> {
 		await db`DELETE FROM ip_rules WHERE id=${id}`;
 	},
 	async deleteRuleForSite(id: string, siteId: string): Promise<void> {
 		await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+	},
+	async deleteRulesForSite(ids: string[], siteId: string): Promise<number> {
+		let deleted = 0;
+		for (const id of ids) {
+			await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+			deleted += 1;
+		}
+		return deleted;
 	},
 	async countryRules(siteId: string): Promise<CountryRuleRecord[]> {
 		return (await db`SELECT * FROM country_rules WHERE site_id=${siteId} ORDER BY country_code ASC`) as CountryRuleRecord[];

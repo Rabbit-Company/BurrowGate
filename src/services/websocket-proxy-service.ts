@@ -7,7 +7,7 @@ import { createFlow } from "./challenge-service.ts";
 import { siteHostname } from "./certificate-service.ts";
 import { recordEvent } from "./event-service.ts";
 import { siteErrorResponse } from "./error-response-service.ts";
-import { evaluateIp } from "./ip-rule-service.ts";
+import { banIpForProtectionMatch, evaluateIp } from "./ip-rule-service.ts";
 import { upstreamHeaders, upstreamUrl, type OriginAccessStatus } from "./proxy-service.ts";
 import { resolveRoutePolicy } from "./route-policy-service.ts";
 import { applyRouteRateLimit } from "./rate-limit-service.ts";
@@ -477,6 +477,7 @@ export async function handleWebSocketUpgrade(
 		eventBase.protectionMatches = protection.matches;
 	}
 	if (protection.status === "blocked") {
+		if (protection.primaryMatch) await banIpForProtectionMatch(site, ip, protection.primaryMatch, route.http.banDurations);
 		await recordEvent({
 			...eventBase,
 			sessionId: null,

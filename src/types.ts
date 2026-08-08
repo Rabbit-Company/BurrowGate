@@ -348,6 +348,7 @@ export interface IpRuleRecord {
 	reason: string;
 	created_at: number;
 	expires_at: number | null;
+	rule_id: string | null;
 }
 
 export interface CountryRuleRecord {
