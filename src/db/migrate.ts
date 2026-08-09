@@ -155,6 +155,25 @@ CREATE TABLE IF NOT EXISTS country_rules (
   expires_at BIGINT NULL,
   UNIQUE(site_id, country_code)
 );
+CREATE TABLE IF NOT EXISTS stream_ip_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  stream_id VARCHAR(64) NOT NULL,
+  network_cidr VARCHAR(160) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS stream_country_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  stream_id VARCHAR(64) NOT NULL,
+  country_code VARCHAR(2) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(stream_id, country_code)
+);
 CREATE TABLE IF NOT EXISTS request_events (
   id VARCHAR(64) PRIMARY KEY,
   site_id VARCHAR(64) NOT NULL,
@@ -261,6 +280,8 @@ CREATE TABLE IF NOT EXISTS streams (
   udp_enabled INTEGER NOT NULL DEFAULT 0,
   certificate_id VARCHAR(64) NULL,
   event_retention_days INTEGER NOT NULL DEFAULT 7,
+  default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
+  default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -411,6 +432,11 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_rule_id ON ip_rules (site_id, rule_id)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_created ON country_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_action ON country_rules (site_id, action, country_code)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_created ON stream_ip_rules (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_action_created ON stream_ip_rules (stream_id, action, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_expiry ON stream_ip_rules (stream_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_country_rules_stream_created ON stream_country_rules (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_country_rules_stream_action ON stream_country_rules (stream_id, action, country_code)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_steps_expiry ON challenge_steps (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_consumptions_created ON challenge_consumptions (consumed_at)",
@@ -507,6 +533,20 @@ async function ensureIpRuleColumns(): Promise<void> {
 	}
 }
 
+async function ensureStreamColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE streams ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE streams ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureGeoIpColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE request_events ADD COLUMN country_code VARCHAR(2) NULL",
@@ -593,6 +633,7 @@ export async function migrate(): Promise<void> {
 	await ensureSiteColumns();
 	await ensureRoutePolicyColumns();
 	await ensureIpRuleColumns();
+	await ensureStreamColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
 	await ensureRequestEventColumns();

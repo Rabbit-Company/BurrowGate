@@ -66,6 +66,8 @@ export function streamView(stream: StreamRecord) {
 		udpEnabled: stream.udp_enabled === 1,
 		certificateId: stream.certificate_id,
 		eventRetentionDays: Number(stream.event_retention_days),
+		defaultIpAction: stream.default_ip_action ?? "inherit",
+		defaultCountryAction: stream.default_country_action ?? "inherit",
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -88,6 +90,8 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		udp_enabled: udpEnabled ? 1 : 0,
 		certificate_id: await certificateId(input.certificateId === undefined ? existing?.certificate_id : input.certificateId, tcpEnabled),
 		event_retention_days: retentionDays(input.eventRetentionDays, existing?.event_retention_days ?? config.eventRetentionDays),
+		default_ip_action: existing?.default_ip_action ?? "inherit",
+		default_country_action: existing?.default_country_action ?? "inherit",
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

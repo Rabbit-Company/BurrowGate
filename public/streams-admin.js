@@ -8,6 +8,9 @@ let streams = [];
 let certificates = [];
 let statuses = [];
 let selectedStreamId = "";
+let rulesStreamId = "";
+let streamCountryRules = [];
+const selectedStreamRuleIds = new Set();
 let activeTab = "connections";
 let eventPage = 1;
 let bandwidthPage = 1;
@@ -27,10 +30,32 @@ const tableState = {
 	connections: { sortBy: "connectedAt", sortDirection: "desc" },
 	events: { sortBy: "created_at", sortDirection: "desc" },
 	bandwidth: { sortBy: "total_bytes", sortDirection: "desc" },
+	rules: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
 
 const escapeHtml = (value) =>
 	String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+
+function truncate(value, length = 72) {
+	const text = String(value ?? "");
+	return text.length > length ? `${text.slice(0, length - 1)}...` : text;
+}
+
+function setTableLoading(id, columns) {
+	byId(id).innerHTML = `<tr><td colspan="${columns}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
+}
+
+function setTableError(id, columns, error) {
+	byId(id).innerHTML = `<tr><td colspan="${columns}" class="empty-cell error-text">${escapeHtml(error.message)}</td></tr>`;
+}
+
+function streamActionLabel(action) {
+	return action === "allow" ? "allow" : action === "block" ? "block" : String(action ?? "-");
+}
+
+function ruleState(rule) {
+	return rule.expires_at !== null && Number(rule.expires_at) <= Date.now() ? "expired" : "active";
+}
 
 function formatNumber(value) {
 	return Number(value ?? 0).toLocaleString();
@@ -462,6 +487,20 @@ function renderStreamSelector() {
 	else selectedStreamId = "";
 }
 
+function renderRulesStreamSelector() {
+	const selector = byId("rulesStreamSelector");
+	if (!streams.some((stream) => stream.id === rulesStreamId)) rulesStreamId = selectedStreamId || streams[0]?.id || "";
+	selector.innerHTML = streams.length
+		? streams
+				.map(
+					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
+				)
+				.join("")
+		: '<option value="">No streams configured</option>';
+	selector.value = rulesStreamId;
+	selector.disabled = streams.length === 0;
+}
+
 function renderCertificateOptions() {
 	const select = byId("streamCertificate");
 	const selected = select.value;
@@ -499,6 +538,7 @@ async function loadStreams() {
 	byId("udpPeerNotice").textContent = `UDP peers disconnect after ${result.defaults.udpPeerIdleTimeoutSeconds} seconds without a datagram.`;
 	if (!byId("streamRetentionDays").value) byId("streamRetentionDays").value = String(result.defaults.retentionDays);
 	renderStreamSelector();
+	renderRulesStreamSelector();
 	renderCertificateOptions();
 	renderStreams();
 }
@@ -595,10 +635,16 @@ function populateCountrySelects() {
 		.map(([code, path]) => ({ code, name: path.dataset.name || countryDisplayName(code) }))
 		.sort((left, right) => left.name.localeCompare(right.name));
 	countries.push({ code: "ZZ", name: "Unknown / unmapped" }, { code: "XX", name: "Local / private network" });
-	for (const id of ["eventCountry", "bandwidthCountry"]) {
+	const configurations = [
+		["eventCountry", "All countries"],
+		["bandwidthCountry", "All countries"],
+		["streamCountryRuleCountry", "Select country"],
+	];
+	for (const [id, emptyLabel] of configurations) {
 		const select = byId(id);
+		if (!select) continue;
 		const current = select.value;
-		select.innerHTML = `<option value="">All countries</option>${countries.map((country) => `<option value="${country.code}">${escapeHtml(country.name)} (${country.code})</option>`).join("")}`;
+		select.innerHTML = `<option value="">${emptyLabel}</option>${countries.map((country) => `<option value="${country.code}">${escapeHtml(country.name)} (${country.code})</option>`).join("")}`;
 		if ([...select.options].some((option) => option.value === current)) select.value = current;
 	}
 }
@@ -728,12 +774,14 @@ function updatePagination(prefix, result, load) {
 	byId(`${prefix}Next`).disabled = result.page >= result.totalPages;
 	byId(`${prefix}Previous`).onclick = () => {
 		if (prefix === "events") eventPage -= 1;
-		else bandwidthPage -= 1;
+		else if (prefix === "bandwidth") bandwidthPage -= 1;
+		else tableState.rules.page -= 1;
 		void load();
 	};
 	byId(`${prefix}Next`).onclick = () => {
 		if (prefix === "events") eventPage += 1;
-		else bandwidthPage += 1;
+		else if (prefix === "bandwidth") bandwidthPage += 1;
+		else tableState.rules.page += 1;
 		void load();
 	};
 }
@@ -772,6 +820,226 @@ async function loadBandwidth() {
 				.join("")
 		: '<tr><td colspan="7" class="empty-cell">No stream bandwidth matches these filters.</td></tr>';
 	updatePagination("bandwidth", result, loadBandwidth);
+}
+
+function updateBulkDeleteStreamRulesButton() {
+	const button = byId("bulkDeleteStreamRules");
+	button.disabled = selectedStreamRuleIds.size === 0;
+	button.textContent = `Delete selected (${selectedStreamRuleIds.size})`;
+	const rowCheckboxes = [...document.querySelectorAll("#streamRules .rule-select")];
+	const selectAll = byId("streamRulesSelectAll");
+	const selectedOnPage = rowCheckboxes.filter((checkbox) => selectedStreamRuleIds.has(checkbox.dataset.ruleId));
+	selectAll.checked = rowCheckboxes.length > 0 && selectedOnPage.length === rowCheckboxes.length;
+	selectAll.indeterminate = selectedOnPage.length > 0 && selectedOnPage.length < rowCheckboxes.length;
+}
+
+function renderStreamCountryRulesTable() {
+	const body = byId("streamCountryRules");
+	if (!rulesStreamId) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">Select a stream before adding country rules.</td></tr>';
+		return;
+	}
+	if (streamCountryRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">No country rules are configured.</td></tr>';
+		return;
+	}
+	body.innerHTML = streamCountryRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			const code = String(rule.country_code || "ZZ").toUpperCase();
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td>${escapeHtml(code)} <span class="muted">${escapeHtml(countryDisplayName(code))}</span></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(streamActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${escapeHtml(formatDate(rule.created_at))}</td>
+      <td>${rule.expires_at === null ? "Never" : escapeHtml(formatDate(rule.expires_at))}</td>
+      <td><button class="button danger compact" data-stream-country-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
+function applyStreamNetworkPolicy(policy) {
+	byId("streamDefaultIpAction").value = policy.defaultIpAction ?? "inherit";
+	byId("streamDefaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
+	streamCountryRules = policy.countryRules ?? [];
+	const warning = byId("streamGeoPolicyWarning");
+	if (!policy.geoip?.enabled) {
+		warning.textContent = "GeoIP is disabled. Country rules are stored but not enforced until GeoIP is enabled.";
+		warning.classList.remove("hidden");
+	} else if (!policy.geoip.available) {
+		warning.textContent = policy.geoip.error || "The GeoIP database is unavailable. Country policy fails open until it becomes available.";
+		warning.classList.remove("hidden");
+	} else {
+		warning.classList.add("hidden");
+	}
+	renderStreamCountryRulesTable();
+}
+
+async function loadStreamRules() {
+	const state = tableState.rules;
+	selectedStreamRuleIds.clear();
+	updateBulkDeleteStreamRulesButton();
+	const disabled = !rulesStreamId;
+	byId("saveStreamNetworkDefaults").disabled = disabled;
+	if (disabled) {
+		byId("streamRules").innerHTML = '<tr><td colspan="8" class="empty-cell">Create a stream before adding network rules.</td></tr>';
+		byId("streamCountryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create a stream before adding network rules.</td></tr>';
+		return;
+	}
+	setTableLoading("streamRules", 8);
+	setTableLoading("streamCountryRules", 7);
+	updateSortIndicators("panel-rules", state);
+	try {
+		const [result, networkPolicy] = await Promise.all([
+			api(
+				`/streams/ip-rules?${queryString({
+					streamId: rulesStreamId,
+					page: state.page,
+					pageSize: state.pageSize,
+					sortBy: state.sortBy,
+					sortDirection: state.sortDirection,
+					search: byId("streamRuleSearch").value.trim(),
+					action: byId("streamRuleAction").value,
+					state: byId("streamRuleState").value,
+				})}`,
+			),
+			api(`/streams/network-policy?${queryString({ streamId: rulesStreamId })}`),
+		]);
+		applyStreamNetworkPolicy(networkPolicy);
+		if (result.page > result.totalPages) {
+			state.page = result.totalPages;
+			return await loadStreamRules();
+		}
+		byId("streamRules").innerHTML = result.items.length
+			? result.items
+					.map((rule) => {
+						const currentState = ruleState(rule);
+						return `<tr class="rule-row ${currentState}">
+          <td><input type="checkbox" class="rule-select" data-rule-id="${escapeHtml(rule.id)}"></td>
+          <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+          <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
+          <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(streamActionLabel(rule.action))}</span></td>
+          <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+          <td>${escapeHtml(formatDate(rule.created_at))}</td>
+          <td>${rule.expires_at === null ? "Never" : escapeHtml(formatDate(rule.expires_at))}</td>
+          <td><button class="button danger compact" data-stream-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+        </tr>`;
+					})
+					.join("")
+			: '<tr><td colspan="8" class="empty-cell">No IP rules match these filters.</td></tr>';
+		updatePagination("streamRules", result, loadStreamRules);
+	} catch (error) {
+		setTableError("streamRules", 8, error);
+		setTableError("streamCountryRules", 7, error);
+	}
+}
+
+async function saveStreamNetworkDefaults() {
+	const result = await api(`/streams/network-policy?${queryString({ streamId: rulesStreamId })}`, {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			defaultIpAction: byId("streamDefaultIpAction").value,
+			defaultCountryAction: byId("streamDefaultCountryAction").value,
+		}),
+	});
+	const stream = streams.find((item) => item.id === rulesStreamId);
+	if (stream) {
+		stream.defaultIpAction = result.defaultIpAction;
+		stream.defaultCountryAction = result.defaultCountryAction;
+	}
+	showToast("Default network actions saved.");
+}
+
+async function addStreamIpRule(event) {
+	event.preventDefault();
+	if (!rulesStreamId) return;
+	const form = event.currentTarget;
+	const data = new FormData(form);
+	const expiresAtValue = data.get("expiresAt");
+	try {
+		await api(`/streams/ip-rules?${queryString({ streamId: rulesStreamId })}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				networkCidr: data.get("networkCidr").trim(),
+				action: data.get("action"),
+				reason: data.get("reason").trim(),
+				expiresAt: expiresAtValue ? new Date(expiresAtValue).getTime() : null,
+			}),
+		});
+		form.reset();
+		showToast("IP rule added.");
+		tableState.rules.page = 1;
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function addStreamCountryRuleFromForm(event) {
+	event.preventDefault();
+	if (!rulesStreamId) return;
+	const form = event.currentTarget;
+	const data = new FormData(form);
+	const expiresAtValue = data.get("expiresAt");
+	try {
+		await api(`/streams/country-rules?${queryString({ streamId: rulesStreamId })}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				countryCode: data.get("countryCode"),
+				action: data.get("action"),
+				reason: data.get("reason").trim(),
+				expiresAt: expiresAtValue ? new Date(expiresAtValue).getTime() : null,
+			}),
+		});
+		form.reset();
+		showToast("Country rule added.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function deleteStreamIpRule(id) {
+	if (!rulesStreamId || !confirm("Delete this IP rule?")) return;
+	try {
+		await api(`/streams/ip-rules/${id}?${queryString({ streamId: rulesStreamId })}`, { method: "DELETE" });
+		showToast("IP rule deleted.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function deleteStreamCountryRule(id) {
+	if (!rulesStreamId || !confirm("Delete this country rule?")) return;
+	try {
+		await api(`/streams/country-rules/${id}?${queryString({ streamId: rulesStreamId })}`, { method: "DELETE" });
+		showToast("Country rule deleted.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function bulkDeleteStreamIpRules() {
+	if (!rulesStreamId || selectedStreamRuleIds.size === 0) return;
+	if (!confirm(`Delete ${selectedStreamRuleIds.size} selected IP rule(s)?`)) return;
+	try {
+		await api(`/streams/ip-rules/bulk-delete?${queryString({ streamId: rulesStreamId })}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ ids: [...selectedStreamRuleIds] }),
+		});
+		showToast("Selected IP rules deleted.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
 }
 
 function updateProtocolControls() {
@@ -877,6 +1145,7 @@ function setActiveTab(name) {
 	if (name === "bandwidth") void loadBandwidth();
 	if (name === "connections") void loadConnections();
 	if (name === "streams") void loadStreams();
+	if (name === "rules") void loadStreamRules();
 }
 
 async function refreshDashboard(updateLabel = "Updated") {
@@ -927,6 +1196,10 @@ document.querySelectorAll(".sort-button").forEach((button) => {
 		if (name === "bandwidth") {
 			bandwidthPage = 1;
 			void loadBandwidth();
+		}
+		if (name === "rules") {
+			state.page = 1;
+			void loadStreamRules();
 		}
 	});
 });
@@ -989,6 +1262,51 @@ for (const [id, load] of [
 		if (load === loadEvents) eventPage = 1;
 		else bandwidthPage = 1;
 		void load();
+	});
+byId("rulesStreamSelector").addEventListener("change", () => {
+	rulesStreamId = byId("rulesStreamSelector").value;
+	tableState.rules.page = 1;
+	void loadStreamRules();
+});
+byId("saveStreamNetworkDefaults").addEventListener("click", () => void saveStreamNetworkDefaults());
+byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
+byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
+byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());
+byId("bulkDeleteStreamRules").addEventListener("click", () => void bulkDeleteStreamIpRules());
+byId("streamRulesSelectAll").addEventListener("change", (event) => {
+	document.querySelectorAll("#streamRules .rule-select").forEach((checkbox) => {
+		if (event.currentTarget.checked) selectedStreamRuleIds.add(checkbox.dataset.ruleId);
+		else selectedStreamRuleIds.delete(checkbox.dataset.ruleId);
+		checkbox.checked = event.currentTarget.checked;
+	});
+	updateBulkDeleteStreamRulesButton();
+});
+byId("streamRules").addEventListener("click", (event) => {
+	const remove = event.target.closest("[data-stream-rule-id]");
+	if (remove) void deleteStreamIpRule(remove.dataset.streamRuleId);
+	const checkbox = event.target.closest(".rule-select");
+	if (checkbox) {
+		if (checkbox.checked) selectedStreamRuleIds.add(checkbox.dataset.ruleId);
+		else selectedStreamRuleIds.delete(checkbox.dataset.ruleId);
+		updateBulkDeleteStreamRulesButton();
+	}
+});
+byId("streamCountryRules").addEventListener("click", (event) => {
+	const remove = event.target.closest("[data-stream-country-rule-id]");
+	if (remove) void deleteStreamCountryRule(remove.dataset.streamCountryRuleId);
+});
+byId("streamRuleSearch").addEventListener(
+	"input",
+	debounce(() => {
+		tableState.rules.page = 1;
+		void loadStreamRules();
+	}),
+);
+for (const id of ["streamRuleAction", "streamRuleState", "streamRulePageSize"])
+	byId(id).addEventListener("change", () => {
+		if (id === "streamRulePageSize") tableState.rules.pageSize = Number(byId(id).value);
+		tableState.rules.page = 1;
+		void loadStreamRules();
 	});
 byId("logout").addEventListener("click", async () => {
 	await api("/logout", { method: "POST" });

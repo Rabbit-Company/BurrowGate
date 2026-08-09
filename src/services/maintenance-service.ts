@@ -5,6 +5,7 @@ import { renewDueCertificates } from "./acme-service.ts";
 import { backfillGeoIp } from "./geoip-service.ts";
 import { invalidateNetworkPolicy } from "./ip-rule-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+import { invalidateStreamNetworkPolicy } from "./stream-ip-rule-service.ts";
 
 const DAY_MS = 86_400_000;
 let cleanupRunning = false;
@@ -130,6 +131,14 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 			{
 				name: `stream bandwidth for ${stream.id}`,
 				run: async () => await repository.deleteStreamBandwidthBeforeBatch(stream.id, cutoff, batchSize),
+			},
+			{
+				name: `expired network rules for stream ${stream.id}`,
+				run: async () => {
+					const count = await repository.deleteExpiredStreamRulesBeforeForStreamBatch(stream.id, cutoff, batchSize);
+					if (count > 0) invalidateStreamNetworkPolicy(stream.id);
+					return count;
+				},
 			},
 		);
 	}

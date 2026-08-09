@@ -6,7 +6,8 @@ import { buildStream, streamView, type StreamInput } from "../services/stream-se
 import { streamProxyManager } from "../services/stream-proxy-service.ts";
 import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
-import type { StreamEventType, StreamProtocol, StreamRecord } from "../types.ts";
+import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
+import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
 
@@ -41,7 +42,32 @@ function protocolParam(url: URL): StreamProtocol | undefined {
 
 function eventTypeParam(url: URL): StreamEventType | undefined {
 	const value = stringParam(url, "eventType");
-	return value === "connected" || value === "disconnected" || value === "upstream-error" || value === "listener-error" ? value : undefined;
+	return value === "connected" || value === "disconnected" || value === "upstream-error" || value === "listener-error" || value === "blocked"
+		? value
+		: undefined;
+}
+
+async function firstStream(): Promise<StreamRecord | null> {
+	return (await repository.allStreams())[0] ?? null;
+}
+
+async function selectedStream(url: URL): Promise<{ stream: StreamRecord | null; error: Response | null }> {
+	const requestedId = stringParam(url, "streamId");
+	if (!requestedId) return { stream: await firstStream(), error: null };
+	const stream = await repository.streamById(requestedId);
+	return stream ? { stream, error: null } : { stream: null, error: jsonResponse({ error: "Selected stream was not found" }, 404) };
+}
+
+function parseStreamDefaultNetworkAction(value: unknown, fallback: StreamDefaultNetworkAction): StreamDefaultNetworkAction {
+	if (value === undefined) return fallback;
+	const action = String(value).trim().toLowerCase();
+	if (action === "inherit" || action === "allow" || action === "block") return action;
+	throw new Error("Default network action must be inherit, allow, or block");
+}
+
+function streamRuleActionParam(url: URL): StreamRuleAction | undefined {
+	const value = stringParam(url, "action");
+	return value === "allow" || value === "block" ? value : undefined;
 }
 
 function eventSortBy(
@@ -85,6 +111,16 @@ function bandwidthSortBy(
 
 function sortDirection(url: URL): "asc" | "desc" {
 	return stringParam(url, "sortDirection") === "asc" ? "asc" : "desc";
+}
+
+function ruleSortBy(url: URL): "created_at" | "expires_at" | "network_cidr" | "action" {
+	const value = stringParam(url, "sortBy");
+	return value === "expires_at" || value === "network_cidr" || value === "action" ? value : "created_at";
+}
+
+function ruleStateParam(url: URL): "active" | "expired" | undefined {
+	const value = stringParam(url, "state");
+	return value === "active" || value === "expired" ? value : undefined;
 }
 
 function range(url: URL): { since: number; until: number } {
@@ -274,5 +310,141 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				...range(url),
 			}),
 		);
+	});
+
+	app.get("/_burrowgate/api/admin/streams/network-policy", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		return jsonResponse({
+			defaultIpAction: selection.stream.default_ip_action ?? "inherit",
+			defaultCountryAction: selection.stream.default_country_action ?? "inherit",
+			countryRules: await repository.streamCountryRules(selection.stream.id),
+			geoip: geoIpStatus(),
+		});
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/streams/network-policy", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		try {
+			const body = (await ctx.req.json()) as { defaultIpAction?: StreamDefaultNetworkAction; defaultCountryAction?: StreamDefaultNetworkAction };
+			const defaultIpAction = parseStreamDefaultNetworkAction(body.defaultIpAction, selection.stream.default_ip_action ?? "inherit");
+			const defaultCountryAction = parseStreamDefaultNetworkAction(body.defaultCountryAction, selection.stream.default_country_action ?? "inherit");
+			await repository.updateStreamNetworkDefaults(selection.stream.id, defaultIpAction, defaultCountryAction, Date.now());
+			invalidateStreamNetworkPolicy(selection.stream.id);
+			await streamProxyManager.enforceNetworkPolicy({ ...selection.stream, default_ip_action: defaultIpAction, default_country_action: defaultCountryAction });
+			return jsonResponse({ defaultIpAction, defaultCountryAction });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/streams/country-rules", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const body = (await ctx.req.json()) as { countryCode?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.countryCode || !["allow", "block"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid country rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addStreamCountryRule(selection.stream.id, body.countryCode, body.action!, body.reason ?? "", expiresAt);
+			await streamProxyManager.enforceNetworkPolicy(selection.stream);
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/streams/country-rules/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		await repository.deleteStreamCountryRuleForStream(ctx.params.id!, selection.stream.id);
+		invalidateStreamNetworkPolicy(selection.stream.id);
+		return jsonResponse({ deleted: true });
+	});
+
+	app.get("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
+		return jsonResponse(
+			await repository.pagedStreamRules({
+				streamId: selection.stream.id,
+				page: integerParam(url, "page", 1, 1, 1_000_000),
+				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
+				search: stringParam(url, "search"),
+				action: streamRuleActionParam(url),
+				state: ruleStateParam(url),
+				sortBy: ruleSortBy(url),
+				sortDirection: sortDirection(url),
+			}),
+		);
+	});
+
+	app.post("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const body = (await ctx.req.json()) as { networkCidr?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.networkCidr || !["allow", "block"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid rule" }, 400);
+		}
+		const parsedExpiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (parsedExpiresAt !== null && (!Number.isFinite(parsedExpiresAt) || parsedExpiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addStreamIpRule(selection.stream.id, body.networkCidr, body.action!, body.reason ?? "", parsedExpiresAt);
+			await streamProxyManager.enforceNetworkPolicy(selection.stream);
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/streams/ip-rules/:id", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		await repository.deleteStreamRuleForStream(ctx.params.id!, selection.stream.id);
+		invalidateStreamNetworkPolicy(selection.stream.id);
+		return jsonResponse({ deleted: true });
+	});
+
+	app.post("/_burrowgate/api/admin/streams/ip-rules/bulk-delete", async (ctx) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const body = (await ctx.req.json()) as { ids?: unknown };
+		const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
+		if (ids.length === 0 || ids.length > 200) return jsonResponse({ error: "Provide 1 to 200 rule IDs" }, 400);
+		const deleted = await repository.deleteStreamRulesForStream(ids, selection.stream.id);
+		invalidateStreamNetworkPolicy(selection.stream.id);
+		return jsonResponse({ deleted });
 	});
 }

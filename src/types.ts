@@ -1,5 +1,7 @@
 export type IpRuleAction = "allow" | "pass" | "block" | "challenge";
 export type DefaultNetworkAction = "inherit" | Exclude<IpRuleAction, "pass">;
+export type StreamRuleAction = "allow" | "block";
+export type StreamDefaultNetworkAction = "inherit" | StreamRuleAction;
 export type FlowStatus = "pending" | "completed" | "failed" | "expired";
 export type StepStatus = "pending" | "completed" | "failed" | "expired";
 export type SiteAccessMode = "challenge" | "bypass";
@@ -256,7 +258,7 @@ export interface SiteAccessUserRecord {
 
 export type BandwidthProtocol = "http" | "websocket";
 export type StreamProtocol = "tcp" | "udp";
-export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error";
+export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error" | "blocked";
 
 export interface BandwidthMinuteRecord {
 	site_id: string;
@@ -279,6 +281,8 @@ export interface StreamRecord {
 	udp_enabled: number;
 	certificate_id: string | null;
 	event_retention_days: number;
+	default_ip_action: StreamDefaultNetworkAction;
+	default_country_action: StreamDefaultNetworkAction;
 	created_at: number;
 	updated_at: number;
 }
@@ -356,6 +360,26 @@ export interface CountryRuleRecord {
 	site_id: string;
 	country_code: string;
 	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface StreamIpRuleRecord {
+	id: string;
+	stream_id: string;
+	network_cidr: string;
+	action: StreamRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface StreamCountryRuleRecord {
+	id: string;
+	stream_id: string;
+	country_code: string;
+	action: StreamRuleAction;
 	reason: string;
 	created_at: number;
 	expires_at: number | null;

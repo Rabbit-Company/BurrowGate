@@ -12,6 +12,8 @@ function record(): StreamRecord {
 		udp_enabled: 0,
 		certificate_id: null,
 		event_retention_days: 7,
+		default_ip_action: "inherit",
+		default_country_action: "inherit",
 		created_at: Date.now(),
 		updated_at: Date.now(),
 	};

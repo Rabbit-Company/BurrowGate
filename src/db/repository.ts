@@ -24,6 +24,9 @@ import type {
 	StreamBandwidthMinuteRecord,
 	StreamProtocol,
 	StreamEventType,
+	StreamRuleAction,
+	StreamIpRuleRecord,
+	StreamCountryRuleRecord,
 	OriginHealthStatusRecord,
 	OriginHealthEventRecord,
 	HealthAlertOutboxRecord,
@@ -79,6 +82,17 @@ export interface RuleQuery {
 	pageSize: number;
 	search?: string;
 	action?: IpRuleAction;
+	state?: "active" | "expired";
+	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
+	sortDirection: SortDirection;
+}
+
+export interface StreamRuleQuery {
+	streamId: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	action?: StreamRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
 	sortDirection: SortDirection;
@@ -651,6 +665,74 @@ export const repository = {
 	},
 	async updateSiteNetworkDefaults(siteId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
+	},
+	async pagedStreamRules(query: StreamRuleQuery): Promise<PageResult<StreamIpRuleRecord>> {
+		const pattern = searchPattern(query.search);
+		const now = Date.now();
+		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern})` : db``;
+		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
+		const stateFilter =
+			query.state === "active"
+				? db`AND (expires_at IS NULL OR expires_at > ${now})`
+				: query.state === "expired"
+					? db`AND expires_at IS NOT NULL AND expires_at <= ${now}`
+					: db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM stream_ip_rules
+      WHERE stream_id=${query.streamId} ${searchFilter} ${actionFilter} ${stateFilter}
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT * FROM stream_ip_rules
+      WHERE stream_id=${query.streamId} ${searchFilter} ${actionFilter} ${stateFilter}
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as StreamIpRuleRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async streamRules(streamId: string): Promise<StreamIpRuleRecord[]> {
+		return (await db`SELECT * FROM stream_ip_rules WHERE stream_id=${streamId} ORDER BY created_at DESC`) as StreamIpRuleRecord[];
+	},
+	async insertStreamRule(rule: StreamIpRuleRecord): Promise<void> {
+		await db`INSERT INTO stream_ip_rules (id,stream_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteStreamRuleForStream(id: string, streamId: string): Promise<void> {
+		await db`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
+	},
+	async deleteStreamRulesForStream(ids: string[], streamId: string): Promise<number> {
+		let deleted = 0;
+		for (const id of ids) {
+			await db`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
+			deleted += 1;
+		}
+		return deleted;
+	},
+	async streamCountryRules(streamId: string): Promise<StreamCountryRuleRecord[]> {
+		return (await db`SELECT * FROM stream_country_rules WHERE stream_id=${streamId} ORDER BY country_code ASC`) as StreamCountryRuleRecord[];
+	},
+	async streamCountryRuleByCode(streamId: string, countryCode: string): Promise<StreamCountryRuleRecord | null> {
+		const rows =
+			(await db`SELECT * FROM stream_country_rules WHERE stream_id=${streamId} AND country_code=${countryCode} LIMIT 1`) as StreamCountryRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertStreamCountryRule(rule: StreamCountryRuleRecord): Promise<void> {
+		await db`INSERT INTO stream_country_rules (id,stream_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteStreamCountryRuleForStream(id: string, streamId: string): Promise<void> {
+		await db`DELETE FROM stream_country_rules WHERE id=${id} AND stream_id=${streamId}`;
+	},
+	async updateStreamNetworkDefaults(streamId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
+		await db`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
+	},
+	async deleteExpiredStreamRulesBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM stream_ip_rules WHERE stream_id=${streamId} AND expires_at IS NOT NULL AND expires_at < ${cutoff} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM stream_ip_rules WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
 		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.created_at})`;
@@ -1737,6 +1819,8 @@ export const repository = {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_events WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_ip_rules WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_country_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM streams WHERE id=${id}`;
 		});
 	},
