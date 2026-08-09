@@ -12,6 +12,7 @@ export interface StreamInput {
 	udpEnabled?: unknown;
 	certificateId?: unknown;
 	eventRetentionDays?: unknown;
+	maxConnectionsPerIp?: unknown;
 }
 
 function port(value: unknown, label: string): number {
@@ -44,6 +45,14 @@ function retentionDays(value: unknown, fallback: number): number {
 	return result;
 }
 
+function maxConnectionsPerIp(value: unknown, fallback: number): number {
+	const result = value === undefined ? fallback : Number(value);
+	if (!Number.isInteger(result) || result < 0 || result > 100_000) {
+		throw new Error("Max connections per IP must be an integer from 0 to 100000 (0 disables the limit)");
+	}
+	return result;
+}
+
 async function certificateId(value: unknown, tcpEnabled: boolean): Promise<string | null> {
 	const id = String(value ?? "").trim() || null;
 	if (!id) return null;
@@ -68,6 +77,7 @@ export function streamView(stream: StreamRecord) {
 		eventRetentionDays: Number(stream.event_retention_days),
 		defaultIpAction: stream.default_ip_action ?? "inherit",
 		defaultCountryAction: stream.default_country_action ?? "inherit",
+		maxConnectionsPerIp: Number(stream.max_connections_per_ip ?? 0),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -92,6 +102,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		event_retention_days: retentionDays(input.eventRetentionDays, existing?.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: existing?.default_ip_action ?? "inherit",
 		default_country_action: existing?.default_country_action ?? "inherit",
+		max_connections_per_ip: maxConnectionsPerIp(input.maxConnectionsPerIp, existing?.max_connections_per_ip ?? 0),
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

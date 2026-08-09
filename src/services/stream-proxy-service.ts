@@ -180,6 +180,13 @@ export class StreamProxyManager {
 		return await operation;
 	}
 
+	private syncRecord(record: StreamRecord): void {
+		const tcpRuntime = this.tcpRuntimes.get(record.id);
+		if (tcpRuntime) tcpRuntime.record = record;
+		const udpRuntime = this.udpRuntimes.get(record.id);
+		if (udpRuntime) udpRuntime.record = record;
+	}
+
 	private async applyNow(record: StreamRecord, forceTls = false): Promise<void> {
 		const previousTcp = this.tcpRuntimes.get(record.id)?.record;
 		const previousUdp = this.udpRuntimes.get(record.id)?.record;
@@ -204,6 +211,7 @@ export class StreamProxyManager {
 				await this.startUdp(record);
 				status.udp = "active";
 			}
+			this.syncRecord(record);
 		} catch (error) {
 			status.error = runtimeError(error);
 			if (tcpChanged) {
@@ -361,34 +369,42 @@ export class StreamProxyManager {
 
 	private async admitTcp(connection: TcpConnection, tls: boolean): Promise<void> {
 		if (connection.closed) return;
+		const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
 		let decision: Awaited<ReturnType<typeof evaluateStreamIp>> | null = null;
 		try {
-			decision = await evaluateStreamIp(connection.record, connection.clientIp);
+			decision = await evaluateStreamIp(record, connection.clientIp);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${connection.record.id}`, { error });
+			Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${record.id}`, { error });
 		}
 		if (connection.closed) return;
-		if (decision?.action === "block") {
+		let blockedReason: string | null = decision?.action === "block" ? (decision.reason ?? "Blocked by network rule") : null;
+		if (!blockedReason && record.max_connections_per_ip > 0) {
+			const activeFromIp = [...this.tcpConnections.values()].filter(
+				(other) => other.id !== connection.id && !other.closed && other.record.id === record.id && other.clientIp === connection.clientIp,
+			).length;
+			if (activeFromIp >= record.max_connections_per_ip) blockedReason = `Per-IP connection limit reached (${record.max_connections_per_ip})`;
+		}
+		if (blockedReason) {
 			this.monitorEvent({
-				stream_id: connection.record.id,
-				incoming_port: connection.record.incoming_port,
+				stream_id: record.id,
+				incoming_port: record.incoming_port,
 				connection_id: connection.id,
 				protocol: "tcp",
 				event_type: "blocked",
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
-				reason: decision.reason ?? "Blocked by network rule",
+				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
 				upstream_to_client_bytes: 0,
 			});
-			this.finishTcp(connection, decision.reason ?? "blocked by network rule");
+			this.finishTcp(connection, blockedReason);
 			return;
 		}
 		this.monitorEvent({
-			stream_id: connection.record.id,
-			incoming_port: connection.record.incoming_port,
+			stream_id: record.id,
+			incoming_port: record.incoming_port,
 			connection_id: connection.id,
 			protocol: "tcp",
 			event_type: "connected",
@@ -597,27 +613,35 @@ export class StreamProxyManager {
 		try {
 			const key = udpPeerKey(clientIp, clientPort);
 			if (!runtime.peers.has(key) && !runtime.pendingPeers.has(key)) {
+				let blockedReason: string | null = null;
 				try {
 					const decision = await evaluateStreamIp(runtime.record, clientIp);
-					if (decision.action === "block") {
-						this.monitorEvent({
-							stream_id: runtime.record.id,
-							incoming_port: runtime.record.incoming_port,
-							connection_id: null,
-							protocol: "udp",
-							event_type: "blocked",
-							client_ip: clientIp,
-							client_port: clientPort,
-							country_code: lookupCountryCode(clientIp),
-							reason: decision.reason ?? "Blocked by network rule",
-							error: null,
-							client_to_upstream_bytes: 0,
-							upstream_to_client_bytes: 0,
-						});
-						return;
-					}
+					if (decision.action === "block") blockedReason = decision.reason ?? "Blocked by network rule";
 				} catch (error) {
 					Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${runtime.record.id}`, { error });
+				}
+				if (!blockedReason && runtime.record.max_connections_per_ip > 0) {
+					const activeFromIp = [...runtime.peers.values()].filter((peer) => peer.clientIp === clientIp).length;
+					if (activeFromIp >= runtime.record.max_connections_per_ip) {
+						blockedReason = `Per-IP connection limit reached (${runtime.record.max_connections_per_ip})`;
+					}
+				}
+				if (blockedReason) {
+					this.monitorEvent({
+						stream_id: runtime.record.id,
+						incoming_port: runtime.record.incoming_port,
+						connection_id: null,
+						protocol: "udp",
+						event_type: "blocked",
+						client_ip: clientIp,
+						client_port: clientPort,
+						country_code: lookupCountryCode(clientIp),
+						reason: blockedReason,
+						error: null,
+						client_to_upstream_bytes: 0,
+						upstream_to_client_bytes: 0,
+					});
+					return;
 				}
 			}
 			const peer = await this.udpPeer(runtime, clientIp, clientPort);
@@ -784,6 +808,7 @@ export class StreamProxyManager {
 	}
 
 	async enforceNetworkPolicy(record: StreamRecord): Promise<void> {
+		this.syncRecord(record);
 		const tcpTargets = [...this.tcpConnections.values()].filter((connection) => connection.record.id === record.id && !connection.closed);
 		for (const connection of tcpTargets) {
 			if (connection.closed) continue;

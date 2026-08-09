@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS streams (
   event_retention_days INTEGER NOT NULL DEFAULT 7,
   default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
+  max_connections_per_ip INTEGER NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -537,6 +538,7 @@ async function ensureStreamColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE streams ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE streams ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE streams ADD COLUMN max_connections_per_ip INTEGER NOT NULL DEFAULT 0",
 	];
 	for (const statement of statements) {
 		try {

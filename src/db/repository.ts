@@ -1802,9 +1802,9 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
 			if (existing) {
-				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
 			} else {
-				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,certificate_id,event_retention_days,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.certificate_id},${stream.event_retention_days},${stream.created_at},${stream.updated_at})`;
+				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.created_at},${stream.updated_at})`;
 			}
 			if (stream.tcp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;

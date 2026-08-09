@@ -797,7 +797,7 @@ async function loadEvents() {
 		? result.items
 				.map(
 					(item) =>
-						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td><span class="badge ${item.event_type.includes("error") ? "bad" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td>${item.protocol.toUpperCase()}</td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td title="${escapeHtml(item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
+						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td>${item.protocol.toUpperCase()}</td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td title="${escapeHtml(item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
 				)
 				.join("")
 		: '<tr><td colspan="9" class="empty-cell">No stream events match these filters.</td></tr>';
@@ -1064,6 +1064,7 @@ function resetForm() {
 	byId("streamTcp").checked = true;
 	byId("streamUdp").checked = false;
 	byId("streamRetentionDays").value = "7";
+	byId("streamMaxConnectionsPerIp").value = "0";
 	updateProtocolControls();
 }
 
@@ -1075,6 +1076,7 @@ function editStream(id) {
 	byId("forwardHost").value = stream.forwardHost;
 	byId("forwardPort").value = stream.forwardPort;
 	byId("streamRetentionDays").value = stream.eventRetentionDays;
+	byId("streamMaxConnectionsPerIp").value = stream.maxConnectionsPerIp ?? 0;
 	byId("streamTcp").checked = stream.tcpEnabled;
 	byId("streamUdp").checked = stream.udpEnabled;
 	byId("streamCertificate").value = stream.certificateId || "";
@@ -1095,6 +1097,7 @@ async function saveStream(event) {
 		udpEnabled: byId("streamUdp").checked,
 		certificateId: byId("streamCertificate").value || null,
 		eventRetentionDays: Number(byId("streamRetentionDays").value),
+		maxConnectionsPerIp: Number(byId("streamMaxConnectionsPerIp").value),
 	};
 	try {
 		await api(id ? `/streams/${id}` : "/streams", {

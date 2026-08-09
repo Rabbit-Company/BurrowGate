@@ -283,6 +283,7 @@ export interface StreamRecord {
 	event_retention_days: number;
 	default_ip_action: StreamDefaultNetworkAction;
 	default_country_action: StreamDefaultNetworkAction;
+	max_connections_per_ip: number;
 	created_at: number;
 	updated_at: number;
 }
