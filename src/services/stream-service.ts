@@ -20,6 +20,7 @@ export interface StreamInput {
 	connectionRateLimitRefillRate?: unknown;
 	connectionRateLimitRefillIntervalMs?: unknown;
 	connectionRateLimitPrecisionMs?: unknown;
+	udpAmplificationMaxRatio?: unknown;
 }
 
 function port(value: unknown, label: string): number {
@@ -74,6 +75,14 @@ function rateLimitAlgorithm(value: unknown, fallback: RateLimitAlgorithm): RateL
 	throw new Error("Connection rate-limit algorithm must be fixed-window, sliding-window, or token-bucket");
 }
 
+function udpAmplificationMaxRatio(value: unknown, fallback: number): number {
+	const result = value === undefined || value === "" ? fallback : Number(value);
+	if (!Number.isInteger(result) || result < 0 || result > 10_000) {
+		throw new Error("UDP amplification ratio must be an integer from 0 to 10000 (0 disables the guard)");
+	}
+	return result;
+}
+
 async function certificateId(value: unknown, tcpEnabled: boolean): Promise<string | null> {
 	const id = String(value ?? "").trim() || null;
 	if (!id) return null;
@@ -108,6 +117,7 @@ export function streamView(stream: StreamRecord) {
 			refillIntervalMs: Number(stream.connection_rate_limit_refill_interval_ms ?? 1_000),
 			precisionMs: Number(stream.connection_rate_limit_precision_ms ?? 100),
 		},
+		udpAmplificationMaxRatio: Number(stream.udp_amplification_max_ratio ?? 0),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -170,6 +180,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			10,
 			60_000,
 		),
+		udp_amplification_max_ratio: udpAmplificationMaxRatio(input.udpAmplificationMaxRatio, existing?.udp_amplification_max_ratio ?? 0),
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

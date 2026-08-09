@@ -43,7 +43,12 @@ function protocolParam(url: URL): StreamProtocol | undefined {
 
 function eventTypeParam(url: URL): StreamEventType | undefined {
 	const value = stringParam(url, "eventType");
-	return value === "connected" || value === "disconnected" || value === "upstream-error" || value === "listener-error" || value === "blocked"
+	return value === "connected" ||
+		value === "disconnected" ||
+		value === "upstream-error" ||
+		value === "listener-error" ||
+		value === "blocked" ||
+		value === "throttled"
 		? value
 		: undefined;
 }

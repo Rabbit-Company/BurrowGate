@@ -52,6 +52,7 @@ interface UdpPeer {
 	upstream: Bun.udp.ConnectedSocket<"buffer">;
 	pendingUpstream: Uint8Array[];
 	closed: boolean;
+	amplificationThrottled: boolean;
 }
 
 interface UdpReply {
@@ -527,6 +528,34 @@ export class StreamProxyManager {
 		this.tcpRuntimes.delete(streamId);
 	}
 
+	private isAmplificationThrottled(runtime: UdpRuntime, peer: UdpPeer, replyBytes: number): boolean {
+		const ratio = runtime.record.udp_amplification_max_ratio;
+		if (ratio <= 0) return false;
+		const budget = config.streams.udpAmplificationGraceBytes + peer.clientToUpstreamBytes * ratio;
+		if (peer.upstreamToClientBytes + replyBytes <= budget) {
+			peer.amplificationThrottled = false;
+			return false;
+		}
+		if (!peer.amplificationThrottled) {
+			peer.amplificationThrottled = true;
+			this.monitorEvent({
+				stream_id: runtime.record.id,
+				incoming_port: runtime.record.incoming_port,
+				connection_id: peer.id,
+				protocol: "udp",
+				event_type: "throttled",
+				client_ip: peer.clientIp,
+				client_port: peer.clientPort,
+				country_code: peer.countryCode,
+				reason: `UDP amplification guard: reply throttled beyond ${ratio}x request bytes`,
+				error: null,
+				client_to_upstream_bytes: peer.clientToUpstreamBytes,
+				upstream_to_client_bytes: peer.upstreamToClientBytes,
+			});
+		}
+		return true;
+	}
+
 	private async createUdpPeer(runtime: UdpRuntime, clientIp: string, clientPort: number): Promise<UdpPeer> {
 		if (runtime.peers.size >= config.streams.maxUdpPeersPerStream) {
 			const oldest = [...runtime.peers.values()].sort((a, b) => a.lastActivityAt - b.lastActivityAt)[0];
@@ -543,6 +572,7 @@ export class StreamProxyManager {
 					if (!peer || peer.closed || runtime.closed) return;
 					peer.lastActivityAt = Date.now();
 					if (flags.truncated) return this.closeUdpPeer(runtime, peer, "truncated upstream datagram", new Error("UDP datagram was truncated"));
+					if (this.isAmplificationThrottled(runtime, peer, data.byteLength)) return;
 					const sent = runtime.socket.send(data, peer.clientPort, peer.clientIp);
 					if (sent) this.recordUdpBytes(peer, "client", data.byteLength);
 					else if (runtime.pendingReplies.length < config.streams.maxPendingDatagrams) runtime.pendingReplies.push({ peer, data: copyChunk(data) });
@@ -573,6 +603,7 @@ export class StreamProxyManager {
 			upstream,
 			pendingUpstream: [],
 			closed: false,
+			amplificationThrottled: false,
 		};
 		runtime.peers.set(udpPeerKey(clientIp, clientPort), peer);
 		this.monitorEvent({

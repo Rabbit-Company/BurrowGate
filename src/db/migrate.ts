@@ -290,6 +290,7 @@ CREATE TABLE IF NOT EXISTS streams (
   connection_rate_limit_refill_rate INTEGER NOT NULL DEFAULT 10,
   connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000,
   connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100,
+  udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -553,6 +554,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_refill_rate INTEGER NOT NULL DEFAULT 10",
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000",
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100",
+		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
 	];
 	for (const statement of statements) {
 		try {

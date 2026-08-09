@@ -103,6 +103,7 @@ export const config = {
 		maxUdpPeersPerStream: envNumber("BG_STREAM_MAX_UDP_PEERS", 10_000, 1, 1_000_000),
 		maxPendingDatagrams: envNumber("BG_STREAM_MAX_PENDING_DATAGRAMS", 256, 1, 65_536),
 		maxPendingEvents: envNumber("BG_STREAM_MAX_PENDING_EVENTS", 100_000, 100, 1_000_000),
+		udpAmplificationGraceBytes: envNumber("BG_STREAM_UDP_AMPLIFICATION_GRACE_BYTES", 512, 0, 1_048_576),
 	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
