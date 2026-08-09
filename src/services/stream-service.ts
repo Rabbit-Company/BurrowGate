@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { repository } from "../db/repository.ts";
 import type { RateLimitAlgorithm, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
+import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
 
 export interface StreamInput {
 	incomingPort?: unknown;
@@ -118,6 +119,7 @@ export function streamView(stream: StreamRecord) {
 			precisionMs: Number(stream.connection_rate_limit_precision_ms ?? 100),
 		},
 		udpAmplificationMaxRatio: Number(stream.udp_amplification_max_ratio ?? 0),
+		protection: resolveStreamProtectionPolicy(stream),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -181,6 +183,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			60_000,
 		),
 		udp_amplification_max_ratio: udpAmplificationMaxRatio(input.udpAmplificationMaxRatio, existing?.udp_amplification_max_ratio ?? 0),
+		protection_policy_json: existing?.protection_policy_json ?? null,
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

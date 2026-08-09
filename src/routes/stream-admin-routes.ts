@@ -8,6 +8,8 @@ import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts"
 import { geoIpStatus } from "../services/geoip-service.ts";
 import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
 import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
+import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
+import { streamRuleSetCatalog } from "../services/stream-protection-service.ts";
 import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
@@ -48,7 +50,8 @@ function eventTypeParam(url: URL): StreamEventType | undefined {
 		value === "upstream-error" ||
 		value === "listener-error" ||
 		value === "blocked" ||
-		value === "throttled"
+		value === "throttled" ||
+		value === "monitored"
 		? value
 		: undefined;
 }
@@ -86,6 +89,7 @@ function eventSortBy(
 	| "client_ip"
 	| "country_code"
 	| "reason"
+	| "protection_rule_id"
 	| "client_to_upstream_bytes"
 	| "upstream_to_client_bytes" {
 	const value = stringParam(url, "sortBy");
@@ -95,6 +99,7 @@ function eventSortBy(
 		value === "client_ip" ||
 		value === "country_code" ||
 		value === "reason" ||
+		value === "protection_rule_id" ||
 		value === "client_to_upstream_bytes" ||
 		value === "upstream_to_client_bytes"
 		? value
@@ -454,5 +459,37 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const deleted = await repository.deleteStreamRulesForStream(ids, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
 		return jsonResponse({ deleted });
+	});
+
+	app.get("/_burrowgate/api/admin/streams/protection-catalog", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		return jsonResponse({ items: streamRuleSetCatalog() });
+	});
+
+	app.get("/_burrowgate/api/admin/streams/protection-policy", async (ctx) => {
+		const denied = await guard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		return jsonResponse(resolveStreamProtectionPolicy(selection.stream));
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/streams/protection-policy", async (ctx: any) => {
+		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		if (denied) return denied;
+		const selection = await selectedStream(new URL(ctx.req.url));
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		try {
+			const body = await ctx.req.json();
+			const protectionPolicyJson = serializeStreamProtectionPolicy(body, selection.stream.protection_policy_json);
+			await repository.updateStreamProtectionPolicy(selection.stream.id, protectionPolicyJson, Date.now());
+			streamProxyManager.refreshRecord({ ...selection.stream, protection_policy_json: protectionPolicyJson });
+			return jsonResponse(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson }));
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update protection policy" }, 400);
+		}
 	});
 }

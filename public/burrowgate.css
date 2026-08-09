@@ -168,6 +168,9 @@ button:disabled {
 	flex-wrap: wrap;
 	font-size: 0.8rem;
 }
+.stream-protection-ban {
+	margin-top: 12px;
+}
 .protocol-toggles {
 	gap: 1rem;
 }
@@ -390,6 +393,18 @@ form.grid label {
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
+.reason-cell {
+	max-width: 36ch;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.hide-protocol-column .protocol-column {
+	display: none;
+}
+.hide-port-column .port-column {
+	display: none;
+}
 .empty-cell {
 	text-align: center !important;
 	color: #64748b;
@@ -448,7 +463,8 @@ form.grid label {
 .state-swatch.revoked {
 	background: #f43f5e;
 }
-.method-badge {
+.method-badge,
+.protocol-badge {
 	font-family: "SFMono-Regular", Consolas, monospace;
 	font-size: 11px;
 	font-weight: 800;
@@ -960,6 +976,10 @@ form.grid label {
 	border-radius: 12px;
 	background: rgba(11, 18, 32, 0.54);
 	cursor: pointer;
+}
+.check-row-list {
+	display: grid;
+	gap: 10px;
 }
 .check-row.hidden {
 	display: none !important;

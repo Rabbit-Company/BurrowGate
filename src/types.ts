@@ -258,7 +258,7 @@ export interface SiteAccessUserRecord {
 
 export type BandwidthProtocol = "http" | "websocket";
 export type StreamProtocol = "tcp" | "udp";
-export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error" | "blocked" | "throttled";
+export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error" | "blocked" | "throttled" | "monitored";
 
 export interface BandwidthMinuteRecord {
 	site_id: string;
@@ -292,6 +292,7 @@ export interface StreamRecord {
 	connection_rate_limit_refill_interval_ms: number;
 	connection_rate_limit_precision_ms: number;
 	udp_amplification_max_ratio: number;
+	protection_policy_json: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -308,6 +309,7 @@ export interface StreamEventRecord {
 	country_code: string | null;
 	reason: string | null;
 	error: string | null;
+	protection_rule_id: string | null;
 	client_to_upstream_bytes: number;
 	upstream_to_client_bytes: number;
 	created_at: number;

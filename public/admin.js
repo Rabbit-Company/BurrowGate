@@ -512,7 +512,7 @@ async function loadOverview() {
 	byId("retentionNote").textContent =
 		`Only the selected page is loaded. Request events are retained for ${overview.retentionDays} day${overview.retentionDays === 1 ? "" : "s"}.`;
 	if (overview.site) {
-		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} to ${overview.site.originUrl}`;
+		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} → ${overview.site.originUrl}`;
 	}
 	renderOriginHealthBanner(overview.originHealth);
 	const defaultSize = String(overview.defaultPageSize ?? 50);

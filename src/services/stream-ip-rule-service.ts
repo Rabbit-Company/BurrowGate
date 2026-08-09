@@ -3,6 +3,8 @@ import type { StreamCountryRuleRecord, StreamDefaultNetworkAction, StreamIpRuleR
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
+import type { BanDurationSeverity } from "./http-policy-service.ts";
+import type { StreamProtectionMatch } from "./stream-protection-service.ts";
 
 interface CachedStreamIpRule {
 	rule: StreamIpRuleRecord;
@@ -145,6 +147,35 @@ export async function addStreamIpRule(
 	await repository.insertStreamRule(record);
 	invalidateStreamNetworkPolicy(streamId);
 	return record;
+}
+
+function humanizeDurationSeconds(totalSeconds: number): string {
+	if (totalSeconds < 60) return `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
+	if (totalSeconds < 3_600) {
+		const minutes = Math.round(totalSeconds / 60);
+		return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+	}
+	if (totalSeconds < 86_400) {
+		const hours = Math.round(totalSeconds / 3_600);
+		return `${hours} hour${hours === 1 ? "" : "s"}`;
+	}
+	const days = Math.round(totalSeconds / 86_400);
+	return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+export async function banStreamIpForProtectionMatch(
+	stream: StreamRecord,
+	ip: string,
+	match: StreamProtectionMatch,
+	banDurations: Record<BanDurationSeverity, number>,
+): Promise<StreamIpRuleRecord | null> {
+	if (ip === "unknown") return null;
+	const banSeconds = banDurations[match.severity];
+	if (!banSeconds || banSeconds <= 0) return null;
+	const existing = await evaluateStreamIp(stream, ip);
+	if (existing.source === "ip-rule" && existing.action === "block") return null;
+	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching ${match.rulesetId} rule ${match.ruleId} (${match.category}, ${match.severity}).`;
+	return await addStreamIpRule(stream.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
 }
 
 export async function addStreamCountryRule(

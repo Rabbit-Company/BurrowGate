@@ -148,6 +148,7 @@ export interface StreamEventQuery {
 		| "client_ip"
 		| "country_code"
 		| "reason"
+		| "protection_rule_id"
 		| "client_to_upstream_bytes"
 		| "upstream_to_client_bytes";
 	sortDirection: SortDirection;
@@ -724,6 +725,9 @@ export const repository = {
 	},
 	async updateStreamNetworkDefaults(streamId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
 		await db`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
+	},
+	async updateStreamProtectionPolicy(streamId: string, protectionPolicyJson: string, updatedAt: number): Promise<void> {
+		await db`UPDATE streams SET protection_policy_json=${protectionPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
 	},
 	async deleteExpiredStreamRulesBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
 		const rows =
@@ -1802,9 +1806,9 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
 			if (existing) {
-				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
 			} else {
-				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.created_at},${stream.updated_at})`;
+				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.created_at},${stream.updated_at})`;
 			}
 			if (stream.tcp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;
@@ -1840,7 +1844,7 @@ export const repository = {
 		if (events.length === 0) return;
 		await db.begin(async (transaction) => {
 			for (const event of events) {
-				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,client_to_upstream_bytes,upstream_to_client_bytes,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.created_at})`;
+				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.created_at})`;
 			}
 		});
 	},
@@ -1860,12 +1864,13 @@ export const repository = {
 	async pagedStreamEvents(query: StreamEventQuery): Promise<PageResult<StreamEventRecord>> {
 		const pattern = searchPattern(query.search);
 		const exactSearch = query.search?.trim().toLowerCase() || null;
+		const exactSearchUpper = query.search?.trim().toUpperCase() || null;
 		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
 		const searchFilter = pattern
-			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR connection_id=${exactSearch})`
+			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR connection_id=${exactSearch} OR protection_rule_id=${exactSearchUpper})`
 			: db``;
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
@@ -1902,6 +1907,7 @@ export const repository = {
 		connections: number;
 		disconnections: number;
 		errors: number;
+		blocked: number;
 		uniqueIps: number;
 		clientToUpstreamBytes: number;
 		upstreamToClientBytes: number;
@@ -1911,7 +1917,7 @@ export const repository = {
 		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const [events] =
-			(await db`SELECT SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connections,SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnections,SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors,COUNT(DISTINCT CASE WHEN event_type='connected' THEN client_ip ELSE NULL END) AS unique_ips FROM stream_events WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}`) as Array<
+			(await db`SELECT SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connections,SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnections,SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors,SUM(CASE WHEN event_type='blocked' THEN 1 ELSE 0 END) AS blocked,COUNT(DISTINCT CASE WHEN event_type='connected' THEN client_ip ELSE NULL END) AS unique_ips FROM stream_events WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}`) as Array<
 				Record<string, number | string>
 			>;
 		const [bandwidth] =
@@ -1943,6 +1949,7 @@ export const repository = {
 			connections: toNumber(events?.connections),
 			disconnections: toNumber(events?.disconnections),
 			errors: toNumber(events?.errors),
+			blocked: toNumber(events?.blocked),
 			uniqueIps: toNumber(events?.unique_ips),
 			clientToUpstreamBytes: toNumber(bandwidth?.client_to_upstream_bytes),
 			upstreamToClientBytes: toNumber(bandwidth?.upstream_to_client_bytes),
@@ -1960,6 +1967,7 @@ export const repository = {
 			connected: number;
 			disconnected: number;
 			errors: number;
+			blocked: number;
 			clientToUpstreamBytes: number;
 			upstreamToClientBytes: number;
 		}>;
@@ -1973,7 +1981,8 @@ export const repository = {
       SELECT ${eventBucket} * ${bucketMs} AS bucket,
         SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connected,
         SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnected,
-        SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors
+        SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors,
+        SUM(CASE WHEN event_type='blocked' THEN 1 ELSE 0 END) AS blocked
       FROM stream_events
       WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}
       GROUP BY ${eventBucket}
@@ -1983,6 +1992,7 @@ export const repository = {
 			connected: number | string;
 			disconnected: number | string;
 			errors: number | string;
+			blocked: number | string;
 		}>;
 		const bandwidthRows = (await db`
       SELECT ${bandwidthBucket} * ${bucketMs} AS bucket,
@@ -2002,6 +2012,7 @@ export const repository = {
 			connected: 0,
 			disconnected: 0,
 			errors: 0,
+			blocked: 0,
 			clientToUpstreamBytes: 0,
 			upstreamToClientBytes: 0,
 		}));
@@ -2012,6 +2023,7 @@ export const repository = {
 			point.connected = toNumber(row.connected);
 			point.disconnected = toNumber(row.disconnected);
 			point.errors = toNumber(row.errors);
+			point.blocked = toNumber(row.blocked);
 		}
 		for (const row of bandwidthRows) {
 			const point = byBucket.get(toNumber(row.bucket));

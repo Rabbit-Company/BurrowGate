@@ -1,0 +1,69 @@
+{
+	"schemaVersion": "1",
+	"id": "minecraft-java",
+	"title": "Minecraft Java Edition protection",
+	"version": "v1",
+	"protocol": "minecraft-java",
+	"decode": { "timeoutMs": 3000, "maxBytes": 2048 },
+	"description": "Inspects the initial handshake and login-start packets of Minecraft Java Edition connections. Only applies to unencrypted, pre-login bytes - it cannot see anything after the encryption handshake on online-mode servers.",
+	"rules": [
+		{
+			"id": "MC-001",
+			"title": "Malformed or non-Minecraft handshake",
+			"category": "protocol-abuse",
+			"severity": "medium",
+			"location": "handshake",
+			"match": { "field": "handshake_valid", "operator": "equals", "value": "false" }
+		},
+		{
+			"id": "MC-005",
+			"title": "Oversized server address string",
+			"category": "protocol-abuse",
+			"severity": "medium",
+			"location": "handshake",
+			"match": { "field": "server_address_length", "operator": "gt", "value": "300" }
+		},
+		{
+			"id": "MC-010",
+			"title": "Invalid protocol version",
+			"category": "recon",
+			"severity": "low",
+			"location": "handshake",
+			"match": { "field": "protocol_version", "operator": "lte", "value": "0" }
+		},
+		{
+			"id": "MC-020",
+			"title": "Bot-pattern username",
+			"category": "bot",
+			"severity": "high",
+			"location": "login",
+			"match": { "field": "username", "transforms": ["lowercase"], "operator": "regex", "pattern": "^(bot|scan|test|hack|exploit)[0-9]{2,6}$" }
+		},
+		{
+			"id": "MC-025",
+			"title": "Invalid username length",
+			"category": "protocol-abuse",
+			"severity": "medium",
+			"location": "login",
+			"match": {
+				"any": [
+					{ "field": "username", "operator": "not-empty", "negate": true },
+					{ "field": "username_length", "operator": "gt", "value": "16" }
+				]
+			}
+		},
+		{
+			"id": "MC-030",
+			"title": "Repeated login attempts from one IP",
+			"category": "flood",
+			"severity": "high",
+			"location": "login",
+			"match": {
+				"all": [
+					{ "field": "next_state", "operator": "equals", "value": "2" },
+					{ "field": "connection.attempts_60s", "operator": "gte", "value": "8" }
+				]
+			}
+		}
+	]
+}

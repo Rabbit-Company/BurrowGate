@@ -50,6 +50,7 @@ import {
 	type ManagedProtectionStatus,
 } from "./services/managed-protection-service.ts";
 import { loadManagedRuleSets } from "./services/managed-ruleset-loader.ts";
+import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -57,6 +58,7 @@ await initializeGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();
 await loadManagedRuleSets();
+await loadStreamRuleSets();
 await loadBalancer.initialize();
 await originHealthManager.initialize();
 await runMaintenance();

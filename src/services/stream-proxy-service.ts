@@ -6,11 +6,24 @@ import type { StreamEventRecord, StreamProtocol, StreamRecord } from "../types.t
 import { randomId } from "../utils/crypto.ts";
 import { streamCertificateTlsOption } from "./certificate-service.ts";
 import { lookupCountryCode } from "./geoip-service.ts";
-import { evaluateStreamIp } from "./stream-ip-rule-service.ts";
+import { banStreamIpForProtectionMatch, evaluateStreamIp } from "./stream-ip-rule-service.ts";
 import { checkStreamConnectionRate } from "./stream-rate-limit-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
 import { registerTlsReloadHandler } from "./tls-listener-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
+import { inspectStreamConnection, streamDecodeConfigFor, streamDecodeProtocols, type StreamRuleFieldValue } from "./stream-protection-service.ts";
+import { streamProtocolDecoder } from "./stream-protocol-decoders/index.ts";
+import {
+	computeStreamLiveRates,
+	pruneStaleStreamConnectionEntries,
+	recordStreamBytes,
+	recordStreamConnectionAttempt,
+	recordStreamDisconnect,
+	recordStreamUpstreamFailure,
+	streamConnectionMetrics,
+} from "./stream-connection-tracker.ts";
+import { STREAM_RULESET_LIMITS } from "./stream-ruleset-format.ts";
 
 type TcpSocket = Bun.Socket<TcpConnection>;
 
@@ -31,6 +44,14 @@ interface TcpConnection {
 	queuedBytes: number;
 	closed: boolean;
 	clientEnded: boolean;
+	/** Non-null while a payload decoder (e.g. minecraft-java) is buffering initial client bytes for protection inspection. */
+	protectionDecodeProtocol: string | null;
+	protectionDecodeChunks: Uint8Array[];
+	protectionDecodeBytes: number;
+	protectionDecodeMaxBytes: number;
+	protectionDecodeTimer: ReturnType<typeof setTimeout> | null;
+	/** True once a verdict has been reached and evaluateProtectionAndProceed is running; further bytes just accumulate until it flushes them. */
+	protectionDecodeAwaitingVerdict: boolean;
 }
 
 interface TcpRuntime {
@@ -107,8 +128,22 @@ function copyChunk(data: Uint8Array): Uint8Array {
 	return Buffer.from(data);
 }
 
-function event(input: Omit<StreamEventRecord, "id" | "created_at">): StreamEventRecord {
-	return { id: randomId("stream_evt"), created_at: Date.now(), ...input };
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+	if (chunks.length === 1) return chunks[0]!;
+	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	const result = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		result.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return result;
+}
+
+type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protection_rule_id"> & { protection_rule_id?: string | null };
+
+function event(input: StreamEventInput): StreamEventRecord {
+	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, ...input };
 }
 
 function runtimeError(error: unknown): string {
@@ -136,10 +171,92 @@ export class StreamProxyManager {
 
 	constructor(private readonly dependencies: StreamProxyDependencies = {}) {
 		registerTlsReloadHandler(async () => await this.reloadTlsStreams());
+		this.startRuntimeProtectionSweep();
 	}
 
-	private monitorEvent(input: Omit<StreamEventRecord, "id" | "created_at">): void {
+	private startRuntimeProtectionSweep(): void {
+		const intervalSeconds = 10;
+		const timer = setInterval(() => void this.runRuntimeProtectionSweep(intervalSeconds), intervalSeconds * 1_000);
+		(timer as unknown as { unref?: () => void }).unref?.();
+	}
+
+	private async runRuntimeProtectionSweep(intervalSeconds: number): Promise<void> {
+		computeStreamLiveRates(intervalSeconds);
+		pruneStaleStreamConnectionEntries();
+		for (const connection of [...this.tcpConnections.values()]) {
+			if (connection.closed || connection.protectionDecodeProtocol) continue;
+			const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
+			const policy = resolveStreamProtectionPolicy(record);
+			if (policy.mode !== "block" || policy.rulesetIds.length === 0) continue;
+			const metrics = streamConnectionMetrics(record.id, connection.clientIp, "tcp");
+			const result = inspectStreamConnection({ fields: metrics }, policy);
+			if (result.status !== "blocked" || !result.primaryMatch) continue;
+			await this.tryBanStreamIp(record, connection.clientIp, result.primaryMatch, policy.banDurations);
+			if (connection.closed) continue;
+			const reason = result.primaryMatch.title;
+			this.monitorEvent({
+				stream_id: record.id,
+				incoming_port: record.incoming_port,
+				connection_id: connection.id,
+				protocol: "tcp",
+				event_type: "blocked",
+				client_ip: connection.clientIp,
+				client_port: connection.clientPort,
+				country_code: connection.countryCode,
+				reason,
+				error: null,
+				protection_rule_id: result.primaryMatch.ruleId,
+				client_to_upstream_bytes: connection.clientToUpstreamBytes,
+				upstream_to_client_bytes: connection.upstreamToClientBytes,
+			});
+			this.finishTcp(connection, reason);
+		}
+		for (const runtime of this.udpRuntimes.values()) {
+			const policy = resolveStreamProtectionPolicy(runtime.record);
+			if (policy.mode !== "block" || policy.rulesetIds.length === 0) continue;
+			for (const peer of [...runtime.peers.values()]) {
+				if (peer.closed) continue;
+				const metrics = streamConnectionMetrics(runtime.record.id, peer.clientIp, "udp");
+				const result = inspectStreamConnection({ fields: metrics }, policy);
+				if (result.status !== "blocked" || !result.primaryMatch) continue;
+				await this.tryBanStreamIp(runtime.record, peer.clientIp, result.primaryMatch, policy.banDurations);
+				if (peer.closed) continue;
+				const reason = result.primaryMatch.title;
+				this.monitorEvent({
+					stream_id: runtime.record.id,
+					incoming_port: runtime.record.incoming_port,
+					connection_id: peer.id,
+					protocol: "udp",
+					event_type: "blocked",
+					client_ip: peer.clientIp,
+					client_port: peer.clientPort,
+					country_code: peer.countryCode,
+					reason,
+					error: null,
+					protection_rule_id: result.primaryMatch.ruleId,
+					client_to_upstream_bytes: peer.clientToUpstreamBytes,
+					upstream_to_client_bytes: peer.upstreamToClientBytes,
+				});
+				this.closeUdpPeer(runtime, peer, reason);
+			}
+		}
+	}
+
+	private monitorEvent(input: StreamEventInput): void {
 		recordStreamEvent(event(input));
+	}
+
+	private async tryBanStreamIp(
+		record: StreamRecord,
+		ip: string,
+		match: Parameters<typeof banStreamIpForProtectionMatch>[2],
+		banDurations: Parameters<typeof banStreamIpForProtectionMatch>[3],
+	): Promise<void> {
+		try {
+			await banStreamIpForProtectionMatch(record, ip, match, banDurations);
+		} catch (error) {
+			Logger.error(`[BurrowGate] Unable to auto-ban ${ip} for stream ${record.id}`, { error });
+		}
 	}
 
 	private statusFor(record: StreamRecord): StreamRuntimeStatus {
@@ -187,6 +304,11 @@ export class StreamProxyManager {
 		if (tcpRuntime) tcpRuntime.record = record;
 		const udpRuntime = this.udpRuntimes.get(record.id);
 		if (udpRuntime) udpRuntime.record = record;
+	}
+
+	/** Refreshes the live record used by admission/runtime checks without restarting listeners - for narrow updates (e.g. protection policy) that bypass apply(). */
+	refreshRecord(record: StreamRecord): void {
+		this.syncRecord(record);
 	}
 
 	private async applyNow(record: StreamRecord, forceTls = false): Promise<void> {
@@ -281,6 +403,7 @@ export class StreamProxyManager {
 		if (count <= 0) return;
 		if (direction === "upstream") connection.clientToUpstreamBytes += count;
 		else connection.upstreamToClientBytes += count;
+		recordStreamBytes(connection.record.id, connection.clientIp, count);
 		recordStreamTraffic(
 			{
 				streamId: connection.record.id,
@@ -333,9 +456,23 @@ export class StreamProxyManager {
 	private finishTcp(connection: TcpConnection, reason: string, error?: Error): void {
 		if (connection.closed) return;
 		connection.closed = true;
+		if (connection.protectionDecodeTimer) {
+			clearTimeout(connection.protectionDecodeTimer);
+			connection.protectionDecodeTimer = null;
+		}
 		this.tcpConnections.delete(connection.id);
 		connection.client.terminate();
 		connection.upstream?.terminate();
+		recordStreamDisconnect(
+			connection.record.id,
+			connection.clientIp,
+			Date.now() - connection.openedAt,
+			// protectionDecodeBytes covers bytes buffered for inspection but blocked before being forwarded -
+			// those are real client data, not a zero-byte recon probe, even though clientToUpstreamBytes is 0.
+			connection.clientToUpstreamBytes === 0 && connection.upstreamToClientBytes === 0 && connection.protectionDecodeBytes === 0,
+		);
+		const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
+		void this.evaluatePostDisconnectProtection(record, connection.clientIp, "tcp");
 		if (error) {
 			this.monitorEvent({
 				stream_id: connection.record.id,
@@ -388,7 +525,7 @@ export class StreamProxyManager {
 		}
 		if (!blockedReason) {
 			const rate = checkStreamConnectionRate(record, connection.clientIp);
-			if (rate.limited) blockedReason = `Connection rate limit exceeded, retry in ${rate.retryAfterSeconds}s`;
+			if (rate.limited) blockedReason = `Connection rate limit exceeded`;
 		}
 		if (blockedReason) {
 			this.monitorEvent({
@@ -422,15 +559,161 @@ export class StreamProxyManager {
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
 		});
+
+		const policy = resolveStreamProtectionPolicy(record);
+		if (policy.mode === "disabled" || policy.rulesetIds.length === 0) {
+			void this.openTcpUpstream(connection);
+			return;
+		}
+		const decodeProtocols = streamDecodeProtocols(policy.rulesetIds);
+		if (decodeProtocols.length > 0) {
+			const protocol = decodeProtocols[0]!;
+			const decodeConfig = streamDecodeConfigFor(policy.rulesetIds, protocol) ?? {
+				timeoutMs: STREAM_RULESET_LIMITS.decodeTimeoutMsDefault,
+				maxBytes: STREAM_RULESET_LIMITS.decodeMaxBytesDefault,
+			};
+			this.beginProtectionDecode(connection, protocol, decodeConfig);
+			return;
+		}
+		// No payload decoding needed for any enabled ruleset - the fields we already have (connection metadata) are enough to evaluate now.
+		await this.evaluateProtectionAndProceed(connection, {});
+	}
+
+	private beginProtectionDecode(connection: TcpConnection, protocol: string, decodeConfig: { timeoutMs: number; maxBytes: number }): void {
+		if (connection.closed) return;
+		connection.protectionDecodeProtocol = protocol;
+		connection.protectionDecodeChunks = [];
+		connection.protectionDecodeBytes = 0;
+		connection.protectionDecodeMaxBytes = decodeConfig.maxBytes;
+		connection.protectionDecodeAwaitingVerdict = false;
+		connection.protectionDecodeTimer = setTimeout(() => this.forceFinishProtectionDecode(connection), decodeConfig.timeoutMs);
+		(connection.protectionDecodeTimer as unknown as { unref?: () => void }).unref?.();
+	}
+
+	private handleProtectionDecodeChunk(connection: TcpConnection, data: Uint8Array): void {
+		if (connection.closed) return;
+		connection.lastActivityAt = Date.now();
+		connection.protectionDecodeChunks.push(copyChunk(data));
+		connection.protectionDecodeBytes += data.byteLength;
+		if (connection.protectionDecodeAwaitingVerdict) return; // verdict already in flight - just keep accumulating for the eventual flush
+		this.tryCompleteProtectionDecode(connection);
+	}
+
+	private tryCompleteProtectionDecode(connection: TcpConnection): void {
+		if (connection.closed || !connection.protectionDecodeProtocol || connection.protectionDecodeAwaitingVerdict) return;
+		const decoder = streamProtocolDecoder(connection.protectionDecodeProtocol);
+		const buffer = concatChunks(connection.protectionDecodeChunks);
+		const attempt = decoder ? decoder.decode(buffer) : { status: "done" as const, fields: {} };
+		if (attempt.status === "done" || connection.protectionDecodeBytes >= connection.protectionDecodeMaxBytes) {
+			this.finishProtectionDecode(connection, attempt.fields);
+		}
+	}
+
+	/** Timeout fallback: stop waiting and evaluate with whatever fields the decoder could produce from the bytes buffered so far. */
+	private forceFinishProtectionDecode(connection: TcpConnection): void {
+		if (connection.closed || !connection.protectionDecodeProtocol || connection.protectionDecodeAwaitingVerdict) return;
+		const decoder = streamProtocolDecoder(connection.protectionDecodeProtocol);
+		const buffer = concatChunks(connection.protectionDecodeChunks);
+		const attempt = decoder ? decoder.decode(buffer) : { status: "done" as const, fields: {} };
+		this.finishProtectionDecode(connection, attempt.fields);
+	}
+
+	private finishProtectionDecode(connection: TcpConnection, decodedFields: Record<string, StreamRuleFieldValue>): void {
+		if (connection.closed || connection.protectionDecodeAwaitingVerdict) return;
+		connection.protectionDecodeAwaitingVerdict = true;
+		if (connection.protectionDecodeTimer) {
+			clearTimeout(connection.protectionDecodeTimer);
+			connection.protectionDecodeTimer = null;
+		}
+		void this.evaluateProtectionAndProceed(connection, decodedFields);
+	}
+
+	private async evaluateProtectionAndProceed(connection: TcpConnection, decodedFields: Record<string, StreamRuleFieldValue>): Promise<void> {
+		if (connection.closed) return;
+		const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
+		const policy = resolveStreamProtectionPolicy(record);
+		const metrics = streamConnectionMetrics(record.id, connection.clientIp, "tcp");
+		const result = inspectStreamConnection({ fields: { ...metrics, ...decodedFields } }, policy);
+		if (result.status === "blocked" && result.primaryMatch) {
+			await this.tryBanStreamIp(record, connection.clientIp, result.primaryMatch, policy.banDurations);
+			if (connection.closed) return;
+			const reason = result.primaryMatch.title;
+			this.monitorEvent({
+				stream_id: record.id,
+				incoming_port: record.incoming_port,
+				connection_id: connection.id,
+				protocol: "tcp",
+				event_type: "blocked",
+				client_ip: connection.clientIp,
+				client_port: connection.clientPort,
+				country_code: connection.countryCode,
+				reason,
+				error: null,
+				protection_rule_id: result.primaryMatch.ruleId,
+				client_to_upstream_bytes: connection.clientToUpstreamBytes,
+				upstream_to_client_bytes: connection.upstreamToClientBytes,
+			});
+			this.finishTcp(connection, reason);
+			return;
+		}
+		if (result.status === "monitored" && result.primaryMatch) {
+			this.monitorEvent({
+				stream_id: record.id,
+				incoming_port: record.incoming_port,
+				connection_id: connection.id,
+				protocol: "tcp",
+				event_type: "monitored",
+				client_ip: connection.clientIp,
+				client_port: connection.clientPort,
+				country_code: connection.countryCode,
+				reason: result.primaryMatch.title,
+				error: null,
+				protection_rule_id: result.primaryMatch.ruleId,
+				client_to_upstream_bytes: connection.clientToUpstreamBytes,
+				upstream_to_client_bytes: connection.upstreamToClientBytes,
+			});
+		}
+		if (connection.protectionDecodeProtocol !== null || connection.protectionDecodeChunks.length > 0) {
+			const bufferedBytes = concatChunks(connection.protectionDecodeChunks.length > 0 ? connection.protectionDecodeChunks : [new Uint8Array(0)]);
+			connection.protectionDecodeProtocol = null;
+			connection.protectionDecodeAwaitingVerdict = false;
+			connection.protectionDecodeChunks = [];
+			connection.protectionDecodeBytes = 0;
+			if (bufferedBytes.byteLength > 0) this.writeTcp(connection, "upstream", bufferedBytes);
+		}
 		void this.openTcpUpstream(connection);
+	}
+
+	private async evaluatePostDisconnectProtection(record: StreamRecord, clientIp: string, protocol: StreamProtocol): Promise<void> {
+		const policy = resolveStreamProtectionPolicy(record);
+		if (policy.mode !== "block" || policy.rulesetIds.length === 0) return;
+		const metrics = streamConnectionMetrics(record.id, clientIp, protocol);
+		const result = inspectStreamConnection({ fields: metrics }, policy);
+		if (result.status !== "blocked" || !result.primaryMatch) return;
+		await this.tryBanStreamIp(record, clientIp, result.primaryMatch, policy.banDurations);
+		this.monitorEvent({
+			stream_id: record.id,
+			incoming_port: record.incoming_port,
+			connection_id: null,
+			protocol,
+			event_type: "blocked",
+			client_ip: clientIp,
+			client_port: null,
+			country_code: lookupCountryCode(clientIp),
+			reason: result.primaryMatch.title,
+			error: null,
+			protection_rule_id: result.primaryMatch.ruleId,
+			client_to_upstream_bytes: 0,
+			upstream_to_client_bytes: 0,
+		});
 	}
 
 	private async openTcpUpstream(connection: TcpConnection): Promise<void> {
 		const connect = this.dependencies.connect ?? ((options) => Bun.connect(options));
-		const connectTimer = setTimeout(
-			() => this.finishTcp(connection, "upstream connection timeout", new Error("TCP upstream connection timed out")),
-			config.streams.connectTimeoutSeconds * 1_000,
-		);
+		const connectTimer = setTimeout(() => {
+			recordStreamUpstreamFailure(connection.record.id, connection.clientIp);
+			this.finishTcp(connection, "upstream connection timeout", new Error("TCP upstream connection timed out"));
+		}, config.streams.connectTimeoutSeconds * 1_000);
 		(connectTimer as unknown as { unref?: () => void }).unref?.();
 		try {
 			const upstream = await connect({
@@ -456,13 +739,17 @@ export class StreamProxyManager {
 					},
 					close: (_socket, error) => this.finishTcp(connection, "upstream closed", error),
 					error: (_socket, error) => this.finishTcp(connection, "upstream error", error),
-					connectError: (_socket, error) => this.finishTcp(connection, "upstream connection failed", error),
+					connectError: (_socket, error) => {
+						recordStreamUpstreamFailure(connection.record.id, connection.clientIp);
+						this.finishTcp(connection, "upstream connection failed", error);
+					},
 					timeout: () => this.finishTcp(connection, "upstream idle timeout"),
 				},
 			});
 			if (connection.closed) upstream.terminate();
 			else connection.upstream = upstream;
 		} catch (error) {
+			recordStreamUpstreamFailure(connection.record.id, connection.clientIp);
 			this.finishTcp(connection, "upstream connection failed", error instanceof Error ? error : new Error(String(error)));
 		} finally {
 			clearTimeout(connectTimer);
@@ -480,6 +767,7 @@ export class StreamProxyManager {
 			socket: {
 				open: async (client) => {
 					const clientIp = client.remoteAddress;
+					recordStreamConnectionAttempt(record.id, clientIp);
 					const connection: TcpConnection = {
 						id: randomId("stream_conn"),
 						record,
@@ -497,6 +785,12 @@ export class StreamProxyManager {
 						queuedBytes: 0,
 						closed: false,
 						clientEnded: false,
+						protectionDecodeProtocol: null,
+						protectionDecodeChunks: [],
+						protectionDecodeBytes: 0,
+						protectionDecodeMaxBytes: 0,
+						protectionDecodeTimer: null,
+						protectionDecodeAwaitingVerdict: false,
 					};
 					client.data = connection;
 					client.timeout(config.streams.idleTimeoutSeconds);
@@ -504,7 +798,11 @@ export class StreamProxyManager {
 					this.updateCounts(record.id);
 					await this.admitTcp(connection, Boolean(tls));
 				},
-				data: (client, data) => this.writeTcp(client.data, "upstream", data),
+				data: (client, data) => {
+					const connection = client.data;
+					if (connection.protectionDecodeProtocol) this.handleProtectionDecodeChunk(connection, data);
+					else this.writeTcp(connection, "upstream", data);
+				},
 				drain: (client) => this.flushTcp(client.data, "client"),
 				end: (client) => {
 					client.data.clientEnded = true;
@@ -639,6 +937,7 @@ export class StreamProxyManager {
 	private recordUdpBytes(peer: UdpPeer, direction: "upstream" | "client", count: number): void {
 		if (direction === "upstream") peer.clientToUpstreamBytes += count;
 		else peer.upstreamToClientBytes += count;
+		recordStreamBytes(peer.record.id, peer.clientIp, count);
 		recordStreamTraffic(
 			{ streamId: peer.record.id, incomingPort: peer.record.incoming_port, ip: peer.clientIp, countryCode: peer.countryCode, protocol: "udp" },
 			direction === "upstream" ? { clientToUpstreamBytes: count } : { upstreamToClientBytes: count },
@@ -649,6 +948,7 @@ export class StreamProxyManager {
 		try {
 			const key = udpPeerKey(clientIp, clientPort);
 			if (!runtime.peers.has(key) && !runtime.pendingPeers.has(key)) {
+				recordStreamConnectionAttempt(runtime.record.id, clientIp);
 				let blockedReason: string | null = null;
 				try {
 					const decision = await evaluateStreamIp(runtime.record, clientIp);
@@ -664,7 +964,24 @@ export class StreamProxyManager {
 				}
 				if (!blockedReason) {
 					const rate = checkStreamConnectionRate(runtime.record, clientIp);
-					if (rate.limited) blockedReason = `Connection rate limit exceeded, retry in ${rate.retryAfterSeconds}s`;
+					if (rate.limited) blockedReason = `Connection rate limit exceeded`;
+				}
+				let monitoredReason: string | null = null;
+				let protectionRuleId: string | null = null;
+				if (!blockedReason) {
+					const policy = resolveStreamProtectionPolicy(runtime.record);
+					if (policy.mode !== "disabled" && policy.rulesetIds.length > 0) {
+						const metrics = streamConnectionMetrics(runtime.record.id, clientIp, "udp");
+						const result = inspectStreamConnection({ fields: metrics }, policy);
+						if (result.status === "blocked" && result.primaryMatch) {
+							await this.tryBanStreamIp(runtime.record, clientIp, result.primaryMatch, policy.banDurations);
+							blockedReason = result.primaryMatch.title;
+							protectionRuleId = result.primaryMatch.ruleId;
+						} else if (result.status === "monitored" && result.primaryMatch) {
+							monitoredReason = result.primaryMatch.title;
+							protectionRuleId = result.primaryMatch.ruleId;
+						}
+					}
 				}
 				if (blockedReason) {
 					this.monitorEvent({
@@ -678,10 +995,28 @@ export class StreamProxyManager {
 						country_code: lookupCountryCode(clientIp),
 						reason: blockedReason,
 						error: null,
+						protection_rule_id: protectionRuleId,
 						client_to_upstream_bytes: 0,
 						upstream_to_client_bytes: 0,
 					});
 					return;
+				}
+				if (monitoredReason) {
+					this.monitorEvent({
+						stream_id: runtime.record.id,
+						incoming_port: runtime.record.incoming_port,
+						connection_id: null,
+						protocol: "udp",
+						event_type: "monitored",
+						client_ip: clientIp,
+						client_port: clientPort,
+						country_code: lookupCountryCode(clientIp),
+						reason: monitoredReason,
+						error: null,
+						protection_rule_id: protectionRuleId,
+						client_to_upstream_bytes: 0,
+						upstream_to_client_bytes: 0,
+					});
 				}
 			}
 			const peer = await this.udpPeer(runtime, clientIp, clientPort);
@@ -693,6 +1028,7 @@ export class StreamProxyManager {
 			else if (peer.pendingUpstream.length < config.streams.maxPendingDatagrams) peer.pendingUpstream.push(copyChunk(data));
 			else this.closeUdpPeer(runtime, peer, "UDP upstream queue exceeded", new Error("UDP upstream queue limit exceeded"));
 		} catch (error) {
+			recordStreamUpstreamFailure(runtime.record.id, clientIp);
 			Logger.error(`[BurrowGate] Unable to create UDP peer for ${clientIp}:${clientPort}`, { error });
 		}
 	}
@@ -724,6 +1060,8 @@ export class StreamProxyManager {
 		peer.closed = true;
 		peer.upstream.close();
 		runtime.peers.delete(udpPeerKey(peer.clientIp, peer.clientPort));
+		recordStreamDisconnect(peer.record.id, peer.clientIp, Date.now() - peer.openedAt, peer.clientToUpstreamBytes === 0 && peer.upstreamToClientBytes === 0);
+		void this.evaluatePostDisconnectProtection(runtime.record, peer.clientIp, "udp");
 		if (error) {
 			this.monitorEvent({
 				stream_id: peer.record.id,

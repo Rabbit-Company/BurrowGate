@@ -1,6 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { StreamProxyManager } from "../src/services/stream-proxy-service.ts";
+import { registerBundledStreamRuleSets } from "../src/services/stream-ruleset-defaults.ts";
 import type { StreamRecord } from "../src/types.ts";
+
+function varint(value: number): number[] {
+	const bytes: number[] = [];
+	let remaining = value;
+	do {
+		let byte = remaining & 0x7f;
+		remaining >>>= 7;
+		if (remaining !== 0) byte |= 0x80;
+		bytes.push(byte);
+	} while (remaining !== 0);
+	return bytes;
+}
+
+function mcString(value: string): number[] {
+	const utf8 = [...Buffer.from(value, "utf8")];
+	return [...varint(utf8.length), ...utf8];
+}
+
+function handshakePacket(nextState: number): Buffer {
+	const payload = [0x00, ...varint(47), ...mcString("localhost"), 0x63, 0xdd, ...varint(nextState)];
+	return Buffer.from([...varint(payload.length), ...payload]);
+}
 
 function record(): StreamRecord {
 	return {
@@ -23,6 +46,7 @@ function record(): StreamRecord {
 		connection_rate_limit_refill_interval_ms: 1_000,
 		connection_rate_limit_precision_ms: 100,
 		udp_amplification_max_ratio: 0,
+		protection_policy_json: null,
 		created_at: Date.now(),
 		updated_at: Date.now(),
 	};
@@ -244,5 +268,144 @@ describe("UDP stream proxy", () => {
 
 		expect(listenerSends).toEqual([400]);
 		await manager.remove("stream-udp-amp-ok-test");
+	});
+});
+
+describe("Stream protection rulesets", () => {
+	registerBundledStreamRuleSets();
+
+	function protectionPolicy(rulesetIds: string[], mode: "monitor" | "block" = "block"): string {
+		return JSON.stringify({ mode, rulesetIds, excludedRuleIds: [], banDurations: { low: 0, medium: 0, high: 0, critical: 0 } });
+	}
+
+	test("blocks a connection whose handshake fails minecraft-java decoding", async () => {
+		let listenOptions: any;
+		let connectCallCount = 0;
+		const client = fakeSocket("203.0.113.40", 45678);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectCallCount += 1;
+				const upstream = fakeSocket("192.0.2.10", 23456);
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({ ...record(), id: "stream-mc-block-test", protection_policy_json: protectionPolicy(["minecraft-java"]) });
+		await listenOptions.socket.open(client);
+		listenOptions.socket.data(client, Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+		await flushMicrotasks(20);
+
+		expect(connectCallCount).toBe(0);
+		expect(client.terminated).toBe(true);
+		await manager.remove("stream-mc-block-test");
+	});
+
+	test("forwards a valid handshake to upstream once protection inspection clears it", async () => {
+		let listenOptions: any;
+		let connectOptions: any;
+		const client = fakeSocket("203.0.113.41", 45678);
+		const upstream = fakeSocket("192.0.2.10", 23456);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectOptions = options;
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({ ...record(), id: "stream-mc-ok-test", protection_policy_json: protectionPolicy(["minecraft-java"], "monitor") });
+		await listenOptions.socket.open(client);
+		const packet = handshakePacket(1); // status ping - decodes immediately, no login-start to wait for
+		listenOptions.socket.data(client, packet);
+		await flushMicrotasks(20);
+		await waitUntil(() => connectOptions !== undefined);
+		await flushMicrotasks();
+
+		expect(Buffer.concat(upstream.writes).toString("hex")).toBe(packet.toString("hex"));
+		await manager.remove("stream-mc-ok-test");
+	});
+
+	test("a status-ping handshake in block mode is not falsely flagged for a missing username", async () => {
+		let listenOptions: any;
+		let connectOptions: any;
+		const client = fakeSocket("203.0.113.42", 45678);
+		const upstream = fakeSocket("192.0.2.10", 23456);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectOptions = options;
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({ ...record(), id: "stream-mc-ping-block-test", protection_policy_json: protectionPolicy(["minecraft-java"]) });
+		await listenOptions.socket.open(client);
+		const packet = handshakePacket(1); // status ping - no login-start packet ever follows
+		listenOptions.socket.data(client, packet);
+		await flushMicrotasks(20);
+		await waitUntil(() => connectOptions !== undefined);
+		await flushMicrotasks();
+
+		expect(client.terminated).toBe(false);
+		expect(Buffer.concat(upstream.writes).toString("hex")).toBe(packet.toString("hex"));
+		await manager.remove("stream-mc-ping-block-test");
+	});
+
+	test("blocking a connection mid protection-decode does not poison the next connection as a zero-byte scan", async () => {
+		let listenOptions: any;
+		let connectCallCount = 0;
+		const clientA = fakeSocket("203.0.113.43", 45678);
+		const clientB = fakeSocket("203.0.113.43", 45679);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectCallCount += 1;
+				const upstream = fakeSocket("192.0.2.10", 23456);
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({
+			...record(),
+			id: "stream-mc-gen020-test",
+			protection_policy_json: protectionPolicy(["minecraft-java", "stream-connection-abuse"]),
+		});
+
+		await listenOptions.socket.open(clientA);
+		listenOptions.socket.data(clientA, Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])); // malformed - blocked mid-decode
+		await flushMicrotasks(20);
+		expect(clientA.terminated).toBe(true);
+		expect(connectCallCount).toBe(0);
+
+		await listenOptions.socket.open(clientB);
+		const packet = handshakePacket(1); // a legitimate status ping from the same IP right after
+		listenOptions.socket.data(clientB, packet);
+		await flushMicrotasks(20);
+		await waitUntil(() => connectCallCount === 1);
+		await flushMicrotasks();
+
+		expect(clientB.terminated).toBe(false);
+		await manager.remove("stream-mc-gen020-test");
 	});
 });

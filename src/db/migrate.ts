@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS streams (
   connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000,
   connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100,
   udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0,
+  protection_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -313,6 +314,7 @@ CREATE TABLE IF NOT EXISTS stream_events (
   country_code VARCHAR(2) NULL,
   reason VARCHAR(255) NULL,
   error TEXT NULL,
+  protection_rule_id VARCHAR(128) NULL,
   client_to_upstream_bytes BIGINT NOT NULL DEFAULT 0,
   upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL
@@ -461,6 +463,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_stream_created ON stream_events (stream_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_client_created ON stream_events (client_ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_port_created ON stream_events (incoming_port, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_events_protection_rule_id ON stream_events (protection_rule_id)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_stream_bucket ON stream_bandwidth_minutes (stream_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_ip_bucket ON stream_bandwidth_minutes (ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_health_events_site_created ON origin_health_events (site_id, created_at)",
@@ -555,6 +558,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000",
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100",
 		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -591,6 +595,14 @@ async function ensureAccessSessionColumns(): Promise<void> {
 		} catch (error) {
 			if (!duplicateColumnError(error)) throw error;
 		}
+	}
+}
+
+async function ensureStreamEventColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
 	}
 }
 
@@ -655,6 +667,7 @@ export async function migrate(): Promise<void> {
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
 	await ensureRequestEventColumns();
+	await ensureStreamEventColumns();
 	await ensurePrimaryOrigins();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");

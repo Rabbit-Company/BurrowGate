@@ -11,6 +11,8 @@ let selectedStreamId = "";
 let rulesStreamId = "";
 let streamCountryRules = [];
 const selectedStreamRuleIds = new Set();
+let protectionStreamId = "";
+let protectionCatalog = [];
 let activeTab = "connections";
 let eventPage = 1;
 let bandwidthPage = 1;
@@ -348,30 +350,31 @@ function renderStreamCharts() {
 	const bandwidthMode = activeTab === "bandwidth";
 	const primary = bandwidthMode
 		? {
-				title: "Client to upstream bandwidth",
-				subtitle: "Payload bytes received from stream clients and forwarded upstream",
-				emptyMessage: "No client-to-upstream bandwidth in this range.",
+				title: "Client to origin bandwidth",
+				subtitle: "Payload bytes received from stream clients and forwarded to origin",
+				emptyMessage: "No client-to-origin bandwidth in this range.",
 				valueFormat: "bytes",
-				datasets: [{ key: "clientToUpstreamBytes", label: "To upstream" }],
+				datasets: [{ key: "clientToUpstreamBytes", label: "To origin" }],
 				data,
 			}
 		: {
 				title: "Stream traffic volume",
-				subtitle: "Connections, disconnections, and proxy errors",
+				subtitle: "Connections, disconnections, blocked connections, and proxy errors",
 				emptyMessage: "No stream lifecycle activity in this range.",
 				valueFormat: "number",
 				datasets: [
 					{ key: "connected", label: "Connected" },
-					{ key: "disconnected", label: "Disconnected" },
+					{ key: "blocked", label: "Blocked" },
 					{ key: "errors", label: "Errors" },
+					{ key: "disconnected", label: "Disconnected" },
 				],
 				data,
 			};
 	const secondary = bandwidthMode
 		? {
-				title: "Upstream to client bandwidth",
-				subtitle: "Payload bytes received upstream and returned to stream clients",
-				emptyMessage: "No upstream-to-client bandwidth in this range.",
+				title: "Origin to client bandwidth",
+				subtitle: "Payload bytes received from origin and returned to stream clients",
+				emptyMessage: "No origin-to-client bandwidth in this range.",
 				valueFormat: "bytes",
 				datasets: [{ key: "upstreamToClientBytes", label: "To clients" }],
 				data,
@@ -382,7 +385,7 @@ function renderStreamCharts() {
 				emptyMessage: "No stream bandwidth in this range.",
 				valueFormat: "bytes",
 				datasets: [
-					{ key: "clientToUpstreamBytes", label: "To upstream" },
+					{ key: "clientToUpstreamBytes", label: "To origin" },
 					{ key: "upstreamToClientBytes", label: "To clients" },
 				],
 				data,
@@ -501,10 +504,24 @@ function renderRulesStreamSelector() {
 	selector.disabled = streams.length === 0;
 }
 
+function renderProtectionStreamSelector() {
+	const selector = byId("protectionStreamSelector");
+	if (!streams.some((stream) => stream.id === protectionStreamId)) protectionStreamId = selectedStreamId || streams[0]?.id || "";
+	selector.innerHTML = streams.length
+		? streams
+				.map(
+					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
+				)
+				.join("")
+		: '<option value="">No streams configured</option>';
+	selector.value = protectionStreamId;
+	selector.disabled = streams.length === 0;
+}
+
 function renderCertificateOptions() {
 	const select = byId("streamCertificate");
 	const selected = select.value;
-	select.innerHTML = `<option value="">None / TLS passthrough</option>${certificates.map((certificate) => `<option value="${escapeHtml(certificate.id)}">${escapeHtml(certificate.primaryDomain)} · ${escapeHtml(certificate.siteName)} · expires ${escapeHtml(formatDate(certificate.expiresAt))}</option>`).join("")}`;
+	select.innerHTML = `<option value="">None / TLS passthrough</option>${certificates.map((certificate) => `<option value="${escapeHtml(certificate.id)}">${escapeHtml(certificate.primaryDomain)} | ${escapeHtml(certificate.siteName)} | expires ${escapeHtml(formatDate(certificate.expiresAt))}</option>`).join("")}`;
 	if (certificates.some((certificate) => certificate.id === selected)) select.value = selected;
 }
 
@@ -539,6 +556,7 @@ async function loadStreams() {
 	if (!byId("streamRetentionDays").value) byId("streamRetentionDays").value = String(result.defaults.retentionDays);
 	renderStreamSelector();
 	renderRulesStreamSelector();
+	renderProtectionStreamSelector();
 	renderCertificateOptions();
 	renderStreams();
 }
@@ -585,7 +603,7 @@ function renderActive(items) {
 		? filtered
 				.map(
 					(item) =>
-						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incomingPort}</code></td><td class="ip-cell"><code>${escapeHtml(item.clientIp)}:${item.clientPort}</code></td><td>${escapeHtml(item.countryCode || "ZZ")}</td><td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td><td>${escapeHtml(formatDate(item.lastActivityAt))}</td><td>${formatBytes(item.clientToUpstreamBytes)}</td><td>${formatBytes(item.upstreamToClientBytes)}</td></tr>`,
+						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incomingPort}</code></td><td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code></td><td>${countryBadge(item.countryCode)}</td><td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td><td>${escapeHtml(formatDate(item.lastActivityAt))}</td><td>${formatBytes(item.clientToUpstreamBytes)}</td><td>${formatBytes(item.upstreamToClientBytes)}</td></tr>`,
 				)
 				.join("")
 		: '<tr><td colspan="8" class="empty-cell">No active connections or UDP peers.</td></tr>';
@@ -604,12 +622,14 @@ async function loadOverview() {
 	const rangeLabel = rangeDurationLabel(Number(result.rangeTo) - Number(result.rangeFrom));
 	byId("rangeConnectionsLabel").textContent = `Connections (${rangeLabel})`;
 	byId("uniqueIpsLabel").textContent = `Unique IPs (${rangeLabel})`;
-	byId("clientToUpstreamLabel").textContent = `Client to upstream (${rangeLabel})`;
-	byId("upstreamToClientLabel").textContent = `Upstream to client (${rangeLabel})`;
+	byId("clientToUpstreamLabel").textContent = `Client to origin (${rangeLabel})`;
+	byId("upstreamToClientLabel").textContent = `Origin to client (${rangeLabel})`;
 	byId("rangeErrorsLabel").textContent = `Errors (${rangeLabel})`;
+	byId("rangeBlockedLabel").textContent = `Blocked (${rangeLabel})`;
 	byId("rangeConnections").textContent = formatNumber(result.connections);
 	byId("uniqueIps").textContent = formatNumber(result.uniqueIps);
 	byId("rangeErrors").textContent = formatNumber(result.errors);
+	byId("rangeBlocked").textContent = formatNumber(result.blocked);
 	byId("clientToUpstream").textContent = formatBytes(result.clientToUpstreamBytes);
 	byId("upstreamToClient").textContent = formatBytes(result.upstreamToClientBytes);
 	geoStatus = result.geoip;
@@ -627,6 +647,12 @@ function countryDisplayName(code, fallback = "") {
 	} catch {
 		return fallback || code;
 	}
+}
+
+function countryBadge(codeInput) {
+	const code = String(codeInput || "ZZ").toUpperCase();
+	const name = countryDisplayName(code);
+	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
 }
 
 function populateCountrySelects() {
@@ -788,7 +814,7 @@ function updatePagination(prefix, result, load) {
 
 async function loadEvents() {
 	const state = tableState.events;
-	byId("streamEvents").innerHTML = '<tr><td colspan="9" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
+	byId("streamEvents").innerHTML = '<tr><td colspan="10" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
 	const result = await api(
 		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
 	);
@@ -797,16 +823,27 @@ async function loadEvents() {
 		? result.items
 				.map(
 					(item) =>
-						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td>${item.protocol.toUpperCase()}</td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td title="${escapeHtml(item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
+						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${countryBadge(item.country_code)}</td><td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td><td class="port-column"><code>${item.incoming_port}</code></td><td class="reason-cell" title="${escapeHtml(item.reason || item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${item.protection_rule_id ? `<code>${escapeHtml(item.protection_rule_id)}</code>` : "-"}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
 				)
 				.join("")
-		: '<tr><td colspan="9" class="empty-cell">No stream events match these filters.</td></tr>';
+		: '<tr><td colspan="10" class="empty-cell">No stream events match these filters.</td></tr>';
 	updatePagination("events", result, loadEvents);
+	updateEventsColumnVisibility();
+}
+
+function updateEventsColumnVisibility() {
+	const stream = streams.find((item) => item.id === selectedStreamId);
+	const singleStreamSelected = Boolean(selectedStreamId);
+	const singleProtocol = singleStreamSelected && stream ? stream.tcpEnabled !== stream.udpEnabled : false;
+	const wrap = byId("streamEvents").closest(".table-wrap");
+	wrap.classList.toggle("hide-port-column", singleStreamSelected);
+	wrap.classList.toggle("hide-protocol-column", singleProtocol);
+	byId("eventProtocolFilter").classList.toggle("hidden", singleProtocol);
 }
 
 async function loadBandwidth() {
 	const state = tableState.bandwidth;
-	byId("streamBandwidth").innerHTML = '<tr><td colspan="7" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
+	byId("streamBandwidth").innerHTML = '<tr><td colspan="6" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
 	const result = await api(
 		`/streams/bandwidth?${queryString({ streamId: selectedStreamId, page: bandwidthPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("bandwidthSearch").value.trim(), protocol: byId("bandwidthProtocol").value, country: byId("bandwidthCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
 	);
@@ -815,11 +852,17 @@ async function loadBandwidth() {
 		? result.items
 				.map(
 					(item) =>
-						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incoming_port}</code></td><td class="ip-cell"><code>${escapeHtml(item.ip)}</code></td><td>${escapeHtml(item.country_code || "ZZ")}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td><td><strong>${formatBytes(item.total_bytes)}</strong></td></tr>`,
+						`<tr><td class="ip-cell"><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td><td>${countryBadge(item.country_code)}</td><td class="port-column"><code>${item.incoming_port}</code></td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td><td><strong>${formatBytes(item.total_bytes)}</strong></td></tr>`,
 				)
 				.join("")
-		: '<tr><td colspan="7" class="empty-cell">No stream bandwidth matches these filters.</td></tr>';
+		: '<tr><td colspan="6" class="empty-cell">No stream bandwidth matches these filters.</td></tr>';
 	updatePagination("bandwidth", result, loadBandwidth);
+	updateBandwidthColumnVisibility();
+}
+
+function updateBandwidthColumnVisibility() {
+	const wrap = byId("streamBandwidth").closest(".table-wrap");
+	wrap.classList.toggle("hide-port-column", Boolean(selectedStreamId));
 }
 
 function updateBulkDeleteStreamRulesButton() {
@@ -951,6 +994,72 @@ async function saveStreamNetworkDefaults() {
 		stream.defaultCountryAction = result.defaultCountryAction;
 	}
 	showToast("Default network actions saved.");
+}
+
+function renderProtectionCatalog(enabledIds) {
+	const container = byId("protectionCatalogList");
+	if (protectionCatalog.length === 0) {
+		container.innerHTML = '<p class="muted">No stream-protection rulesets are loaded.</p>';
+		return;
+	}
+	const enabled = new Set(enabledIds);
+	container.innerHTML = protectionCatalog
+		.map(
+			(ruleset) =>
+				`<label class="check-row compact-check"><input type="checkbox" class="protection-ruleset-checkbox" value="${escapeHtml(ruleset.id)}"${enabled.has(ruleset.id) ? " checked" : ""}><span><strong>${escapeHtml(ruleset.title)}</strong><small class="muted">${escapeHtml(ruleset.id)} | ${escapeHtml(ruleset.version)} | ${escapeHtml(ruleset.protocol)}${ruleset.description ? ` | ${escapeHtml(ruleset.description)}` : ""}</small></span></label>`,
+		)
+		.join("");
+}
+
+async function loadProtectionCatalog(enabledIds) {
+	const result = await api("/streams/protection-catalog");
+	protectionCatalog = result.items;
+	renderProtectionCatalog(enabledIds);
+}
+
+function selectedProtectionRulesetIds() {
+	return [...document.querySelectorAll(".protection-ruleset-checkbox:checked")].map((checkbox) => checkbox.value);
+}
+
+async function loadStreamProtection() {
+	if (!protectionStreamId) {
+		byId("saveStreamProtection").disabled = true;
+		byId("protectionCatalogList").innerHTML = '<p class="muted">Create a stream before configuring protection.</p>';
+		return;
+	}
+	byId("saveStreamProtection").disabled = false;
+	const policy = await api(`/streams/protection-policy?${queryString({ streamId: protectionStreamId })}`);
+	byId("streamProtectionMode").value = policy.mode;
+	byId("streamProtectionExcludedRules").value = (policy.excludedRuleIds ?? []).join("\n");
+	byId("streamProtectionBanLow").value = String(policy.banDurations?.low ?? 0);
+	byId("streamProtectionBanMedium").value = String(policy.banDurations?.medium ?? 600);
+	byId("streamProtectionBanHigh").value = String(policy.banDurations?.high ?? 3600);
+	byId("streamProtectionBanCritical").value = String(policy.banDurations?.critical ?? 86400);
+	await loadProtectionCatalog(policy.rulesetIds ?? []);
+}
+
+async function saveStreamProtection() {
+	if (!protectionStreamId) return;
+	try {
+		await api(`/streams/protection-policy?${queryString({ streamId: protectionStreamId })}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				mode: byId("streamProtectionMode").value,
+				rulesetIds: selectedProtectionRulesetIds(),
+				excludedRuleIds: byId("streamProtectionExcludedRules").value.trim(),
+				banDurations: {
+					low: Number(byId("streamProtectionBanLow").value),
+					medium: Number(byId("streamProtectionBanMedium").value),
+					high: Number(byId("streamProtectionBanHigh").value),
+					critical: Number(byId("streamProtectionBanCritical").value),
+				},
+			}),
+		});
+		showToast("Protection settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
 }
 
 async function addStreamIpRule(event) {
@@ -1182,6 +1291,7 @@ function setActiveTab(name) {
 	if (name === "connections") void loadConnections();
 	if (name === "streams") void loadStreams();
 	if (name === "rules") void loadStreamRules();
+	if (name === "protection") void loadStreamProtection();
 }
 
 async function refreshDashboard(updateLabel = "Updated") {
@@ -1306,6 +1416,12 @@ byId("rulesStreamSelector").addEventListener("change", () => {
 	void loadStreamRules();
 });
 byId("saveStreamNetworkDefaults").addEventListener("click", () => void saveStreamNetworkDefaults());
+byId("protectionStreamSelector").addEventListener("change", () => {
+	protectionStreamId = byId("protectionStreamSelector").value;
+	void loadStreamProtection();
+});
+byId("refreshProtectionCatalog").addEventListener("click", () => void loadStreamProtection());
+byId("saveStreamProtection").addEventListener("click", () => void saveStreamProtection());
 byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
 byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
 byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());

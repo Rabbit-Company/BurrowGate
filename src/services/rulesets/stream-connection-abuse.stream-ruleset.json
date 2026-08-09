@@ -1,0 +1,55 @@
+{
+	"schemaVersion": "1",
+	"id": "stream-connection-abuse",
+	"title": "General TCP/UDP connection abuse",
+	"version": "v1",
+	"protocol": "generic",
+	"description": "Protocol-agnostic connect/disconnect and failure-pattern abuse detection. Uses only connection metadata (no payload inspection), so it is safe to enable on any stream regardless of what it proxies.",
+	"rules": [
+		{
+			"id": "GEN-001",
+			"title": "Rapid connect/disconnect cycling",
+			"category": "flood",
+			"severity": "medium",
+			"location": "connection",
+			"match": {
+				"all": [
+					{ "field": "connection.disconnects_60s", "operator": "gte", "value": "10" },
+					{ "field": "connection.avg_session_ms_60s", "operator": "lt", "value": "500" }
+				]
+			}
+		},
+		{
+			"id": "GEN-010",
+			"title": "Repeated upstream-connect failures",
+			"category": "probing",
+			"severity": "high",
+			"location": "connection",
+			"match": { "field": "connection.upstream_failures_60s", "operator": "gte", "value": "5" }
+		},
+		{
+			"id": "GEN-020",
+			"title": "Zero-byte connection scan",
+			"category": "recon",
+			"severity": "low",
+			"location": "connection",
+			"match": { "field": "connection.zero_byte_disconnect", "operator": "equals", "value": "true" }
+		},
+		{
+			"id": "GEN-030",
+			"title": "Excessive connection attempts from one IP",
+			"category": "flood",
+			"severity": "medium",
+			"location": "connection",
+			"match": { "field": "connection.attempts_60s", "operator": "gte", "value": "30" }
+		},
+		{
+			"id": "GEN-040",
+			"title": "Sustained abnormal packet rate",
+			"category": "flood",
+			"severity": "high",
+			"location": "connection",
+			"match": { "field": "connection.packets_per_second", "operator": "gt", "value": "500" }
+		}
+	]
+}
