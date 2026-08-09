@@ -283,6 +283,13 @@ CREATE TABLE IF NOT EXISTS streams (
   default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
   max_connections_per_ip INTEGER NOT NULL DEFAULT 0,
+  connection_rate_limit_enabled INTEGER NOT NULL DEFAULT 0,
+  connection_rate_limit_algorithm VARCHAR(32) NOT NULL DEFAULT 'sliding-window',
+  connection_rate_limit_window_ms BIGINT NOT NULL DEFAULT 60000,
+  connection_rate_limit_max INTEGER NOT NULL DEFAULT 60,
+  connection_rate_limit_refill_rate INTEGER NOT NULL DEFAULT 10,
+  connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000,
+  connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -539,6 +546,13 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE streams ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE streams ADD COLUMN max_connections_per_ip INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_algorithm VARCHAR(32) NOT NULL DEFAULT 'sliding-window'",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_window_ms BIGINT NOT NULL DEFAULT 60000",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_max INTEGER NOT NULL DEFAULT 60",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_refill_rate INTEGER NOT NULL DEFAULT 10",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_refill_interval_ms BIGINT NOT NULL DEFAULT 1000",
+		"ALTER TABLE streams ADD COLUMN connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100",
 	];
 	for (const statement of statements) {
 		try {

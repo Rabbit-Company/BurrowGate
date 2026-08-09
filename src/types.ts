@@ -284,6 +284,13 @@ export interface StreamRecord {
 	default_ip_action: StreamDefaultNetworkAction;
 	default_country_action: StreamDefaultNetworkAction;
 	max_connections_per_ip: number;
+	connection_rate_limit_enabled: number;
+	connection_rate_limit_algorithm: RateLimitAlgorithm;
+	connection_rate_limit_window_ms: number;
+	connection_rate_limit_max: number;
+	connection_rate_limit_refill_rate: number;
+	connection_rate_limit_refill_interval_ms: number;
+	connection_rate_limit_precision_ms: number;
 	created_at: number;
 	updated_at: number;
 }

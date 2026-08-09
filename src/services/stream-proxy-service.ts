@@ -7,6 +7,7 @@ import { randomId } from "../utils/crypto.ts";
 import { streamCertificateTlsOption } from "./certificate-service.ts";
 import { lookupCountryCode } from "./geoip-service.ts";
 import { evaluateStreamIp } from "./stream-ip-rule-service.ts";
+import { checkStreamConnectionRate } from "./stream-rate-limit-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
 import { registerTlsReloadHandler } from "./tls-listener-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
@@ -384,6 +385,10 @@ export class StreamProxyManager {
 			).length;
 			if (activeFromIp >= record.max_connections_per_ip) blockedReason = `Per-IP connection limit reached (${record.max_connections_per_ip})`;
 		}
+		if (!blockedReason) {
+			const rate = checkStreamConnectionRate(record, connection.clientIp);
+			if (rate.limited) blockedReason = `Connection rate limit exceeded, retry in ${rate.retryAfterSeconds}s`;
+		}
 		if (blockedReason) {
 			this.monitorEvent({
 				stream_id: record.id,
@@ -625,6 +630,10 @@ export class StreamProxyManager {
 					if (activeFromIp >= runtime.record.max_connections_per_ip) {
 						blockedReason = `Per-IP connection limit reached (${runtime.record.max_connections_per_ip})`;
 					}
+				}
+				if (!blockedReason) {
+					const rate = checkStreamConnectionRate(runtime.record, clientIp);
+					if (rate.limited) blockedReason = `Connection rate limit exceeded, retry in ${rate.retryAfterSeconds}s`;
 				}
 				if (blockedReason) {
 					this.monitorEvent({

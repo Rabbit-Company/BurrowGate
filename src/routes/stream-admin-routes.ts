@@ -7,6 +7,7 @@ import { streamProxyManager } from "../services/stream-proxy-service.ts";
 import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
 import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
+import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
 import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
@@ -215,6 +216,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		try {
 			const stream = await buildStream(await body(ctx.req), previous);
 			await saveAndActivate(stream, previous);
+			invalidateStreamRateLimiter(stream.id);
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() });
 		} catch (error) {
 			return mutationError(error, "Unable to update stream");
@@ -229,6 +231,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		await streamProxyManager.remove(stream.id);
 		await flushStreamMonitoring();
 		await repository.deleteStream(stream.id);
+		invalidateStreamRateLimiter(stream.id);
 		return jsonResponse({ deleted: true });
 	});
 

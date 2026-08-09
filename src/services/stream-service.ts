@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { isIP } from "node:net";
 import { repository } from "../db/repository.ts";
-import type { StreamRecord } from "../types.ts";
+import type { RateLimitAlgorithm, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 
 export interface StreamInput {
@@ -13,6 +13,13 @@ export interface StreamInput {
 	certificateId?: unknown;
 	eventRetentionDays?: unknown;
 	maxConnectionsPerIp?: unknown;
+	connectionRateLimitEnabled?: unknown;
+	connectionRateLimitAlgorithm?: unknown;
+	connectionRateLimitWindowMs?: unknown;
+	connectionRateLimitMax?: unknown;
+	connectionRateLimitRefillRate?: unknown;
+	connectionRateLimitRefillIntervalMs?: unknown;
+	connectionRateLimitPrecisionMs?: unknown;
 }
 
 function port(value: unknown, label: string): number {
@@ -53,6 +60,20 @@ function maxConnectionsPerIp(value: unknown, fallback: number): number {
 	return result;
 }
 
+function integerValue(value: unknown, label: string, fallback: number, minimum: number, maximum: number): number {
+	const result = value === undefined || value === "" ? fallback : Number(value);
+	if (!Number.isInteger(result) || result < minimum || result > maximum) {
+		throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
+	}
+	return result;
+}
+
+function rateLimitAlgorithm(value: unknown, fallback: RateLimitAlgorithm): RateLimitAlgorithm {
+	const result = value === undefined ? fallback : String(value).trim().toLowerCase();
+	if (result === "fixed-window" || result === "sliding-window" || result === "token-bucket") return result;
+	throw new Error("Connection rate-limit algorithm must be fixed-window, sliding-window, or token-bucket");
+}
+
 async function certificateId(value: unknown, tcpEnabled: boolean): Promise<string | null> {
 	const id = String(value ?? "").trim() || null;
 	if (!id) return null;
@@ -78,6 +99,15 @@ export function streamView(stream: StreamRecord) {
 		defaultIpAction: stream.default_ip_action ?? "inherit",
 		defaultCountryAction: stream.default_country_action ?? "inherit",
 		maxConnectionsPerIp: Number(stream.max_connections_per_ip ?? 0),
+		connectionRateLimit: {
+			enabled: stream.connection_rate_limit_enabled === 1,
+			algorithm: stream.connection_rate_limit_algorithm ?? "sliding-window",
+			windowMs: Number(stream.connection_rate_limit_window_ms ?? 60_000),
+			max: Number(stream.connection_rate_limit_max ?? 60),
+			refillRate: Number(stream.connection_rate_limit_refill_rate ?? 10),
+			refillIntervalMs: Number(stream.connection_rate_limit_refill_interval_ms ?? 1_000),
+			precisionMs: Number(stream.connection_rate_limit_precision_ms ?? 100),
+		},
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -103,6 +133,43 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		default_ip_action: existing?.default_ip_action ?? "inherit",
 		default_country_action: existing?.default_country_action ?? "inherit",
 		max_connections_per_ip: maxConnectionsPerIp(input.maxConnectionsPerIp, existing?.max_connections_per_ip ?? 0),
+		connection_rate_limit_enabled: booleanValue(input.connectionRateLimitEnabled, existing?.connection_rate_limit_enabled === 1) ? 1 : 0,
+		connection_rate_limit_algorithm: rateLimitAlgorithm(input.connectionRateLimitAlgorithm, existing?.connection_rate_limit_algorithm ?? "sliding-window"),
+		connection_rate_limit_window_ms: integerValue(
+			input.connectionRateLimitWindowMs,
+			"Connection rate-limit window",
+			existing?.connection_rate_limit_window_ms ?? 60_000,
+			100,
+			86_400_000,
+		),
+		connection_rate_limit_max: integerValue(
+			input.connectionRateLimitMax,
+			"Connection rate-limit maximum",
+			existing?.connection_rate_limit_max ?? 60,
+			1,
+			1_000_000,
+		),
+		connection_rate_limit_refill_rate: integerValue(
+			input.connectionRateLimitRefillRate,
+			"Connection token refill rate",
+			existing?.connection_rate_limit_refill_rate ?? 10,
+			1,
+			1_000_000,
+		),
+		connection_rate_limit_refill_interval_ms: integerValue(
+			input.connectionRateLimitRefillIntervalMs,
+			"Connection token refill interval",
+			existing?.connection_rate_limit_refill_interval_ms ?? 1_000,
+			50,
+			3_600_000,
+		),
+		connection_rate_limit_precision_ms: integerValue(
+			input.connectionRateLimitPrecisionMs,
+			"Connection rate-limit precision",
+			existing?.connection_rate_limit_precision_ms ?? 100,
+			10,
+			60_000,
+		),
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

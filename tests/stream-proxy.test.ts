@@ -15,6 +15,13 @@ function record(): StreamRecord {
 		default_ip_action: "inherit",
 		default_country_action: "inherit",
 		max_connections_per_ip: 0,
+		connection_rate_limit_enabled: 0,
+		connection_rate_limit_algorithm: "sliding-window",
+		connection_rate_limit_window_ms: 60_000,
+		connection_rate_limit_max: 60,
+		connection_rate_limit_refill_rate: 10,
+		connection_rate_limit_refill_interval_ms: 1_000,
+		connection_rate_limit_precision_ms: 100,
 		created_at: Date.now(),
 		updated_at: Date.now(),
 	};
@@ -103,5 +110,42 @@ describe("TCP stream proxy", () => {
 		expect(clientB.terminated).toBe(true);
 		expect(manager.activeConnections()).toMatchObject([{ streamId: "stream-test", protocol: "tcp", clientIp: "203.0.113.8", clientPort: 45678 }]);
 		await manager.remove("stream-test");
+	});
+
+	test("rejects additional connections from the same IP once the connection rate limit is reached", async () => {
+		let listenOptions: any;
+		let connectCallCount = 0;
+		const clientA = fakeSocket("203.0.113.9", 45678);
+		const clientB = fakeSocket("203.0.113.9", 45679);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectCallCount += 1;
+				const upstream = fakeSocket("192.0.2.10", 23456);
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({
+			...record(),
+			id: "stream-rate-test",
+			connection_rate_limit_enabled: 1,
+			connection_rate_limit_algorithm: "fixed-window",
+			connection_rate_limit_max: 1,
+		});
+		await listenOptions.socket.open(clientA);
+		await Promise.resolve();
+		await listenOptions.socket.open(clientB);
+		await Promise.resolve();
+
+		expect(connectCallCount).toBe(1);
+		expect(clientB.terminated).toBe(true);
+		expect(manager.activeConnections()).toMatchObject([{ streamId: "stream-rate-test", protocol: "tcp", clientIp: "203.0.113.9", clientPort: 45678 }]);
+		await manager.remove("stream-rate-test");
 	});
 });

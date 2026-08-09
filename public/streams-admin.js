@@ -1053,6 +1053,14 @@ function updateProtocolControls() {
 		byId("composeMapping").textContent = mappingFor(draft);
 		byId("composeMapping").classList.remove("hidden");
 	} else byId("composeMapping").classList.add("hidden");
+	const rateEnabled = byId("streamRateLimitEnabled").checked;
+	byId("streamRateLimitSettings").classList.toggle("hidden", !rateEnabled);
+	const algorithm = byId("streamRateLimitAlgorithm").value;
+	document.querySelectorAll("#streamRateLimitSettings .token-setting").forEach((element) => element.classList.toggle("hidden", algorithm !== "token-bucket"));
+	document.querySelectorAll("#streamRateLimitSettings .window-setting").forEach((element) => element.classList.toggle("hidden", algorithm === "token-bucket"));
+	document
+		.querySelectorAll("#streamRateLimitSettings .precision-setting")
+		.forEach((element) => element.classList.toggle("hidden", algorithm !== "sliding-window"));
 }
 
 function resetForm() {
@@ -1065,6 +1073,13 @@ function resetForm() {
 	byId("streamUdp").checked = false;
 	byId("streamRetentionDays").value = "7";
 	byId("streamMaxConnectionsPerIp").value = "0";
+	byId("streamRateLimitEnabled").checked = false;
+	byId("streamRateLimitAlgorithm").value = "sliding-window";
+	byId("streamRateLimitMax").value = "60";
+	byId("streamRateLimitWindow").value = "60000";
+	byId("streamRateLimitPrecision").value = "100";
+	byId("streamRateLimitRefillRate").value = "10";
+	byId("streamRateLimitRefillInterval").value = "1000";
 	updateProtocolControls();
 }
 
@@ -1077,6 +1092,14 @@ function editStream(id) {
 	byId("forwardPort").value = stream.forwardPort;
 	byId("streamRetentionDays").value = stream.eventRetentionDays;
 	byId("streamMaxConnectionsPerIp").value = stream.maxConnectionsPerIp ?? 0;
+	const rateLimit = stream.connectionRateLimit ?? {};
+	byId("streamRateLimitEnabled").checked = Boolean(rateLimit.enabled);
+	byId("streamRateLimitAlgorithm").value = rateLimit.algorithm ?? "sliding-window";
+	byId("streamRateLimitMax").value = String(rateLimit.max ?? 60);
+	byId("streamRateLimitWindow").value = String(rateLimit.windowMs ?? 60000);
+	byId("streamRateLimitPrecision").value = String(rateLimit.precisionMs ?? 100);
+	byId("streamRateLimitRefillRate").value = String(rateLimit.refillRate ?? 10);
+	byId("streamRateLimitRefillInterval").value = String(rateLimit.refillIntervalMs ?? 1000);
 	byId("streamTcp").checked = stream.tcpEnabled;
 	byId("streamUdp").checked = stream.udpEnabled;
 	byId("streamCertificate").value = stream.certificateId || "";
@@ -1098,6 +1121,13 @@ async function saveStream(event) {
 		certificateId: byId("streamCertificate").value || null,
 		eventRetentionDays: Number(byId("streamRetentionDays").value),
 		maxConnectionsPerIp: Number(byId("streamMaxConnectionsPerIp").value),
+		connectionRateLimitEnabled: byId("streamRateLimitEnabled").checked,
+		connectionRateLimitAlgorithm: byId("streamRateLimitAlgorithm").value,
+		connectionRateLimitMax: Number(byId("streamRateLimitMax").value),
+		connectionRateLimitWindowMs: Number(byId("streamRateLimitWindow").value),
+		connectionRateLimitPrecisionMs: Number(byId("streamRateLimitPrecision").value),
+		connectionRateLimitRefillRate: Number(byId("streamRateLimitRefillRate").value),
+		connectionRateLimitRefillIntervalMs: Number(byId("streamRateLimitRefillInterval").value),
 	};
 	try {
 		await api(id ? `/streams/${id}` : "/streams", {
@@ -1232,6 +1262,7 @@ byId("resetDateRange").addEventListener("click", () => {
 	void applyDateRangeValues(to - 86_400_000, to, "Last 24 hours applied");
 });
 for (const id of ["streamTcp", "streamUdp", "incomingPort"]) byId(id).addEventListener("input", updateProtocolControls);
+for (const id of ["streamRateLimitEnabled", "streamRateLimitAlgorithm"]) byId(id).addEventListener("change", updateProtocolControls);
 byId("streamForm").addEventListener("submit", saveStream);
 byId("newStream").addEventListener("click", resetForm);
 byId("resetStreamForm").addEventListener("click", resetForm);
