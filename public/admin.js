@@ -1880,7 +1880,8 @@ async function saveAccessSettings() {
 
 async function createAccessUser(event) {
 	event.preventDefault();
-	const submit = event.currentTarget.querySelector('button[type="submit"]');
+	const form = event.currentTarget;
+	const submit = form.querySelector('button[type="submit"]');
 	submit.disabled = true;
 	try {
 		await api("/access-list/users", {
@@ -1888,7 +1889,7 @@ async function createAccessUser(event) {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ username: byId("accessUsername").value, password: byId("accessPassword").value, enabled: byId("accessUserEnabled").checked }),
 		});
-		event.currentTarget.reset();
+		form.reset();
 		byId("accessUserEnabled").checked = true;
 		showToast("User created and assigned.");
 		await loadAccessList();
