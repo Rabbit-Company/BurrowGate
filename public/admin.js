@@ -632,7 +632,7 @@ async function loadTraffic() {
 						.map(
 							(event) => `<tr>
           <td>${formatDate(event.created_at)}</td>
-          <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
           <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
@@ -732,7 +732,7 @@ async function loadSessions() {
 							const currentState = sessionState(session);
 							return `<tr class="session-row ${currentState}">
           <td><span class="badge ${currentState === "active" ? "ok" : currentState === "expired" ? "warn" : "bad"}">${currentState}</span></td>
-          <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code></td>
+          <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code>${session.access_username ? `<span class="cell-subtext">${escapeHtml(session.access_username)}</span>` : ""}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
           <td>${countryBadge(session.country_code)}</td>
           <td>${formatDate(session.created_at)}</td>
@@ -1840,16 +1840,28 @@ function renderAccessList() {
 		return;
 	}
 	container.innerHTML = accessList.users
-		.map(
-			(user) => `<div class="route-policy-item ${user.enabled ? "" : "disabled"}" data-access-user-row="${escapeHtml(user.id)}">
+		.map((user) => {
+			const totpBadge = !user.totpRequired
+				? '<span class="badge">2FA off</span>'
+				: user.totpEnrolled
+					? '<span class="badge ok">2FA enrolled</span>'
+					: '<span class="badge warn">2FA pending</span>';
+			const tokenBadge = user.apiTokenEnabled ? '<span class="badge ok">API token active</span>' : "";
+			return `<div class="route-policy-item ${user.enabled ? "" : "disabled"}" data-access-user-row="${escapeHtml(user.id)}">
     <div class="route-policy-main access-user-fields">
-      <div class="site-list-title"><strong>${escapeHtml(user.username)}</strong><span class="badge ${user.enabled ? "ok" : "warn"}">${user.enabled ? "enabled" : "disabled"}</span>${user.siteCount > 1 ? `<span class="badge info">${formatNumber(user.siteCount)} sites</span>` : ""}</div>
+      <div class="site-list-title"><strong>${escapeHtml(user.username)}</strong><span class="badge ${user.enabled ? "ok" : "warn"}">${user.enabled ? "enabled" : "disabled"}</span>${user.siteCount > 1 ? `<span class="badge info">${formatNumber(user.siteCount)} sites</span>` : ""}${totpBadge}${tokenBadge}</div>
       <div class="site-form-grid"><label><span>Username</span><input class="input" data-access-username value="${escapeHtml(user.username)}" maxlength="255"></label><label><span>New password</span><input class="input" data-access-password type="password" autocomplete="new-password" minlength="8" maxlength="1024" placeholder="Leave blank to keep current"></label></div>
       <label class="check-row"><input data-access-enabled type="checkbox"${user.enabled ? " checked" : ""}><span><strong>User enabled</strong><small class="muted">Changes to this shared identity apply on every assigned site.</small></span></label>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-access-save="${escapeHtml(user.id)}">Save</button><button class="button danger compact" type="button" data-access-remove="${escapeHtml(user.id)}">Remove</button></div>
-  </div>`,
-		)
+    <div class="site-list-actions security-actions">
+      <button class="button secondary compact" type="button" data-access-totp-toggle="${escapeHtml(user.id)}" data-totp-required="${user.totpRequired}">${user.totpRequired ? "Don't require 2FA" : "Require 2FA"}</button>
+      ${user.totpEnrolled ? `<button class="button secondary compact" type="button" data-access-totp-reset="${escapeHtml(user.id)}">Reset 2FA</button>` : ""}
+      <button class="button secondary compact" type="button" data-access-token-generate="${escapeHtml(user.id)}">${user.apiTokenEnabled ? "Regenerate API token" : "Generate API token"}</button>
+      ${user.apiTokenEnabled ? `<button class="button danger compact" type="button" data-access-token-revoke="${escapeHtml(user.id)}">Revoke API token</button>` : ""}
+    </div>
+  </div>`;
+		})
 		.join("");
 }
 
@@ -3344,6 +3356,72 @@ async function handleBodyClick(event) {
 			await loadAccessList();
 		} catch (error) {
 			removeAccessUserButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const totpToggleButton = event.target.closest("button[data-access-totp-toggle]");
+	if (totpToggleButton) {
+		const required = totpToggleButton.dataset.totpRequired !== "true";
+		totpToggleButton.disabled = true;
+		try {
+			await api(`/access-list/users/${encodeURIComponent(totpToggleButton.dataset.accessTotpToggle)}/totp`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ required }),
+			});
+			showToast(required ? "Two-factor authentication is now required for this user." : "Two-factor authentication is no longer required.");
+			await loadAccessList();
+		} catch (error) {
+			totpToggleButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const totpResetButton = event.target.closest("button[data-access-totp-reset]");
+	if (totpResetButton) {
+		if (!confirm("Reset two-factor authentication for this user? They will need to enroll again on next login.")) return;
+		totpResetButton.disabled = true;
+		try {
+			await api(`/access-list/users/${encodeURIComponent(totpResetButton.dataset.accessTotpReset)}/totp/reset`, { method: "POST" });
+			showToast("Two-factor authentication reset.");
+			await loadAccessList();
+		} catch (error) {
+			totpResetButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const tokenGenerateButton = event.target.closest("button[data-access-token-generate]");
+	if (tokenGenerateButton) {
+		const isRegenerate = tokenGenerateButton.textContent.startsWith("Regenerate");
+		if (isRegenerate && !confirm("Regenerate this user's API token? The previous token will stop working immediately.")) return;
+		tokenGenerateButton.disabled = true;
+		try {
+			const result = await api(`/access-list/users/${encodeURIComponent(tokenGenerateButton.dataset.accessTokenGenerate)}/api-token`, { method: "POST" });
+			await loadAccessList();
+			window.prompt("API token generated. Copy it now as it will not be shown again:", result.token);
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			tokenGenerateButton.disabled = false;
+		}
+		return;
+	}
+
+	const tokenRevokeButton = event.target.closest("button[data-access-token-revoke]");
+	if (tokenRevokeButton) {
+		if (!confirm("Revoke this user's API token? Any automated clients using it will stop working immediately.")) return;
+		tokenRevokeButton.disabled = true;
+		try {
+			await api(`/access-list/users/${encodeURIComponent(tokenRevokeButton.dataset.accessTokenRevoke)}/api-token`, { method: "DELETE" });
+			showToast("API token revoked.");
+			await loadAccessList();
+		} catch (error) {
+			tokenRevokeButton.disabled = false;
 			showToast(error.message, "bad");
 		}
 		return;

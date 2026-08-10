@@ -1,8 +1,10 @@
 import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, AccessUserRecord, SiteAccessSettingsRecord, SiteRecord } from "../types.ts";
-import { hmacSha256Hex, randomId } from "../utils/crypto.ts";
+import { hmacSha256Hex, randomId, randomToken, sha256Hex } from "../utils/crypto.ts";
 import { config, secureCookieForRequest } from "../config.ts";
 import { serializeCookie } from "../utils/cookies.ts";
+import { decryptSecret, encryptSecret } from "./secret-encryption-service.ts";
+import { countryCodeForStorage } from "./geoip-service.ts";
 
 export interface AccessUserInput {
 	username?: unknown;
@@ -18,6 +20,10 @@ export interface AccessUserView {
 	createdAt: number;
 	updatedAt: number;
 	siteIds: string[];
+	totpRequired: boolean;
+	totpEnrolled: boolean;
+	apiTokenEnabled: boolean;
+	apiTokenCreatedAt: number | null;
 }
 
 export interface AccessListView {
@@ -143,6 +149,10 @@ function userView(user: AccessUserRecord & { site_count?: number | string }, sit
 		createdAt: Number(user.created_at),
 		updatedAt: Number(user.updated_at),
 		siteIds,
+		totpRequired: user.totp_required === 1,
+		totpEnrolled: user.totp_secret_encrypted !== null,
+		apiTokenEnabled: user.api_token_hash !== null,
+		apiTokenCreatedAt: user.api_token_created_at !== null ? Number(user.api_token_created_at) : null,
 	};
 }
 
@@ -200,6 +210,11 @@ export async function createAccessUser(siteId: string, input: AccessUserInput): 
 		enabled: booleanValue(input.enabled, true) ? 1 : 0,
 		created_at: now,
 		updated_at: now,
+		totp_required: 0,
+		totp_secret_encrypted: null,
+		totp_enrolled_at: null,
+		api_token_hash: null,
+		api_token_created_at: null,
 	};
 	await repository.insertAccessUser(user);
 	await repository.assignAccessUser(siteId, user.id, now);
@@ -330,4 +345,155 @@ export function resetAccessLoginRateLimits(): void {
 export function invalidateAccessSite(siteId: string): void {
 	settingsCache.delete(siteId);
 	loginFailures.clearPrefix(`site:${siteId}:`);
+}
+
+async function userViewById(userId: string): Promise<AccessUserView> {
+	const user = await repository.accessUserById(userId);
+	if (!user) throw new Error("Access user not found");
+	return userView({ ...user, site_count: (await repository.accessSiteIdsForUser(userId)).length });
+}
+
+export async function setAccessUserTotpRequired(userId: string, required: boolean): Promise<AccessUserView> {
+	const existing = await repository.accessUserById(userId);
+	if (!existing) throw new Error("Access user not found");
+	await repository.updateAccessUser({ ...existing, totp_required: required ? 1 : 0, updated_at: Date.now() });
+	await repository.revokeSessionsForAccessUser(userId, Date.now());
+	return userViewById(userId);
+}
+
+export async function resetAccessUserTotp(userId: string): Promise<AccessUserView> {
+	const existing = await repository.accessUserById(userId);
+	if (!existing) throw new Error("Access user not found");
+	await repository.updateAccessUser({ ...existing, totp_secret_encrypted: null, totp_enrolled_at: null, updated_at: Date.now() });
+	await repository.revokeSessionsForAccessUser(userId, Date.now());
+	return userViewById(userId);
+}
+
+export async function generateAccessUserApiToken(userId: string): Promise<{ view: AccessUserView; token: string }> {
+	const existing = await repository.accessUserById(userId);
+	if (!existing) throw new Error("Access user not found");
+	const token = randomToken(32);
+	await repository.updateAccessUser({
+		...existing,
+		api_token_hash: await sha256Hex(token),
+		api_token_created_at: Date.now(),
+		updated_at: Date.now(),
+	});
+	return { view: await userViewById(userId), token };
+}
+
+export async function revokeAccessUserApiToken(userId: string): Promise<AccessUserView> {
+	const existing = await repository.accessUserById(userId);
+	if (!existing) throw new Error("Access user not found");
+	await repository.updateAccessUser({ ...existing, api_token_hash: null, api_token_created_at: null, updated_at: Date.now() });
+	return userViewById(userId);
+}
+
+export async function accessUserByApiToken(token: string): Promise<AccessUserRecord | null> {
+	const trimmed = token.trim();
+	if (!trimmed) return null;
+	const user = await repository.accessUserByApiTokenHash(await sha256Hex(trimmed));
+	return user?.enabled === 1 ? user : null;
+}
+
+export async function resolveApiTokenAccess(
+	request: Request,
+	site: SiteRecord,
+	ip: string,
+): Promise<{ session: AccessSessionRecord; user: AccessUserRecord } | null> {
+	const header = request.headers.get("authorization");
+	if (!header?.startsWith("Bearer ")) return null;
+	const user = await accessUserByApiToken(header.slice(7));
+	if (!user) return null;
+	if (!(await repository.accessUserForSite(site.id, user.id))) return null;
+	const now = Date.now();
+	const existing = await repository.activeAccessSessionForUser(site.id, user.id, now);
+	if (existing) {
+		await repository.touchSession(existing.id, ip, now);
+		return { session: existing, user };
+	}
+	const record: AccessSessionRecord = {
+		id: randomId("sess"),
+		site_id: site.id,
+		token_hash: await sha256Hex(randomToken()),
+		initial_ip: ip,
+		last_ip: ip,
+		user_agent_hash: await sha256Hex(request.headers.get("user-agent") ?? ""),
+		created_at: now,
+		last_seen_at: now,
+		expires_at: now + site.session_ttl_seconds * 1_000,
+		revoked_at: null,
+		verification_summary_json: JSON.stringify({ method: "api-token" }),
+		request_count: 0,
+		country_code: countryCodeForStorage(ip),
+		access_user_id: user.id,
+		authenticated_at: now,
+	};
+	await repository.insertSession(record);
+	return { session: record, user };
+}
+
+export interface PendingAccessTotp {
+	userId: string;
+	mode: "totp-enroll" | "totp-verify";
+	tentativeSecret: string | null;
+	expiresAt: number;
+}
+
+const PENDING_ACCESS_TOTP_TTL_MS = 5 * 60_000;
+const pendingAccessTotps = new Map<string, PendingAccessTotp>();
+const accessTotpFailures = new LoginFailureTracker(config.accessLoginMaxFailureKeys);
+
+function sweepPendingAccessTotps(now: number): void {
+	for (const [key, entry] of pendingAccessTotps) if (entry.expiresAt <= now) pendingAccessTotps.delete(key);
+}
+
+export function beginAccessTotpChallenge(sessionId: string, user: AccessUserRecord): "totp-enroll" | "totp-verify" {
+	const now = Date.now();
+	sweepPendingAccessTotps(now);
+	const mode = user.totp_secret_encrypted ? "totp-verify" : "totp-enroll";
+	pendingAccessTotps.set(sessionId, { userId: user.id, mode, tentativeSecret: null, expiresAt: now + PENDING_ACCESS_TOTP_TTL_MS });
+	return mode;
+}
+
+export function pendingAccessTotp(sessionId: string, mode: "totp-enroll" | "totp-verify"): PendingAccessTotp | null {
+	const entry = pendingAccessTotps.get(sessionId);
+	if (!entry || entry.expiresAt <= Date.now() || entry.mode !== mode) return null;
+	return entry;
+}
+
+export function setPendingAccessTotpSecret(sessionId: string, secret: string): void {
+	const entry = pendingAccessTotps.get(sessionId);
+	if (entry) entry.tentativeSecret = secret;
+}
+
+export function consumePendingAccessTotp(sessionId: string): void {
+	pendingAccessTotps.delete(sessionId);
+}
+
+export function accessTotpRetryAfterSeconds(sessionId: string): number {
+	return accessTotpFailures.status([`totp:${sessionId}`], Date.now());
+}
+
+export function recordAccessTotpFailure(sessionId: string): void {
+	accessTotpFailures.record([`totp:${sessionId}`], Date.now());
+}
+
+export function clearAccessTotpFailures(sessionId: string): void {
+	accessTotpFailures.clear([`totp:${sessionId}`]);
+}
+
+export async function decryptAccessTotpSecret(user: AccessUserRecord): Promise<string | null> {
+	return user.totp_secret_encrypted ? decryptSecret(user.totp_secret_encrypted) : null;
+}
+
+export async function completeAccessTotpEnrollment(userId: string, secret: string): Promise<void> {
+	const existing = await repository.accessUserById(userId);
+	if (!existing) throw new Error("Access user not found");
+	await repository.updateAccessUser({
+		...existing,
+		totp_secret_encrypted: await encryptSecret(secret),
+		totp_enrolled_at: Date.now(),
+		updated_at: Date.now(),
+	});
 }

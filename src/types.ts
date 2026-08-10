@@ -240,6 +240,11 @@ export interface AccessUserRecord {
 	enabled: number;
 	created_at: number;
 	updated_at: number;
+	totp_required: number;
+	totp_secret_encrypted: string | null;
+	totp_enrolled_at: number | null;
+	api_token_hash: string | null;
+	api_token_created_at: number | null;
 }
 
 export interface SiteAccessSettingsRecord {
@@ -419,6 +424,7 @@ export interface RequestEventRecord {
 	protection_ruleset_id: string | null;
 	protection_ruleset_version: string | null;
 	protection_matches_json: string | null;
+	access_username: string | null;
 	created_at: number;
 }
 

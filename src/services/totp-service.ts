@@ -8,8 +8,8 @@ export function generateSecret(): string {
 	return generateTOTPSecret();
 }
 
-export function enrollmentUri(username: string, secret: string): string {
-	return generateTOTPURI({ accountName: username, issuer: ISSUER, secret });
+export function enrollmentUri(username: string, secret: string, issuer: string = ISSUER): string {
+	return generateTOTPURI({ accountName: username, issuer, secret });
 }
 
 export async function qrSvg(uri: string): Promise<string> {

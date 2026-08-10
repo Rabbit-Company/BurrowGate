@@ -50,9 +50,13 @@ import { requestTlsReload } from "../services/tls-listener-service.ts";
 import {
 	accessListView,
 	createAccessUser,
+	generateAccessUserApiToken,
 	importAccessUsers,
 	invalidateAccessSite,
 	removeAccessUser,
+	resetAccessUserTotp,
+	revokeAccessUserApiToken,
+	setAccessUserTotpRequired,
 	updateAccessSettings,
 	updateAccessUser,
 } from "../services/access-list-service.ts";
@@ -932,6 +936,119 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ ok: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to remove access user";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/users/:id/totp", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		try {
+			const body = (await ctx.req.json()) as { required?: unknown };
+			const updated = await setAccessUserTotpRequired(ctx.params.id, body.required === true);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_user.totp_required.update",
+				resourceType: "access_user",
+				resourceId: updated.id,
+				summary: `${body.required === true ? "Required" : "No longer required"} two-factor authentication for access-list user ${updated.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: updated });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to update two-factor requirement";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/users/:id/totp/reset", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		try {
+			const updated = await resetAccessUserTotp(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_user.totp.reset",
+				resourceType: "access_user",
+				resourceId: updated.id,
+				summary: `Reset two-factor authentication for access-list user ${updated.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: updated });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to reset two-factor authentication";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/users/:id/api-token", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		try {
+			const { view, token } = await generateAccessUserApiToken(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_user.api_token.generate",
+				resourceType: "access_user",
+				resourceId: view.id,
+				summary: `Generated an API token for access-list user ${view.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: view, token }, 201);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to generate API token";
+			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
+		}
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/access-list/users/:id/api-token", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		try {
+			const updated = await revokeAccessUserApiToken(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_user.api_token.revoke",
+				resourceType: "access_user",
+				resourceId: updated.id,
+				summary: `Revoked the API token for access-list user ${updated.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: updated });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to revoke API token";
 			return jsonResponse({ error: message }, message === "Access user not found" ? 404 : 400);
 		}
 	});

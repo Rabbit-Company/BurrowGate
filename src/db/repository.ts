@@ -470,6 +470,11 @@ export const repository = {
 	async authenticateSession(id: string, siteId: string, userId: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
 	},
+	async activeAccessSessionForUser(siteId: string, userId: string, now: number): Promise<AccessSessionRecord | null> {
+		const rows =
+			(await db`SELECT * FROM access_sessions WHERE site_id=${siteId} AND access_user_id=${userId} AND revoked_at IS NULL AND expires_at > ${now} ORDER BY last_seen_at DESC LIMIT 1`) as AccessSessionRecord[];
+		return rows[0] ?? null;
+	},
 	async revokeSessionsForAccessUser(userId: string, now: number, siteId?: string): Promise<void> {
 		if (siteId) {
 			await db`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND site_id=${siteId} AND revoked_at IS NULL`;
@@ -531,10 +536,15 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at) VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at})`;
+		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at,totp_required,totp_secret_encrypted,totp_enrolled_at,api_token_hash,api_token_created_at)
+		VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at},${user.totp_required},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.api_token_hash},${user.api_token_created_at})`;
 	},
 	async updateAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at} WHERE id=${user.id}`;
+		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at},totp_required=${user.totp_required},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},api_token_hash=${user.api_token_hash},api_token_created_at=${user.api_token_created_at} WHERE id=${user.id}`;
+	},
+	async accessUserByApiTokenHash(hash: string): Promise<AccessUserRecord | null> {
+		const rows = (await db`SELECT * FROM access_users WHERE api_token_hash=${hash} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
 	},
 	async deleteAccessUser(userId: string): Promise<void> {
 		await db`DELETE FROM access_users WHERE id=${userId}`;
@@ -558,39 +568,39 @@ export const repository = {
 	async revokeSessionForSite(id: string, siteId: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL`;
 	},
-	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord>> {
+	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord & { access_username: string | null }>> {
 		const pattern = searchPattern(query.search);
 		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const now = Date.now();
-		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
+		const siteFilter = query.siteId ? db`AND s.site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (id=${exactSearch} OR user_agent_hash=${exactSearch} OR LOWER(initial_ip) LIKE ${pattern} OR LOWER(last_ip) LIKE ${pattern})`
+			? db`AND (s.id=${exactSearch} OR s.user_agent_hash=${exactSearch} OR LOWER(s.initial_ip) LIKE ${pattern} OR LOWER(s.last_ip) LIKE ${pattern} OR LOWER(COALESCE(au.username,'')) LIKE ${pattern})`
 			: db``;
-		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
+		const countryFilter = query.countryCode ? db`AND COALESCE(s.country_code, 'ZZ')=${query.countryCode}` : db``;
 		const stateFilter =
 			query.state === "active"
-				? db`AND revoked_at IS NULL AND expires_at > ${now}`
+				? db`AND s.revoked_at IS NULL AND s.expires_at > ${now}`
 				: query.state === "expired"
-					? db`AND revoked_at IS NULL AND expires_at <= ${now}`
+					? db`AND s.revoked_at IS NULL AND s.expires_at <= ${now}`
 					: query.state === "revoked"
-						? db`AND revoked_at IS NOT NULL`
+						? db`AND s.revoked_at IS NOT NULL`
 						: db``;
 		const rangeFilter =
 			query.since !== undefined && query.until !== undefined
-				? db`AND created_at <= ${query.until} AND (expires_at >= ${query.since} OR last_seen_at >= ${query.since} OR (revoked_at IS NOT NULL AND revoked_at >= ${query.since}))`
+				? db`AND s.created_at <= ${query.until} AND (s.expires_at >= ${query.since} OR s.last_seen_at >= ${query.since} OR (s.revoked_at IS NOT NULL AND s.revoked_at >= ${query.since}))`
 				: db``;
-		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const order = db.unsafe(`s.${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
-      SELECT COUNT(*) AS count FROM access_sessions
+      SELECT COUNT(*) AS count FROM access_sessions s LEFT JOIN access_users au ON au.id = s.access_user_id
       WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
-      SELECT * FROM access_sessions
+      SELECT s.*, au.username AS access_username FROM access_sessions s LEFT JOIN access_users au ON au.id = s.access_user_id
       WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
-    `) as AccessSessionRecord[];
+    `) as Array<AccessSessionRecord & { access_username: string | null }>;
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async insertFlow(flow: ChallengeFlowRecord): Promise<void> {
@@ -760,7 +770,7 @@ export const repository = {
 		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.created_at})`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -792,7 +802,7 @@ export const repository = {
 		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR session_id=${exactSearch})`
+			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(access_username,'')) LIKE ${pattern} OR session_id=${exactSearch})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
 		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;

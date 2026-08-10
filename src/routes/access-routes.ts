@@ -4,15 +4,26 @@ import { repository } from "../db/repository.ts";
 import {
 	accessIdentitySetCookies,
 	accessSettingsForSite,
+	accessTotpRetryAfterSeconds,
 	authenticateAccessUser,
 	authenticatedAccessUser,
+	beginAccessTotpChallenge,
 	clearAccessIdentityCookies,
+	clearAccessTotpFailures,
+	completeAccessTotpEnrollment,
+	consumePendingAccessTotp,
+	decryptAccessTotpSecret,
+	pendingAccessTotp,
+	recordAccessTotpFailure,
+	setPendingAccessTotpSecret,
 } from "../services/access-list-service.ts";
 import { createFlow } from "../services/challenge-service.ts";
 import { recordEvent } from "../services/event-service.ts";
 import { findAccessSession, userAgentHash } from "../services/session-service.ts";
 import { resolveSiteForHost } from "../services/site-service.ts";
-import { accessLoginPage } from "../ui/access-login-page.ts";
+import { enrollmentUri, generateSecret, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
+import type { AccessSessionRecord, AccessUserRecord, SiteRecord } from "../types.ts";
+import { accessLoginPage, accessTotpEnrollPage, accessTotpVerifyPage } from "../ui/access-login-page.ts";
 import { appendSetCookies, htmlResponse, jsonResponse, normalizeHost, requestHost, safeReturnPath, sameOriginRequest } from "../utils/http.ts";
 
 function loginPath(returnPath: string): string {
@@ -30,6 +41,32 @@ async function context(ctx: any): Promise<{
 		ip: getClientIp(ctx) ?? "unknown",
 		returnPath: safeReturnPath(url.searchParams.get("return")),
 	};
+}
+
+interface ResolvedPendingTotp {
+	site: SiteRecord;
+	session: AccessSessionRecord;
+	user: AccessUserRecord;
+	tentativeSecret: string | null;
+}
+
+async function resolvePendingAccessTotp(ctx: any, mode: "totp-enroll" | "totp-verify"): Promise<ResolvedPendingTotp | null> {
+	const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
+	if (!site) return null;
+	const ip = getClientIp(ctx) ?? "unknown";
+	const session = await findAccessSession(ctx.req, site, ip);
+	if (!session) return null;
+	const entry = pendingAccessTotp(session.id, mode);
+	if (!entry) return null;
+	const user = await repository.accessUserForSite(site.id, entry.userId);
+	if (!user) return null;
+	return { site, session, user, tentativeSecret: entry.tentativeSecret };
+}
+
+async function issueAccessSession(ctx: any, site: SiteRecord, session: AccessSessionRecord, user: AccessUserRecord): Promise<string[]> {
+	await repository.authenticateSession(session.id, site.id, user.id, Date.now());
+	const settings = await accessSettingsForSite(site.id);
+	return settings.send_username_to_upstream === 1 ? await accessIdentitySetCookies(ctx.req, site, session, user.username) : clearAccessIdentityCookies(ctx.req);
 }
 
 export function registerAccessRoutes(app: Web<any>): void {
@@ -94,7 +131,22 @@ export function registerAccessRoutes(app: Web<any>): void {
 				clearAccessIdentityCookies(ctx.req),
 			);
 		}
-		await repository.authenticateSession(session.id, site.id, result.user.id, Date.now());
+		if (result.user.totp_required === 1) {
+			const mode = beginAccessTotpChallenge(session.id, result.user);
+			await recordEvent({
+				siteId: site.id,
+				sessionId: session.id,
+				ip,
+				method: "POST",
+				path: "/_burrowgate/access/login",
+				status: 302,
+				decision: "access-login-required",
+				latencyMs: Math.round(performance.now() - started),
+			});
+			const target = mode === "totp-enroll" ? "/_burrowgate/access/login/enroll" : "/_burrowgate/access/login/totp";
+			return Response.redirect(new URL(`${target}?return=${encodeURIComponent(returnPath)}`, ctx.req.url).href, 302);
+		}
+		const cookies = await issueAccessSession(ctx, site, session, result.user);
 		await recordEvent({
 			siteId: site.id,
 			sessionId: session.id,
@@ -103,12 +155,91 @@ export function registerAccessRoutes(app: Web<any>): void {
 			path: "/_burrowgate/access/login",
 			status: 302,
 			decision: "access-authenticated",
+			accessUsername: result.user.username,
 			latencyMs: Math.round(performance.now() - started),
 		});
-		const cookies =
-			settings.send_username_to_upstream === 1
-				? await accessIdentitySetCookies(ctx.req, site, session, result.user.username)
-				: clearAccessIdentityCookies(ctx.req);
+		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
+	});
+
+	app.get("/_burrowgate/access/login/enroll", async (ctx) => {
+		const returnPath = safeReturnPath(new URL(ctx.req.url).searchParams.get("return"));
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
+		const { site, session, user } = resolved;
+		let secret = resolved.tentativeSecret;
+		if (!secret) {
+			secret = generateSecret();
+			setPendingAccessTotpSecret(session.id, secret);
+		}
+		const uri = enrollmentUri(user.username, secret, `BurrowGate (${site.name})`);
+		return htmlResponse(accessTotpEnrollPage(site, uri, secret, await qrSvg(uri), returnPath));
+	});
+
+	app.post("/_burrowgate/access/login/enroll", async (ctx) => {
+		const form = await ctx.req.formData();
+		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
+		if (!sameOriginRequest(ctx.req)) return htmlResponse("Request validation failed.", 403);
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		if (!resolved?.tentativeSecret) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
+		const { site, session, user, tentativeSecret: secret } = resolved;
+		const code = String(form.get("code") ?? "");
+		if (!secret || !(await verifyTotpCode(secret, code))) {
+			const uri = enrollmentUri(user.username, secret ?? "", `BurrowGate (${site.name})`);
+			return htmlResponse(accessTotpEnrollPage(site, uri, secret ?? "", await qrSvg(uri), returnPath, "Invalid code, try again"), 401);
+		}
+		await completeAccessTotpEnrollment(user.id, secret);
+		consumePendingAccessTotp(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/access/login/enroll",
+			status: 302,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
+		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
+	});
+
+	app.get("/_burrowgate/access/login/totp", async (ctx) => {
+		const returnPath = safeReturnPath(new URL(ctx.req.url).searchParams.get("return"));
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
+		return htmlResponse(accessTotpVerifyPage(resolved.site, returnPath));
+	});
+
+	app.post("/_burrowgate/access/login/totp", async (ctx) => {
+		const form = await ctx.req.formData();
+		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
+		if (!sameOriginRequest(ctx.req)) return htmlResponse("Request validation failed.", 403);
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
+		const { site, session, user } = resolved;
+		const retryAfterSeconds = accessTotpRetryAfterSeconds(session.id);
+		if (retryAfterSeconds > 0) return htmlResponse(accessTotpVerifyPage(site, returnPath, "Too many failed attempts. Try again later."), 429);
+		const secret = await decryptAccessTotpSecret(user);
+		const code = String(form.get("code") ?? "");
+		if (!secret || !(await verifyTotpCode(secret, code))) {
+			recordAccessTotpFailure(session.id);
+			return htmlResponse(accessTotpVerifyPage(site, returnPath, "Invalid code"), 401);
+		}
+		clearAccessTotpFailures(session.id);
+		consumePendingAccessTotp(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/access/login/totp",
+			status: 302,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
 		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
 	});
 
@@ -151,7 +282,21 @@ export function registerAccessRoutes(app: Web<any>): void {
 				clearAccessIdentityCookies(ctx.req),
 			);
 		}
-		await repository.authenticateSession(session.id, site.id, result.user.id, Date.now());
+		if (result.user.totp_required === 1) {
+			const mode = beginAccessTotpChallenge(session.id, result.user);
+			await recordEvent({
+				siteId: site.id,
+				sessionId: session.id,
+				ip,
+				method: "POST",
+				path: "/_burrowgate/api/access/login",
+				status: 200,
+				decision: "access-login-required",
+				latencyMs: Math.round(performance.now() - started),
+			});
+			return jsonResponse({ authenticated: false, totpRequired: true, mode });
+		}
+		const cookies = await issueAccessSession(ctx, site, session, result.user);
 		await recordEvent({
 			siteId: site.id,
 			sessionId: session.id,
@@ -160,13 +305,88 @@ export function registerAccessRoutes(app: Web<any>): void {
 			path: "/_burrowgate/api/access/login",
 			status: 200,
 			decision: "access-authenticated",
+			accessUsername: result.user.username,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		const response = jsonResponse({ authenticated: true, username: result.user.username });
-		const cookies =
-			settings.send_username_to_upstream === 1
-				? await accessIdentitySetCookies(ctx.req, site, session, result.user.username)
-				: clearAccessIdentityCookies(ctx.req);
+		return appendSetCookies(response, cookies);
+	});
+
+	app.post("/_burrowgate/api/access/login/enroll", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		if (!resolved) return jsonResponse({ authenticated: false, error: "No pending enrollment" }, 428);
+		const { site, session, user } = resolved;
+		let body: { code?: unknown };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			body = {};
+		}
+		let secret = resolved.tentativeSecret;
+		if (!secret) {
+			secret = generateSecret();
+			setPendingAccessTotpSecret(session.id, secret);
+		}
+		const code = String(body.code ?? "");
+		if (!code) {
+			const uri = enrollmentUri(user.username, secret, `BurrowGate (${site.name})`);
+			return jsonResponse({ authenticated: false, totpRequired: true, mode: "totp-enroll", secret, uri });
+		}
+		if (!(await verifyTotpCode(secret, code))) return jsonResponse({ authenticated: false, error: "Invalid code" }, 401);
+		await completeAccessTotpEnrollment(user.id, secret);
+		consumePendingAccessTotp(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/api/access/login/enroll",
+			status: 200,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
+		const response = jsonResponse({ authenticated: true, username: user.username });
+		return appendSetCookies(response, cookies);
+	});
+
+	app.post("/_burrowgate/api/access/login/totp", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		if (!resolved) return jsonResponse({ authenticated: false, error: "No pending verification" }, 428);
+		const { site, session, user } = resolved;
+		const retryAfterSeconds = accessTotpRetryAfterSeconds(session.id);
+		if (retryAfterSeconds > 0)
+			return jsonResponse({ authenticated: false, error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
+		let body: { code?: unknown };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const secret = await decryptAccessTotpSecret(user);
+		const code = String(body.code ?? "");
+		if (!secret || !(await verifyTotpCode(secret, code))) {
+			recordAccessTotpFailure(session.id);
+			return jsonResponse({ authenticated: false, error: "Invalid code" }, 401);
+		}
+		clearAccessTotpFailures(session.id);
+		consumePendingAccessTotp(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/api/access/login/totp",
+			status: 200,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
+		const response = jsonResponse({ authenticated: true, username: user.username });
 		return appendSetCookies(response, cookies);
 	});
 }

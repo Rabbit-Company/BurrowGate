@@ -36,6 +36,7 @@ export async function recordEvent(input: {
 	protectionRulesetVersion?: string | null;
 	protectionMatches?: ManagedProtectionMatch[] | null;
 	requestId?: string | null;
+	accessUsername?: string | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
@@ -61,6 +62,7 @@ export async function recordEvent(input: {
 			protection_ruleset_id: input.protectionRulesetId ?? null,
 			protection_ruleset_version: input.protectionRulesetVersion ?? null,
 			protection_matches_json: input.protectionMatches?.length ? JSON.stringify(input.protectionMatches) : null,
+			access_username: input.accessUsername ?? null,
 			created_at: Date.now(),
 		});
 	} catch (error) {

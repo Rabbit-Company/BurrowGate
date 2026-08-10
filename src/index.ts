@@ -29,6 +29,7 @@ import {
 	accessSettingsForSite,
 	authenticatedAccessUser,
 	clearAccessIdentityCookies,
+	resolveApiTokenAccess,
 } from "./services/access-list-service.ts";
 import { siteHostname } from "./services/certificate-service.ts";
 import { TlsListenerManager } from "./services/tls-listener-service.ts";
@@ -295,6 +296,10 @@ async function gateway(ctx: any): Promise<Response> {
 	const accessSettings = await accessSettingsForSite(site.id);
 	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
+	// A valid API token authenticates the request outright, skipping both the
+	// browser verification challenge and the access-list login form.
+	const apiTokenAccess = accessAuthenticationEnabled ? await resolveApiTokenAccess(request, site, ip) : null;
+
 	// A session is required for challenge-protected routes, access-list login,
 	// and optionally as the route rate-limit identity.
 	const needsSession =
@@ -303,12 +308,12 @@ async function gateway(ctx: any): Promise<Response> {
 		ipRule.action === "challenge" ||
 		route.policy?.rate_limit_key_mode === "session-or-ip" ||
 		site.load_balancing_affinity !== 0;
-	const candidateSession = needsSession ? await findAccessSession(request, site, ip) : null;
+	const candidateSession = apiTokenAccess ? apiTokenAccess.session : needsSession ? await findAccessSession(request, site, ip) : null;
 
 	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
-	const session = effectiveAccess === "challenge" || accessAuthenticationEnabled ? candidateSession : null;
+	const session = apiTokenAccess ? apiTokenAccess.session : effectiveAccess === "challenge" || accessAuthenticationEnabled ? candidateSession : null;
 
-	if ((effectiveAccess === "challenge" || accessAuthenticationEnabled) && !session) {
+	if (!apiTokenAccess && (effectiveAccess === "challenge" || accessAuthenticationEnabled) && !session) {
 		if (!["GET", "HEAD"].includes(request.method)) {
 			const flow = await createFlow(site, url.pathname + url.search, ip, await userAgentHash(request), route.challengePolicy);
 			const verificationUrl = `/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`;
@@ -347,8 +352,8 @@ async function gateway(ctx: any): Promise<Response> {
 		);
 	}
 
-	const accessUser = accessAuthenticationEnabled ? await authenticatedAccessUser(site.id, session) : null;
-	if (accessAuthenticationEnabled && !accessUser) {
+	const accessUser = apiTokenAccess ? apiTokenAccess.user : accessAuthenticationEnabled ? await authenticatedAccessUser(site.id, session) : null;
+	if (!apiTokenAccess && accessAuthenticationEnabled && !accessUser) {
 		const loginUrl = `/_burrowgate/access/login?return=${encodeURIComponent(url.pathname + url.search)}`;
 		await recordEvent({
 			...eventBase,
@@ -389,6 +394,7 @@ async function gateway(ctx: any): Promise<Response> {
 			sessionId: candidateSession?.id ?? null,
 			status: 429,
 			decision: "rate-limited",
+			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return siteErrorResponse(
@@ -441,6 +447,7 @@ async function gateway(ctx: any): Promise<Response> {
 			decision,
 			cacheStatus,
 			originId: cacheLookup.originId ?? null,
+			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return appendRateLimitHeaders(response, rateLimit.headers);
@@ -453,6 +460,7 @@ async function gateway(ctx: any): Promise<Response> {
 			status: 503,
 			decision: "origin-pool-unavailable",
 			cacheStatus,
+			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return siteErrorResponse(site, request, {
@@ -506,6 +514,7 @@ async function gateway(ctx: any): Promise<Response> {
 			decision,
 			cacheStatus,
 			originId: selectedOrigin.id,
+			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return appendRateLimitHeaders(response, rateLimit.headers);
@@ -518,6 +527,7 @@ async function gateway(ctx: any): Promise<Response> {
 				decision: "request-limited",
 				cacheStatus,
 				originId: selectedOrigin.id,
+				accessUsername: accessUser?.username ?? null,
 				latencyMs: Math.round(performance.now() - started),
 			});
 			return siteErrorResponse(site, request, {
@@ -537,6 +547,7 @@ async function gateway(ctx: any): Promise<Response> {
 			decision: "origin-error",
 			cacheStatus,
 			originId: selectedOrigin.id,
+			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
 		Logger.error("Origin proxy failed", { error });

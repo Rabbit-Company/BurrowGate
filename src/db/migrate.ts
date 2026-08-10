@@ -89,7 +89,12 @@ CREATE TABLE IF NOT EXISTS access_users (
   password_hash TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
+  updated_at BIGINT NOT NULL,
+  totp_required INTEGER NOT NULL DEFAULT 0,
+  totp_secret_encrypted TEXT NULL,
+  totp_enrolled_at BIGINT NULL,
+  api_token_hash VARCHAR(64) NULL,
+  api_token_created_at BIGINT NULL
 );
 CREATE TABLE IF NOT EXISTS site_access_settings (
   site_id VARCHAR(64) PRIMARY KEY,
@@ -194,6 +199,7 @@ CREATE TABLE IF NOT EXISTS request_events (
 	protection_ruleset_id VARCHAR(128) NULL,
 	protection_ruleset_version VARCHAR(64) NULL,
 	protection_matches_json TEXT NULL,
+	access_username VARCHAR(255) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -482,6 +488,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_ip ON access_sessions (site_id, last_ip)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_access_user ON access_sessions (access_user_id, revoked_at, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_users_enabled_username ON access_users (enabled, username)",
+	"CREATE INDEX IF NOT EXISTS idx_access_users_api_token ON access_users (api_token_hash)",
 	"CREATE INDEX IF NOT EXISTS idx_site_access_users_user ON site_access_users (user_id, site_id)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_country_created ON access_sessions (site_id, country_code, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_terminal ON access_sessions (site_id, expires_at, revoked_at)",
@@ -654,6 +661,23 @@ async function ensureAccessSessionColumns(): Promise<void> {
 	}
 }
 
+async function ensureAccessUserColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE access_users ADD COLUMN totp_required INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE access_users ADD COLUMN totp_secret_encrypted TEXT NULL",
+		"ALTER TABLE access_users ADD COLUMN totp_enrolled_at BIGINT NULL",
+		"ALTER TABLE access_users ADD COLUMN api_token_hash VARCHAR(64) NULL",
+		"ALTER TABLE access_users ADD COLUMN api_token_created_at BIGINT NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAdminSessionColumns(): Promise<void> {
 	try {
 		await db.unsafe("ALTER TABLE admin_sessions ADD COLUMN user_id VARCHAR(64) NULL");
@@ -681,6 +705,7 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN protection_ruleset_id VARCHAR(128) NULL",
 		"ALTER TABLE request_events ADD COLUMN protection_ruleset_version VARCHAR(64) NULL",
 		"ALTER TABLE request_events ADD COLUMN protection_matches_json TEXT NULL",
+		"ALTER TABLE request_events ADD COLUMN access_username VARCHAR(255) NULL",
 	]) {
 		try {
 			await db.unsafe(statement);
@@ -729,6 +754,7 @@ export async function migrate(): Promise<void> {
 	await ensureIpRuleColumns();
 	await ensureStreamColumns();
 	await ensureGeoIpColumns();
+	await ensureAccessUserColumns();
 	await ensureAccessSessionColumns();
 	await ensureAdminSessionColumns();
 	await ensureRequestEventColumns();

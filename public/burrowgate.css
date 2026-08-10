@@ -442,6 +442,12 @@ form.grid label {
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
+.cell-subtext {
+	display: block;
+	margin-top: 2px;
+	font-size: 11px;
+	color: #94a3b8;
+}
 .reason-cell {
 	max-width: 36ch;
 	overflow: hidden;
@@ -930,6 +936,11 @@ form.grid label {
 	gap: 8px;
 	flex-wrap: wrap;
 	justify-content: flex-end;
+}
+.site-list-actions.security-actions {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid #1c2434;
 }
 .empty-state-inline {
 	color: #64748b;
