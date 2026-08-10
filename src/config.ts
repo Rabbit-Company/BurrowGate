@@ -139,6 +139,8 @@ export const config = {
 		username: process.env.BG_ADMIN_USERNAME?.trim() || "admin",
 		password: process.env.BG_ADMIN_PASSWORD?.trim() || "",
 		sessionTtlSeconds: envNumber("BG_ADMIN_SESSION_TTL_SECONDS", 28_800, 300, 604_800),
+		loginMaxFailureKeys: envNumber("BG_ADMIN_LOGIN_MAX_FAILURE_KEYS", 10_000, 100, 1_000_000),
+		pendingLoginTtlSeconds: envNumber("BG_ADMIN_PENDING_LOGIN_TTL_SECONDS", 300, 60, 3_600),
 	},
 	seedDefaultSite: envBoolean("BG_SEED_DEFAULT_SITE", false),
 	defaultSite: {

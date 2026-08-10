@@ -1,4 +1,5 @@
 import type { Web } from "@rabbit-company/web";
+import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { challengeRegistry } from "../challenges/index.ts";
 import {
 	adminCookieName,
@@ -10,6 +11,20 @@ import {
 } from "../config.ts";
 import { repository, type SortDirection } from "../db/repository.ts";
 import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
+import {
+	authenticateAdminPassword,
+	beginPendingLogin,
+	clearPendingLoginCookie,
+	clearTotpFailures,
+	consumePendingLogin,
+	pendingLoginCookie,
+	recordTotpFailure,
+	resolvePendingLogin,
+	setPendingLoginSecret,
+	totpAttemptRetryAfterSeconds,
+} from "../services/admin-auth-service.ts";
+import { decryptSecret, encryptSecret } from "../services/secret-encryption-service.ts";
+import { enrollmentUri, generateRecoveryCodes, generateSecret, normalizeRecoveryCode, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
 import { adminSessionTokens, createAdminSession, getAdminSession } from "../services/session-service.ts";
 import { createSite, parseDefaultNetworkAction, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
 import {
@@ -42,10 +57,10 @@ import {
 	updateAccessUser,
 } from "../services/access-list-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
-import { adminPage, loginPage } from "../ui/admin-page.ts";
+import { adminPage, loginPage, totpEnrollPage, totpRecoveryCodesPage, totpVerifyPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
-import { sha256Hex, timingSafeEqualText } from "../utils/crypto.ts";
-import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { randomId, sha256Hex } from "../utils/crypto.ts";
+import { appendSetCookies, htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { blockSiteBandwidth, flushBandwidthMetrics, resumeSiteBandwidth } from "../services/bandwidth-service.ts";
 import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts";
 import { originHealthManager } from "../services/origin-health-service.ts";
@@ -55,9 +70,31 @@ import { instanceWebSocketDefaults } from "../services/websocket-policy-service.
 import { staticAssetCache } from "../services/static-cache-service.ts";
 import { instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
+import {
+	isAdministrator,
+	requireAdministrator,
+	requireLevel,
+	resolveAdminUser,
+	siteAccessLevel,
+	type AuthenticatedAdmin,
+} from "../services/admin-permission-service.ts";
+import {
+	adminUserView,
+	changeOwnPassword,
+	createAdminUser,
+	deleteAdminUser,
+	listAdminUsers,
+	regenerateOwnRecoveryCodes,
+	resetAdminUserPassword,
+	resetAdminUserTotp,
+	updateAdminUser,
+} from "../services/admin-user-service.ts";
+import { pagedAdminAuditLog, purgeAdminAuditLog, recordAdminAudit } from "../services/admin-audit-service.ts";
 
-async function guard(request: Request): Promise<Response | null> {
-	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
+async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
+	const session = await getAdminSession(request);
+	const user = session ? await resolveAdminUser(session) : null;
+	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function mutationGuard(request: Request): Response | null {
@@ -78,6 +115,11 @@ function stringParam(url: URL, name: string): string | undefined {
 	return value || undefined;
 }
 
+function numberParam(url: URL, name: string): number | undefined {
+	const value = Number(url.searchParams.get(name));
+	return Number.isFinite(value) && url.searchParams.has(name) ? value : undefined;
+}
+
 function enumParam<T extends string>(url: URL, name: string, allowed: readonly T[], fallback?: T): T | undefined {
 	const value = url.searchParams.get(name) as T | null;
 	return value && allowed.includes(value) ? value : fallback;
@@ -95,6 +137,13 @@ function protectionMatches(value: string | null): unknown[] {
 	} catch {
 		return [];
 	}
+}
+
+const NO_ACCESS_SITE_ID = "__no-accessible-site__";
+
+function metricsScopeSiteId(selection: { site: SiteRecord | null }, user: AuthenticatedAdmin): string | undefined {
+	if (selection.site) return selection.site.id;
+	return isAdministrator(user) ? undefined : NO_ACCESS_SITE_ID;
 }
 
 const DEFAULT_DATE_RANGE_MS = 24 * 3_600_000;
@@ -121,15 +170,25 @@ function metricBucketSize(durationMs: number): number {
 	return METRIC_BUCKETS_MS.find((candidate) => candidate >= minimum) ?? 604_800_000;
 }
 
-async function firstSite(): Promise<SiteRecord | null> {
-	return (await repository.allSites())[0] ?? null;
+async function sitesVisibleToUser(user: AuthenticatedAdmin): Promise<SiteRecord[]> {
+	return isAdministrator(user) ? repository.allSites() : repository.adminSitesForUser(user.id);
 }
 
-async function selectedSite(url: URL): Promise<{ site: SiteRecord | null; error: Response | null }> {
+async function selectedSite(url: URL, user: AuthenticatedAdmin): Promise<{ site: SiteRecord | null; error: Response | null }> {
 	const requestedId = stringParam(url, "siteId");
-	if (!requestedId) return { site: await firstSite(), error: null };
+	if (!requestedId) return { site: (await sitesVisibleToUser(user))[0] ?? null, error: null };
 	const site = await repository.siteById(requestedId);
-	return site ? { site, error: null } : { site: null, error: jsonResponse({ error: "Selected site was not found" }, 404) };
+	if (!site) return { site: null, error: jsonResponse({ error: "Selected site was not found" }, 404) };
+	if ((await siteAccessLevel(user, site.id)) === "none") return { site: null, error: jsonResponse({ error: "Forbidden" }, 403) };
+	return { site, error: null };
+}
+
+async function requireSiteAccess(id: string, user: AuthenticatedAdmin, need: "view" | "manage"): Promise<{ site: SiteRecord } | { error: Response }> {
+	const site = await repository.siteById(id);
+	if (!site) return { error: jsonResponse({ error: "Site not found" }, 404) };
+	const denied = requireLevel(await siteAccessLevel(user, site.id), need);
+	if (denied) return { error: denied };
+	return { site };
 }
 
 function providerViews() {
@@ -168,14 +227,103 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const form = await ctx.req.formData();
 		const username = String(form.get("username") ?? "");
 		const password = String(form.get("password") ?? "");
-		if (!(await timingSafeEqualText(username, config.admin.username)) || !(await timingSafeEqualText(password, config.admin.password))) {
-			return htmlResponse(loginPage("Invalid username or password"), 401);
-		}
+		const ip = getClientIp(ctx) ?? "unknown";
+		const { user, retryAfterSeconds } = await authenticateAdminPassword(ip, username, password);
+		if (retryAfterSeconds > 0) return htmlResponse(loginPage("Too many failed attempts. Try again later."), 429);
+		if (!user) return htmlResponse(loginPage("Invalid username or password"), 401);
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {
 			return htmlResponse(loginPage(insecureCookieConfigurationMessage()), 409);
 		}
-		const session = await createAdminSession(ctx.req, username);
-		return new Response(null, { status: 302, headers: { location: "/_burrowgate/admin", "set-cookie": session.cookie } });
+		const mode = user.must_enroll_totp === 1 ? "totp-enroll" : "totp-verify";
+		const token = beginPendingLogin(mode, user.id);
+		const location = mode === "totp-enroll" ? "/_burrowgate/admin/login/enroll" : "/_burrowgate/admin/login/totp";
+		return new Response(null, { status: 302, headers: { location, "set-cookie": pendingLoginCookie(ctx.req, token) } });
+	});
+
+	app.get("/_burrowgate/admin/login/enroll", async (ctx) => {
+		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
+		const pending = resolvePendingLogin(ctx.req, "totp-enroll");
+		if (!pending) return Response.redirect(loginUrl, 302);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return Response.redirect(loginUrl, 302);
+		let secret = pending.entry.tentativeSecret;
+		if (!secret) {
+			secret = generateSecret();
+			setPendingLoginSecret(pending.token, secret);
+		}
+		const uri = enrollmentUri(user.username, secret);
+		return htmlResponse(totpEnrollPage(uri, secret, await qrSvg(uri)));
+	});
+
+	app.post("/_burrowgate/admin/login/enroll", async (ctx) => {
+		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
+		const pending = resolvePendingLogin(ctx.req, "totp-enroll");
+		const secret = pending?.entry.tentativeSecret;
+		if (!pending || !secret) return Response.redirect(loginUrl, 302);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return Response.redirect(loginUrl, 302);
+		const form = await ctx.req.formData();
+		const code = String(form.get("code") ?? "");
+		const uri = enrollmentUri(user.username, secret);
+		if (!(await verifyTotpCode(secret, code))) {
+			return htmlResponse(totpEnrollPage(uri, secret, await qrSvg(uri), "Invalid code, try again"), 401);
+		}
+		const now = Date.now();
+		await repository.updateAdminUser({
+			...user,
+			totp_secret_encrypted: await encryptSecret(secret),
+			totp_enrolled_at: now,
+			must_enroll_totp: 0,
+			updated_at: now,
+		});
+		const recoveryCodes = await generateRecoveryCodes();
+		await repository.replaceAdminRecoveryCodes(
+			user.id,
+			recoveryCodes.map((recoveryCode) => ({ id: randomId("rc"), user_id: user.id, code_hash: recoveryCode.hash, created_at: now, used_at: null })),
+		);
+		consumePendingLogin(pending.token);
+		const session = await createAdminSession(ctx.req, user.username, user.id);
+		return appendSetCookies(htmlResponse(totpRecoveryCodesPage(recoveryCodes.map((recoveryCode) => recoveryCode.plaintext))), [
+			session.cookie,
+			clearPendingLoginCookie(ctx.req),
+		]);
+	});
+
+	app.get("/_burrowgate/admin/login/totp", async (ctx) => {
+		const pending = resolvePendingLogin(ctx.req, "totp-verify");
+		if (!pending) return Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url).href, 302);
+		return htmlResponse(totpVerifyPage());
+	});
+
+	app.post("/_burrowgate/admin/login/totp", async (ctx) => {
+		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
+		const pending = resolvePendingLogin(ctx.req, "totp-verify");
+		if (!pending) return Response.redirect(loginUrl, 302);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user || !user.totp_secret_encrypted) return Response.redirect(loginUrl, 302);
+		const retryAfterSeconds = totpAttemptRetryAfterSeconds(pending.token);
+		if (retryAfterSeconds > 0) return htmlResponse(totpVerifyPage("Too many failed attempts. Try again later."), 429);
+		const form = await ctx.req.formData();
+		const code = String(form.get("code") ?? "").trim();
+		const recoveryCodeInput = form.get("recoveryCode");
+		let valid = false;
+		if (recoveryCodeInput) {
+			const hash = await sha256Hex(normalizeRecoveryCode(recoveryCodeInput));
+			valid = await repository.consumeAdminRecoveryCodeByHash(user.id, hash, Date.now());
+		} else if (code) {
+			valid = await verifyTotpCode(await decryptSecret(user.totp_secret_encrypted), code);
+		}
+		if (!valid) {
+			recordTotpFailure(pending.token);
+			return htmlResponse(totpVerifyPage("Invalid code"), 401);
+		}
+		clearTotpFailures(pending.token);
+		consumePendingLogin(pending.token);
+		const session = await createAdminSession(ctx.req, user.username, user.id);
+		return appendSetCookies(new Response(null, { status: 302, headers: { location: "/_burrowgate/admin" } }), [
+			session.cookie,
+			clearPendingLoginCookie(ctx.req),
+		]);
 	});
 
 	app.get("/_burrowgate/admin", async (ctx) =>
@@ -212,10 +360,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/sites", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		return jsonResponse({
-			items: (await repository.allSites()).map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
+			items: (await sitesVisibleToUser(user)).map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
 			websocketDefaults: instanceWebSocketDefaults(),
@@ -236,12 +385,25 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
 		try {
 			const created = await createSite(await parseSiteInput(ctx.req));
 			await loadBalancer.refreshSite(created.site.id);
 			await originHealthManager.refreshSite(created.site.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "site.create",
+				resourceType: "site",
+				resourceId: created.site.id,
+				summary: `Created site ${created.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(
 				{
 					site: siteView(created.site),
@@ -255,13 +417,26 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/sites/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
 		try {
 			const site = await updateSite(ctx.params.id, await parseSiteInput(ctx.req));
 			await loadBalancer.refreshSite(site.id);
 			await originHealthManager.refreshSite(site.id);
 			await requestTlsReload();
+			await recordAdminAudit({
+				actor: user,
+				action: "site.update",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Updated site ${site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ site: siteView(site) });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update site";
@@ -270,8 +445,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/sites/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
 		const site = await repository.siteById(ctx.params.id);
 		if (!site) return jsonResponse({ error: "Site not found" }, 404);
 		if (siteCertificateIssuanceActive(site.id))
@@ -313,14 +493,24 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const tlsReload = await Promise.allSettled([requestTlsReload()]);
 		const warning =
 			tlsReload[0]?.status === "rejected" ? "The site was deleted, but TLS listener reload failed. Restart BurrowGate to refresh active certificates." : null;
+		await recordAdminAudit({
+			actor: user,
+			action: "site.delete",
+			resourceType: "site",
+			resourceId: site.id,
+			summary: `Deleted site ${site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true, warning });
 	});
 
 	app.get("/_burrowgate/api/admin/sites/:id/health", async (ctx: any) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "view");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		const originNames = new Map((await repository.originsForSite(site.id)).map((origin) => [origin.id, origin.name]));
 		const limit = integerParam(new URL(ctx.req.url), "limit", 100, 1, 200);
 		return jsonResponse({
@@ -343,9 +533,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/sites/:id/origins", async (ctx: any) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		if (!(await repository.siteById(ctx.params.id))) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const originsAccess = await requireSiteAccess(ctx.params.id, user, "view");
+		if ("error" in originsAccess) return originsAccess.error;
 		const summaries = new Map((originHealthManager.summary(ctx.params.id).origins ?? []).map((origin) => [origin.id, origin]));
 		return jsonResponse({
 			items: (await repository.originsForSite(ctx.params.id)).map((origin) => ({ ...originView(origin), health: summaries.get(origin.id) ?? null })),
@@ -353,13 +545,26 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/origins", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const originsAccess = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in originsAccess) return originsAccess.error;
 		try {
 			const origin = await createOrigin(ctx.params.id, await parseOriginInput(ctx.req));
 			staticAssetCache.purge({ siteId: ctx.params.id });
 			await loadBalancer.refreshSite(ctx.params.id);
 			await originHealthManager.refreshSite(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "origin.create",
+				resourceType: "origin",
+				resourceId: origin.id,
+				summary: `Added origin ${origin.name} to site`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ origin: originView(origin) }, 201);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to create origin";
@@ -368,15 +573,28 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/origins/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		try {
 			const existing = await repository.originById(ctx.params.id);
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
+			if (denied) return denied;
 			const origin = await updateOrigin(existing.site_id, ctx.params.id, await parseOriginInput(ctx.req));
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
 			await originHealthManager.refreshSite(existing.site_id);
+			await recordAdminAudit({
+				actor: user,
+				action: "origin.update",
+				resourceType: "origin",
+				resourceId: origin.id,
+				summary: `Updated origin ${origin.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ origin: originView(origin) });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update origin";
@@ -385,15 +603,28 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/origins/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		try {
 			const existing = await repository.originById(ctx.params.id);
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
+			if (denied) return denied;
 			await deleteOrigin(existing.site_id, ctx.params.id);
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
 			await originHealthManager.refreshSite(existing.site_id);
+			await recordAdminAudit({
+				actor: user,
+				action: "origin.delete",
+				resourceType: "origin",
+				resourceId: existing.id,
+				summary: `Deleted origin ${existing.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ deleted: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to delete origin";
@@ -402,11 +633,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/origins/:id/check", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		try {
 			const origin = await repository.originById(ctx.params.id);
 			if (!origin) return jsonResponse({ error: "Origin not found" }, 404);
+			const denied = requireLevel(await siteAccessLevel(user, origin.site_id), "manage");
+			if (denied) return denied;
 			return jsonResponse({ status: await originHealthManager.checkNow(origin.site_id, origin.id) });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to check origin" }, 409);
@@ -414,8 +650,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/health/check", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const healthCheckAccess = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in healthCheckAccess) return healthCheckAccess.error;
 		try {
 			return jsonResponse({ status: await originHealthManager.checkNow(ctx.params.id) });
 		} catch (error) {
@@ -425,9 +666,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/route-policies", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ items: [] });
 		return jsonResponse({
@@ -437,13 +679,26 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/route-policies", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Create a site before adding route policies" }, 400);
+		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routePolicyDenied) return routePolicyDenied;
 		try {
 			const policy = await createRoutePolicy(selection.site.id, await parseRoutePolicyInput(ctx.req));
+			await recordAdminAudit({
+				actor: user,
+				action: "route_policy.create",
+				resourceType: "route_policy",
+				resourceId: policy.id,
+				summary: `Created route policy ${policy.name} on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ policy: routePolicyView(policy) }, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create route policy" }, 400);
@@ -451,14 +706,27 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/route-policies/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routePolicyDenied) return routePolicyDenied;
 		try {
 			const policy = await updateRoutePolicy(selection.site.id, ctx.params.id, await parseRoutePolicyInput(ctx.req));
 			invalidateRouteRateLimiter(policy.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "route_policy.update",
+				resourceType: "route_policy",
+				resourceId: policy.id,
+				summary: `Updated route policy ${policy.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ policy: routePolicyView(policy) });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update route policy";
@@ -467,14 +735,27 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("DELETE", "/_burrowgate/api/admin/route-policies/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routePolicyDenied) return routePolicyDenied;
 		try {
 			await deleteRoutePolicy(selection.site.id, ctx.params.id);
 			invalidateRouteRateLimiter(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "route_policy.delete",
+				resourceType: "route_policy",
+				resourceId: ctx.params.id,
+				summary: `Deleted a route policy on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ ok: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to delete route policy";
@@ -483,28 +764,36 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/cache", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ metrics: staticAssetCache.metrics(), site: null });
 		return jsonResponse({ metrics: staticAssetCache.metrics(selection.site.id), site: siteView(selection.site) });
 	});
 
 	app.post("/_burrowgate/api/admin/cache/purge", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		try {
 			const raw = (await ctx.req.json()) as unknown;
 			if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Cache purge payload must be an object");
 			const body = raw as Record<string, unknown>;
 			if (body.allSites === true) {
+				const forbidden = requireAdministrator(user);
+				if (forbidden) return forbidden;
 				const purged = staticAssetCache.purge();
 				return jsonResponse({ purged, metrics: staticAssetCache.metrics() });
 			}
-			const selection = await selectedSite(new URL(ctx.req.url));
+			const selection = await selectedSite(new URL(ctx.req.url), user);
 			if (selection.error) return selection.error;
 			if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+			const cachePurgeDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+			if (cachePurgeDenied) return cachePurgeDenied;
 			const routePolicyId = String(body.routePolicyId ?? "").trim() || undefined;
 			if (routePolicyId && !(await repository.routePolicyById(routePolicyId, selection.site.id))) {
 				return jsonResponse({ error: "Route policy was not found for the selected site" }, 404);
@@ -524,23 +813,37 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/access-list", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Create a site before configuring access authentication" }, 400);
 		return jsonResponse(await accessListView(selection.site.id));
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/access-list", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Create a site before configuring access authentication" }, 400);
+		const accessSettingsDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessSettingsDenied) return accessSettingsDenied;
 		try {
 			const body = (await ctx.req.json()) as any;
 			await updateAccessSettings(selection.site.id, body ?? {});
+			await recordAdminAudit({
+				actor: user,
+				action: "access_list.settings.update",
+				resourceType: "site",
+				resourceId: selection.site.id,
+				summary: `Updated access-list settings for ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(await accessListView(selection.site.id));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update access-list settings" }, 400);
@@ -548,13 +851,27 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/access-list/users", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Create a site before adding users" }, 400);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		const actor = user;
 		try {
 			const user = await createAccessUser(selection.site.id, (await ctx.req.json()) as any);
+			await recordAdminAudit({
+				actor,
+				action: "access_user.create",
+				resourceType: "access_user",
+				resourceId: user.id,
+				summary: `Created access-list user ${user.username} on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ user }, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create access user" }, 400);
@@ -562,13 +879,27 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/access-list/users/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
+		const actor = user;
 		try {
 			const user = await updateAccessUser(selection.site.id, ctx.params.id, (await ctx.req.json()) as any);
+			await recordAdminAudit({
+				actor,
+				action: "access_user.update",
+				resourceType: "access_user",
+				resourceId: user.id,
+				summary: `Updated access-list user ${user.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ user });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update access user";
@@ -577,13 +908,27 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("DELETE", "/_burrowgate/api/admin/access-list/users/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
 		try {
+			const target = await repository.accessUserById(ctx.params.id);
 			await removeAccessUser(selection.site.id, ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_user.remove",
+				resourceType: "access_user",
+				resourceId: ctx.params.id,
+				summary: `Removed access-list user ${target?.username ?? ctx.params.id} from ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ ok: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to remove access user";
@@ -592,9 +937,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/access-list/import", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		try {
@@ -607,14 +955,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/geo-metrics", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
 		await flushBandwidthMetrics();
-		const metrics = await repository.geoMetrics(selection.site?.id, range.since, range.until);
+		const metrics = await repository.geoMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -628,14 +977,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/overview", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
 		return jsonResponse({
-			...(await repository.overview(selection.site?.id, range.since, range.until)),
+			...(await repository.overview(metricsScopeSiteId(selection, user), range.since, range.until)),
 			retentionDays: selection.site?.event_retention_days ?? config.eventRetentionDays,
 			defaultPageSize: config.adminPageSize,
 			site: selection.site ? siteView(selection.site) : null,
@@ -644,14 +994,20 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/metrics", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
 		const section =
 			enumParam(url, "section", ["traffic", "bandwidth", "cache", "protection", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ??
 			"traffic";
-		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url);
+		if (section === "sites") {
+			const forbidden = requireAdministrator(user);
+			if (forbidden) return forbidden;
+		}
+		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url, user);
 		if (selection.error) return selection.error;
+		const scopeSiteId = metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const bucketMs = metricBucketSize(range.durationMs);
 		const since = range.since;
@@ -669,7 +1025,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		};
 
 		if (section === "cache") {
-			const metrics = await repository.cacheMetrics(selection.site?.id, since, until, bucketMs);
+			const metrics = await repository.cacheMetrics(scopeSiteId, since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -706,7 +1062,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "protection") {
-			const metrics = await repository.protectionMetrics(selection.site?.id, since, until, bucketMs);
+			const metrics = await repository.protectionMetrics(scopeSiteId, since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -748,7 +1104,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 
 		if (section === "bandwidth") {
 			await flushBandwidthMetrics();
-			const metrics = await repository.bandwidthMetrics(selection.site?.id, since, until, bucketMs);
+			const metrics = await repository.bandwidthMetrics(scopeSiteId, since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -783,7 +1139,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "sessions") {
-			const metrics = await repository.sessionMetrics(selection.site?.id, since, until, bucketMs);
+			const metrics = await repository.sessionMetrics(scopeSiteId, since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -815,7 +1171,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "rules") {
-			const metrics = await repository.ruleMetrics(selection.site?.id ?? "", since, until, bucketMs);
+			const metrics = await repository.ruleMetrics(scopeSiteId ?? "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -851,7 +1207,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "routes") {
-			const metrics = await repository.routeMetrics(selection.site?.id ?? "", since, until, bucketMs);
+			const metrics = await repository.routeMetrics(scopeSiteId ?? "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -888,7 +1244,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "access") {
-			const metrics = await repository.accessListMetrics(selection.site?.id ?? "", since, until, bucketMs);
+			const metrics = await repository.accessListMetrics(scopeSiteId ?? "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -957,7 +1313,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			});
 		}
 
-		const metrics = await repository.trafficMetrics(selection.site?.id, since, until, bucketMs);
+		const metrics = await repository.trafficMetrics(scopeSiteId, since, until, bucketMs);
 		return jsonResponse({
 			...base,
 			primary: {
@@ -989,11 +1345,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/events", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
+		const scopeSiteId = metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
@@ -1005,7 +1363,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const countryCode = stringParam(url, "country")?.toUpperCase();
 		const [page, origins] = await Promise.all([
 			repository.pagedEvents({
-				...(selection.site ? { siteId: selection.site.id } : {}),
+				...(scopeSiteId ? { siteId: scopeSiteId } : {}),
 				...(originId ? { originId } : {}),
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
@@ -1041,10 +1399,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/bandwidth", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
 		const range = requestedDateRange(url);
@@ -1083,18 +1442,20 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/sessions", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
+		const scopeSiteId = metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
 		return jsonResponse(
 			await repository.pagedSessions({
-				...(selection.site ? { siteId: selection.site.id } : {}),
+				...(scopeSiteId ? { siteId: scopeSiteId } : {}),
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				...(search ? { search } : {}),
@@ -1109,9 +1470,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/network-policy", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
 		return jsonResponse({
@@ -1123,17 +1485,30 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/network-policy", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const networkPolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (networkPolicyDenied) return networkPolicyDenied;
 		try {
 			const body = (await ctx.req.json()) as { defaultIpAction?: DefaultNetworkAction; defaultCountryAction?: DefaultNetworkAction };
 			const defaultIpAction = parseDefaultNetworkAction(body.defaultIpAction, selection.site.default_ip_action ?? "inherit");
 			const defaultCountryAction = parseDefaultNetworkAction(body.defaultCountryAction, selection.site.default_country_action ?? "inherit");
 			await repository.updateSiteNetworkDefaults(selection.site.id, defaultIpAction, defaultCountryAction, Date.now());
 			invalidateNetworkPolicy(selection.site.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "network_policy.update",
+				resourceType: "site",
+				resourceId: selection.site.id,
+				summary: `Updated default network policy for ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ defaultIpAction, defaultCountryAction });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
@@ -1141,11 +1516,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/country-rules", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const countryRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (countryRuleDenied) return countryRuleDenied;
 		const body = (await ctx.req.json()) as { countryCode?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.countryCode || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid country rule" }, 400);
@@ -1155,28 +1535,51 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ error: "Expiration must be in the future" }, 400);
 		}
 		try {
-			return jsonResponse(await addCountryRule(selection.site.id, body.countryCode, body.action!, body.reason ?? "", expiresAt), 201);
+			const rule = await addCountryRule(selection.site.id, body.countryCode, body.action!, body.reason ?? "", expiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "country_rule.create",
+				resourceType: "country_rule",
+				resourceId: rule.id,
+				summary: `Added country rule (${rule.action}) for ${rule.country_code} on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
 		}
 	});
 
 	app.delete("/_burrowgate/api/admin/country-rules/:id", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const countryRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (countryRuleDenied) return countryRuleDenied;
 		await repository.deleteCountryRuleForSite(ctx.params.id!, selection.site.id);
 		invalidateNetworkPolicy(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "country_rule.delete",
+			resourceType: "country_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted a country rule on ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true });
 	});
 
 	app.get("/_burrowgate/api/admin/rules", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedSite(url);
+		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
 		const search = stringParam(url, "search");
@@ -1197,11 +1600,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/rules", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const ipRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		const body = (await ctx.req.json()) as { networkCidr?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.networkCidr || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid rule" }, 400);
@@ -1211,60 +1619,113 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ error: "Expiration must be in the future" }, 400);
 		}
 		try {
-			return jsonResponse(await addIpRule(selection.site.id, body.networkCidr, body.action!, body.reason ?? "", parsedExpiresAt), 201);
+			const rule = await addIpRule(selection.site.id, body.networkCidr, body.action!, body.reason ?? "", parsedExpiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "ip_rule.create",
+				resourceType: "ip_rule",
+				resourceId: rule.id,
+				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
 		}
 	});
 
 	app.delete("/_burrowgate/api/admin/rules/:id", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const ipRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		await repository.deleteRuleForSite(ctx.params.id!, selection.site.id);
 		invalidateNetworkPolicy(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "ip_rule.delete",
+			resourceType: "ip_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted an IP rule on ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true });
 	});
 
 	app.post("/_burrowgate/api/admin/rules/bulk-delete", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const ipRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		const body = (await ctx.req.json()) as { ids?: unknown };
 		const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
 		if (ids.length === 0 || ids.length > 200) return jsonResponse({ error: "Provide 1 to 200 rule IDs" }, 400);
 		const deleted = await repository.deleteRulesForSite(ids, selection.site.id);
 		invalidateNetworkPolicy(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "ip_rule.bulk_delete",
+			resourceType: "site",
+			resourceId: selection.site.id,
+			summary: `Deleted ${deleted} IP rule(s) on ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted });
 	});
 
 	app.post("/_burrowgate/api/admin/sessions/:id/revoke", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedSite(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const revokeDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (revokeDenied) return revokeDenied;
 		await repository.revokeSessionForSite(ctx.params.id!, selection.site.id, Date.now());
+		await recordAdminAudit({
+			actor: user,
+			action: "session.revoke",
+			resourceType: "session",
+			resourceId: ctx.params.id!,
+			summary: `Revoked a visitor session on ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ revoked: true });
 	});
 
 	app.get("/_burrowgate/api/admin/sites/:id/tls", async (ctx: any) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
-		return jsonResponse(await tlsView(site));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "view");
+		if ("error" in access) return access.error;
+		return jsonResponse(await tlsView(access.site));
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/sites/:id/tls", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		try {
 			const body = (await ctx.req.json()) as Record<string, unknown>;
 			const current = await repository.ensureTlsSettings(site.id);
@@ -1279,6 +1740,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 			}
 			await updateTlsSettings(site, body);
 			await requestTlsReload();
+			await recordAdminAudit({
+				actor: user,
+				action: "tls.update",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Updated TLS settings for ${site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(await tlsView(site));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update TLS settings" }, 400);
@@ -1286,10 +1755,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/certificate/upload", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		try {
 			const body = (await ctx.req.json()) as { certificatePem?: string; privateKeyPem?: string; forceHttps?: boolean };
 			if (!body.certificatePem || !body.privateKeyPem) throw new Error("Certificate and private-key PEM are required");
@@ -1297,6 +1770,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 			await updateTlsSettings(site, { mode: "uploaded", forceHttps: Boolean(body.forceHttps) });
 			await recordCertificateEvent(site.id, certificate.id, "info", "Uploaded certificate activated", { expiresAt: certificate.expires_at });
 			await requestTlsReload();
+			await recordAdminAudit({
+				actor: user,
+				action: "certificate.upload",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Uploaded a TLS certificate for ${site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(await tlsView(site), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to upload certificate" }, 400);
@@ -1304,10 +1785,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/certificate/letsencrypt", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		try {
 			const body = (await ctx.req.json()) as { email?: string; directoryUrl?: string; forceHttps?: boolean; termsAccepted?: boolean };
 			await issueLetsEncryptCertificate(site, {
@@ -1316,6 +1801,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 				forceHttps: Boolean(body.forceHttps),
 				termsAccepted: body.termsAccepted === true,
 			});
+			await recordAdminAudit({
+				actor: user,
+				action: "certificate.issue",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Issued a Let's Encrypt certificate for ${site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(await tlsView(site), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Certificate issuance failed" }, 400);
@@ -1323,10 +1816,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/sites/:id/certificate/renew", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		const certificate = await repository.certificateBySite(site.id);
 		if (!certificate || certificate.source !== "letsencrypt") return jsonResponse({ error: "This site does not have a Let's Encrypt certificate" }, 400);
 		const settings = await repository.ensureTlsSettings(site.id);
@@ -1338,6 +1835,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 				termsAccepted: true,
 				renewal: true,
 			});
+			await recordAdminAudit({
+				actor: user,
+				action: "certificate.renew",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Renewed the Let's Encrypt certificate for ${site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(await tlsView(site));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Certificate renewal failed" }, 400);
@@ -1345,10 +1850,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/sites/:id/certificate", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const site = await repository.siteById(ctx.params.id);
-		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "manage");
+		if ("error" in access) return access.error;
+		const { site } = access;
 		const certificate = await repository.certificateBySite(site.id);
 		if (certificate) {
 			const streams = await repository.streamsUsingCertificate(certificate.id);
@@ -1363,12 +1872,252 @@ export function registerAdminRoutes(app: Web<any>): void {
 		await updateTlsSettings(site, { mode: "disabled", forceHttps: false });
 		await recordCertificateEvent(site.id, certificate?.id ?? null, "warning", "Certificate removed");
 		await requestTlsReload();
+		await recordAdminAudit({
+			actor: user,
+			action: "certificate.remove",
+			resourceType: "site",
+			resourceId: site.id,
+			summary: `Removed the TLS certificate for ${site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse(await tlsView(site));
 	});
 
+	app.get("/_burrowgate/api/admin/me", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		return jsonResponse(await adminUserView(user.id));
+	});
+
+	app.post("/_burrowgate/api/admin/me/password", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			const body = (await ctx.req.json()) as { currentPassword?: unknown; newPassword?: unknown };
+			await changeOwnPassword(user.id, body.currentPassword, body.newPassword);
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to change password" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/me/recovery-codes/regenerate", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			const body = (await ctx.req.json()) as { code?: unknown };
+			const codes = await regenerateOwnRecoveryCodes(user.id, body.code);
+			return jsonResponse({ codes });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to regenerate recovery codes" }, 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/users", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		const [items, sites, streams] = await Promise.all([listAdminUsers(), repository.allSites(), repository.allStreams()]);
+		return jsonResponse({
+			items,
+			sites: sites.map((site) => ({ id: site.id, name: site.name })),
+			streams: streams.map((stream) => ({
+				id: stream.id,
+				incomingPort: stream.incoming_port,
+				forwardHost: stream.forward_host,
+				forwardPort: stream.forward_port,
+			})),
+		});
+	});
+
+	app.post("/_burrowgate/api/admin/users", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			const created = await createAdminUser((await ctx.req.json()) as any, user.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_user.create",
+				resourceType: "admin_user",
+				resourceId: created.id,
+				summary: `Created user ${created.username} (${created.role})`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: created }, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create user" }, 400);
+		}
+	});
+
+	app.addRoute("PATCH", "/_burrowgate/api/admin/users/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			const updated = await updateAdminUser(ctx.params.id, (await ctx.req.json()) as any);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_user.update",
+				resourceType: "admin_user",
+				resourceId: updated.id,
+				summary: `Updated user ${updated.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ user: updated });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to update user";
+			return jsonResponse({ error: message }, message === "Admin user not found" ? 404 : 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/users/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		if (ctx.params.id === user.id) return jsonResponse({ error: "You cannot delete your own account" }, 400);
+		try {
+			const target = await repository.adminUserById(ctx.params.id);
+			await deleteAdminUser(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_user.delete",
+				resourceType: "admin_user",
+				resourceId: ctx.params.id,
+				summary: `Deleted user ${target?.username ?? ctx.params.id}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ deleted: true });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to delete user";
+			return jsonResponse({ error: message }, message === "Admin user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/users/:id/reset-password", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as { password?: unknown };
+			await resetAdminUserPassword(ctx.params.id, body.password);
+			const target = await repository.adminUserById(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_user.reset_password",
+				resourceType: "admin_user",
+				resourceId: ctx.params.id,
+				summary: `Reset password for user ${target?.username ?? ctx.params.id}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to reset password";
+			return jsonResponse({ error: message }, message === "Admin user not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/users/:id/totp/reset", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			await resetAdminUserTotp(ctx.params.id);
+			const target = await repository.adminUserById(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_user.reset_totp",
+				resourceType: "admin_user",
+				resourceId: ctx.params.id,
+				summary: `Reset two-factor authentication for user ${target?.username ?? ctx.params.id}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to reset two-factor authentication";
+			return jsonResponse({ error: message }, message === "Admin user not found" ? 404 : 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/audit-log", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		const url = new URL(ctx.req.url);
+		return jsonResponse(
+			await pagedAdminAuditLog({
+				page: integerParam(url, "page", 1, 1, 1_000_000),
+				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
+				...(stringParam(url, "search") ? { search: stringParam(url, "search") } : {}),
+				...(stringParam(url, "actorUserId") ? { actorUserId: stringParam(url, "actorUserId") } : {}),
+				...(stringParam(url, "action") ? { action: stringParam(url, "action") } : {}),
+				...(stringParam(url, "resourceType") ? { resourceType: stringParam(url, "resourceType") } : {}),
+				...(stringParam(url, "resourceId") ? { resourceId: stringParam(url, "resourceId") } : {}),
+				...(numberParam(url, "since") !== undefined ? { since: numberParam(url, "since") } : {}),
+				...(numberParam(url, "until") !== undefined ? { until: numberParam(url, "until") } : {}),
+				sortBy: enumParam(url, "sortBy", ["created_at", "action", "actor_username", "resource_type"] as const, "created_at")!,
+				sortDirection: sortDirection(url),
+			}),
+		);
+	});
+
+	app.post("/_burrowgate/api/admin/audit-log/purge", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as { olderThanDays?: unknown; all?: unknown };
+			const purged = await purgeAdminAuditLog(user, getClientIp(ctx) ?? "unknown", {
+				all: body.all === true,
+				...(body.all === true ? {} : { olderThanDays: Number(body.olderThanDays) }),
+			});
+			return jsonResponse({ purged });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to purge audit log" }, 400);
+		}
+	});
+
 	app.post("/_burrowgate/api/admin/logout", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		for (const token of adminSessionTokens(ctx.req)) {
 			await repository.deleteAdmin(await sha256Hex(token));
 		}

@@ -275,8 +275,57 @@ button:disabled {
 
 .tabs {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 8px;
 	margin: 18px 0;
+}
+body.modal-open {
+	overflow: hidden;
+}
+.modal-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding: 6vh 24px;
+	overflow: auto;
+	background: rgba(4, 7, 12, 0.72);
+}
+.modal {
+	width: 100%;
+	max-width: 760px;
+	background: #0b1220;
+	border: 1px solid #263247;
+	border-radius: 18px;
+	box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.modal-large {
+	max-width: 1320px;
+}
+.modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 18px;
+	padding: 20px 24px;
+	border-bottom: 1px solid #1c2434;
+}
+.modal-header h2 {
+	margin: 0;
+}
+.modal-close {
+	font-size: 20px;
+	line-height: 1;
+}
+.modal-body {
+	padding: 24px;
+	max-height: 78vh;
+	overflow: auto;
+}
+.modal-body > .card:last-child {
+	margin-bottom: 0;
 }
 .tab {
 	border: 1px solid transparent;
@@ -399,6 +448,13 @@ form.grid label {
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
+.truncate-cell {
+	max-width: 28ch;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	cursor: help;
+}
 .hide-protocol-column .protocol-column {
 	display: none;
 }
@@ -498,6 +554,30 @@ form.grid label {
 .align-end {
 	align-self: end;
 }
+.form-row {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) auto;
+	gap: 12px;
+	align-items: end;
+}
+.permissions-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+	gap: 10px;
+	margin: 12px 0 20px;
+}
+.permission-row {
+	display: grid;
+	grid-template-columns: 1fr 130px;
+	align-items: center;
+	gap: 8px;
+}
+.row-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	justify-content: flex-end;
+}
 
 .badge {
 	display: inline-flex;
@@ -533,6 +613,7 @@ form.grid label {
 	color: #bae6fd;
 }
 .button {
+	display: inline-block;
 	border: 0;
 	border-radius: 10px;
 	padding: 10px 14px;
@@ -540,6 +621,7 @@ form.grid label {
 	cursor: pointer;
 	background: #7c3aed;
 	color: white;
+	text-decoration: none;
 }
 .button:hover:not(:disabled) {
 	filter: brightness(1.1);
@@ -602,7 +684,7 @@ form.grid label {
 	position: fixed;
 	right: 24px;
 	bottom: 24px;
-	z-index: 30;
+	z-index: 50;
 	max-width: min(420px, calc(100vw - 48px));
 	padding: 13px 16px;
 	border-radius: 12px;
@@ -634,6 +716,47 @@ form.grid label {
 }
 .auth-error {
 	margin-bottom: 18px;
+}
+.totp-qr {
+	display: flex;
+	justify-content: center;
+	margin: 18px 0;
+}
+.totp-qr svg {
+	width: 220px;
+	height: 220px;
+	background: #fff;
+	padding: 12px;
+	border-radius: 12px;
+}
+.totp-secret code {
+	word-break: break-all;
+}
+.totp-recovery {
+	margin-top: 18px;
+}
+.totp-recovery-codes {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+	margin: 18px 0;
+	padding: 0;
+	list-style: none;
+}
+.totp-recovery-codes code {
+	display: block;
+	padding: 8px 10px;
+	background: #111827;
+	border-radius: 8px;
+	text-align: center;
+}
+.totp-url {
+	text-align: center;
+	margin-top: 12px;
+}
+.recovery-continue {
+	text-align: center;
+	margin-top: 22px;
 }
 .challenge-description {
 	margin: 28px 0 7px;
@@ -1489,8 +1612,18 @@ form.grid label {
 .rules-stream-card,
 .network-defaults-card,
 .rules-list-card,
-.country-rule-card {
+.country-rule-card,
+.user-create-card,
+.users-list-card,
+.user-permissions-card,
+.account-summary-card,
+.account-password-card,
+.account-recovery-card {
 	margin-bottom: 18px;
+}
+.account-password-card h2,
+.account-recovery-card h2 {
+	margin-bottom: 16px;
 }
 .pad-topless {
 	padding: 0 24px 24px;

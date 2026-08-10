@@ -17,6 +17,7 @@ import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./services
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
+import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { findAccessSession, userAgentHash } from "./services/session-service.ts";
 import { resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
@@ -54,6 +55,7 @@ import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
+await ensureBootstrapAdministrator();
 await initializeGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();

@@ -1,9 +1,31 @@
-import { page, tablerIcon } from "./layout.ts";
+import { escapeHtml, page, tablerIcon } from "./layout.ts";
 
 export function loginPage(error = ""): string {
 	return page(
 		"Admin login",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${error}</p>` : ""}<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form></section></main>`,
+	);
+}
+
+export function totpEnrollPage(uri: string, secret: string, qrSvgMarkup: string, error = ""): string {
+	return page(
+		"Two-factor setup",
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Set up two-factor authentication</h1><p class="muted">Scan this code with an authenticator app (Ente Auth, Aegis, Google Authenticator, ...), or enter the secret manually.</p>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<div class="totp-qr">${qrSvgMarkup}</div><p class="muted totp-secret">Secret: <code>${escapeHtml(secret)}</code></p><form method="post" action="/_burrowgate/admin/login/enroll" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify and continue</button></form><p class="muted totp-url"><a href="${escapeHtml(uri)}">Open in authenticator app</a></p></section></main>`,
+	);
+}
+
+export function totpVerifyPage(error = ""): string {
+	return page(
+		"Two-factor verification",
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Enter your verification code</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<form method="post" action="/_burrowgate/admin/login/totp" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify</button></form><details class="totp-recovery"><summary>Use a recovery code instead</summary><form method="post" action="/_burrowgate/admin/login/totp" class="grid"><label>Recovery code<input class="input" name="recoveryCode" autocomplete="off"></label><button class="button secondary" type="submit">Use recovery code</button></form></details></section></main>`,
+	);
+}
+
+export function totpRecoveryCodesPage(codes: string[]): string {
+	const items = codes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join("");
+	return page(
+		"Recovery codes",
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Save your recovery codes</h1><p class="muted">Each code can be used once if you lose access to your authenticator app. Store them somewhere safe. They will not be shown again.</p><ul class="totp-recovery-codes">${items}</ul><div class="recovery-continue"><a class="button" href="/_burrowgate/admin">Continue to dashboard</a></div></section></main>`,
 	);
 }
 
@@ -24,7 +46,7 @@ export function adminPage(): string {
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>
-    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div>
+    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="openUsers" class="button secondary icon-button hidden" type="button" aria-label="Users" title="Users">${tablerIcon("users")}</button><button id="openAudit" class="button secondary icon-button hidden" type="button" aria-label="Audit log" title="Audit log">${tablerIcon("history")}</button><button id="openAccount" class="button secondary icon-button" type="button" aria-label="Account" title="Account">${tablerIcon("user")}</button><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div>
   </div>
 </header>
 
@@ -577,6 +599,65 @@ export function adminPage(): string {
     </article>
   </div>
 </section>
+<div id="modal-users" class="modal-overlay hidden" data-modal="users">
+  <div class="modal modal-large">
+    <div class="modal-header"><h2>Users</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <article class="card user-create-card">
+        <div class="pad section-heading"><div><h2>Add a user</h2><p class="muted">New accounts must enroll two-factor authentication on first login.</p></div></div>
+        <div class="pad pad-topless"><form id="userForm" class="form-row"><label><span>Username</span><input class="input" name="username" autocomplete="off" required></label><label><span>Password</span><input class="input" type="password" name="password" autocomplete="new-password" required></label><label><span>Role</span><select class="select" name="role"><option value="member">Member</option><option value="administrator">Administrator</option></select></label><button class="button align-end" type="submit">Add user</button></form></div>
+      </article>
+      <article class="card users-list-card">
+        <div class="pad section-heading"><div><h2>Users</h2><p class="muted">Administrators have full access. Members need explicit Viewer or Manager permission per site and stream.</p></div><button id="refreshUsers" class="button secondary">Refresh</button></div>
+        <div class="table-wrap"><table class="table"><thead><tr><th>Username</th><th>Role</th><th>2FA</th><th>Enabled</th><th>Permissions</th><th></th></tr></thead><tbody id="users"><tr><td colspan="6" class="empty-cell">Open Users to load accounts.</td></tr></tbody></table></div>
+      </article>
+      <article id="userPermissionsCard" class="card user-permissions-card hidden">
+        <div class="pad section-heading"><div><h2 id="userPermissionsTitle">Permissions</h2><p class="muted">Grant Viewer for read-only access, or Manager to allow configuration changes. Administrator accounts always have full access.</p></div><button id="closeUserPermissions" class="button secondary" type="button">Close</button></div>
+        <div class="pad pad-topless">
+          <h3>Sites</h3>
+          <div id="userSitePermissions" class="permissions-grid"></div>
+          <h3>Streams</h3>
+          <div id="userStreamPermissions" class="permissions-grid"></div>
+          <div class="row align-end"><button id="saveUserPermissions" class="button" type="button">Save permissions</button></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</div>
+
+<div id="modal-audit" class="modal-overlay hidden" data-modal="audit">
+  <div class="modal modal-large">
+    <div class="modal-header"><h2>Audit log</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <article class="card">
+        <div class="pad section-heading"><div><p class="muted">Every admin change is recorded with the acting user, IP, and a summary. Entries can only be purged, never edited.</p></div><div class="row"><button id="purgeAuditLog" class="button danger" type="button">Purge</button><button id="refreshAuditLog" class="button secondary">Refresh</button></div></div>
+        <div class="toolbar compact-toolbar">
+          <label class="search-field"><span>Search</span><input id="auditSearch" class="input" placeholder="Actor, summary, action..."></label>
+          <label><span>Rows</span><select id="auditPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
+        </div>
+        <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Summary</th><th>IP</th></tr></thead><tbody id="auditLog"><tr><td colspan="6" class="empty-cell">Open the audit log to load entries.</td></tr></tbody></table></div>
+        ${pagination("auditLog")}
+      </article>
+    </div>
+  </div>
+</div>
+
+<div id="modal-account" class="modal-overlay hidden" data-modal="account">
+  <div class="modal">
+    <div class="modal-header"><h2>Account</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <article class="card account-summary-card">
+        <div class="pad section-heading"><div><h2>Your account</h2><p id="accountSummary" class="muted">-</p></div></div>
+      </article>
+      <article class="card account-password-card">
+        <div class="pad"><h2>Change password</h2><form id="passwordForm" class="form-row"><label><span>Current password</span><input class="input" type="password" name="currentPassword" autocomplete="current-password" required></label><label><span>New password</span><input class="input" type="password" name="newPassword" autocomplete="new-password" required></label><button class="button align-end" type="submit">Change password</button></form></div>
+      </article>
+      <article class="card account-recovery-card">
+        <div class="pad"><h2>Recovery codes</h2><p class="muted">Regenerating replaces all existing recovery codes and requires a current 6-digit code from your authenticator app.</p><form id="recoveryCodesForm" class="form-row"><label><span>6-digit code</span><input class="input" name="code" inputmode="numeric" maxlength="6" required></label><button class="button align-end" type="submit">Regenerate codes</button></form><ul id="newRecoveryCodes" class="totp-recovery-codes hidden"></ul></div>
+      </article>
+    </div>
+  </div>
+</div>
 <div id="toast" class="toast hidden" role="status"></div>
 </main><script src="/_burrowgate/static/chart.umd.js"></script><script type="module" src="/_burrowgate/static/admin.js"></script>`,
 	);

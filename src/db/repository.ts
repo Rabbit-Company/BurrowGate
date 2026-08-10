@@ -6,7 +6,13 @@ import type {
 	AccessSessionRecord,
 	AcmeAccountRecord,
 	AcmeHttpChallengeRecord,
+	AdminAccessLevel,
+	AdminAuditLogRecord,
+	AdminRecoveryCodeRecord,
 	AdminSessionRecord,
+	AdminUserRecord,
+	AdminUserSitePermissionRecord,
+	AdminUserStreamPermissionRecord,
 	CertificateEventRecord,
 	CertificateRecord,
 	ChallengeFlowRecord,
@@ -84,6 +90,20 @@ export interface RuleQuery {
 	action?: IpRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
+	sortDirection: SortDirection;
+}
+
+export interface AuditLogQuery {
+	page: number;
+	pageSize: number;
+	search?: string;
+	actorUserId?: string;
+	action?: string;
+	resourceType?: string;
+	resourceId?: string;
+	since?: number;
+	until?: number;
+	sortBy: "created_at" | "action" | "actor_username" | "resource_type";
 	sortDirection: SortDirection;
 }
 
@@ -309,6 +329,7 @@ export const repository = {
 			await transaction`DELETE FROM access_sessions WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_access_users WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_access_settings WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM admin_user_site_permissions WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM ip_rules WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM country_rules WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM request_events WHERE site_id=${siteId}`;
@@ -1825,6 +1846,7 @@ export const repository = {
 			await transaction`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_ip_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_country_rules WHERE stream_id=${id}`;
+			await transaction`DELETE FROM admin_user_stream_permissions WHERE stream_id=${id}`;
 			await transaction`DELETE FROM streams WHERE id=${id}`;
 		});
 	},
@@ -2062,12 +2084,144 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAdmin(session: AdminSessionRecord): Promise<void> {
-		await db`INSERT INTO admin_sessions (id,token_hash,username,created_at,expires_at,last_seen_at) VALUES (${session.id},${session.token_hash},${session.username},${session.created_at},${session.expires_at},${session.last_seen_at})`;
+		await db`INSERT INTO admin_sessions (id,token_hash,username,user_id,created_at,expires_at,last_seen_at) VALUES (${session.id},${session.token_hash},${session.username},${session.user_id},${session.created_at},${session.expires_at},${session.last_seen_at})`;
 	},
 	async touchAdmin(id: string, now: number): Promise<void> {
 		await db`UPDATE admin_sessions SET last_seen_at=${now} WHERE id=${id}`;
 	},
 	async deleteAdmin(hash: string): Promise<void> {
 		await db`DELETE FROM admin_sessions WHERE token_hash=${hash}`;
+	},
+	async revokeAdminSessionsForUser(userId: string): Promise<void> {
+		await db`DELETE FROM admin_sessions WHERE user_id=${userId}`;
+	},
+	async anyAdminUserExists(): Promise<boolean> {
+		const rows = (await db`SELECT id FROM admin_users LIMIT 1`) as Array<{ id: string }>;
+		return rows.length > 0;
+	},
+	async allAdminUsers(): Promise<AdminUserRecord[]> {
+		return (await db`SELECT * FROM admin_users ORDER BY username ASC`) as AdminUserRecord[];
+	},
+	async adminUserById(id: string): Promise<AdminUserRecord | null> {
+		const rows = (await db`SELECT * FROM admin_users WHERE id=${id} LIMIT 1`) as AdminUserRecord[];
+		return rows[0] ?? null;
+	},
+	async adminUserByUsername(username: string): Promise<AdminUserRecord | null> {
+		const rows = (await db`SELECT * FROM admin_users WHERE username=${username} LIMIT 1`) as AdminUserRecord[];
+		return rows[0] ?? null;
+	},
+	async countEnabledAdministrators(excludedUserId?: string): Promise<number> {
+		const rows = (await db`SELECT id FROM admin_users WHERE role='administrator' AND enabled=1`) as Array<{ id: string }>;
+		return rows.filter((row) => row.id !== excludedUserId).length;
+	},
+	async insertAdminUser(user: AdminUserRecord): Promise<void> {
+		await db`INSERT INTO admin_users (id,username,password_hash,role,totp_secret_encrypted,totp_enrolled_at,must_enroll_totp,enabled,created_at,updated_at,created_by_user_id)
+		VALUES (${user.id},${user.username},${user.password_hash},${user.role},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.must_enroll_totp},${user.enabled},${user.created_at},${user.updated_at},${user.created_by_user_id})`;
+	},
+	async updateAdminUser(user: AdminUserRecord): Promise<void> {
+		await db`UPDATE admin_users SET username=${user.username},password_hash=${user.password_hash},role=${user.role},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},must_enroll_totp=${user.must_enroll_totp},enabled=${user.enabled},updated_at=${user.updated_at} WHERE id=${user.id}`;
+	},
+	async deleteAdminUserCascade(userId: string): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId}`;
+			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId}`;
+			await transaction`DELETE FROM admin_recovery_codes WHERE user_id=${userId}`;
+			await transaction`DELETE FROM admin_sessions WHERE user_id=${userId}`;
+			await transaction`DELETE FROM admin_users WHERE id=${userId}`;
+		});
+	},
+	async replaceAdminRecoveryCodes(userId: string, codes: AdminRecoveryCodeRecord[]): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM admin_recovery_codes WHERE user_id=${userId}`;
+			for (const code of codes) {
+				await transaction`INSERT INTO admin_recovery_codes (id,user_id,code_hash,created_at,used_at) VALUES (${code.id},${code.user_id},${code.code_hash},${code.created_at},${code.used_at})`;
+			}
+		});
+	},
+	async unusedAdminRecoveryCodeCount(userId: string): Promise<number> {
+		const rows = (await db`SELECT id FROM admin_recovery_codes WHERE user_id=${userId} AND used_at IS NULL`) as Array<{ id: string }>;
+		return rows.length;
+	},
+	async consumeAdminRecoveryCodeByHash(userId: string, codeHash: string, now: number): Promise<boolean> {
+		const result = await db`UPDATE admin_recovery_codes SET used_at=${now} WHERE user_id=${userId} AND code_hash=${codeHash} AND used_at IS NULL`;
+		return deletedRowCount(result) > 0;
+	},
+	async adminSitePermission(userId: string, siteId: string): Promise<AdminUserSitePermissionRecord | null> {
+		const rows = (await db`SELECT * FROM admin_user_site_permissions WHERE user_id=${userId} AND site_id=${siteId} LIMIT 1`) as AdminUserSitePermissionRecord[];
+		return rows[0] ?? null;
+	},
+	async adminStreamPermission(userId: string, streamId: string): Promise<AdminUserStreamPermissionRecord | null> {
+		const rows =
+			(await db`SELECT * FROM admin_user_stream_permissions WHERE user_id=${userId} AND stream_id=${streamId} LIMIT 1`) as AdminUserStreamPermissionRecord[];
+		return rows[0] ?? null;
+	},
+	async adminSitePermissionsForUser(userId: string): Promise<AdminUserSitePermissionRecord[]> {
+		return (await db`SELECT * FROM admin_user_site_permissions WHERE user_id=${userId}`) as AdminUserSitePermissionRecord[];
+	},
+	async adminStreamPermissionsForUser(userId: string): Promise<AdminUserStreamPermissionRecord[]> {
+		return (await db`SELECT * FROM admin_user_stream_permissions WHERE user_id=${userId}`) as AdminUserStreamPermissionRecord[];
+	},
+	async replaceAdminSitePermissions(
+		userId: string,
+		permissions: Array<{ siteId: string; level: Exclude<AdminAccessLevel, "none"> }>,
+		now = Date.now(),
+	): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId}`;
+			for (const permission of permissions) {
+				await transaction`INSERT INTO admin_user_site_permissions (user_id,site_id,level,created_at,updated_at) VALUES (${userId},${permission.siteId},${permission.level},${now},${now})`;
+			}
+		});
+	},
+	async replaceAdminStreamPermissions(
+		userId: string,
+		permissions: Array<{ streamId: string; level: Exclude<AdminAccessLevel, "none"> }>,
+		now = Date.now(),
+	): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId}`;
+			for (const permission of permissions) {
+				await transaction`INSERT INTO admin_user_stream_permissions (user_id,stream_id,level,created_at,updated_at) VALUES (${userId},${permission.streamId},${permission.level},${now},${now})`;
+			}
+		});
+	},
+	async adminSitesForUser(userId: string): Promise<SiteRecord[]> {
+		return (await db`SELECT s.* FROM sites s JOIN admin_user_site_permissions permission ON permission.site_id=s.id WHERE permission.user_id=${userId} ORDER BY s.name ASC`) as SiteRecord[];
+	},
+	async adminStreamsForUser(userId: string): Promise<StreamRecord[]> {
+		return (await db`SELECT s.* FROM streams s JOIN admin_user_stream_permissions permission ON permission.stream_id=s.id WHERE permission.user_id=${userId} ORDER BY s.incoming_port ASC`) as StreamRecord[];
+	},
+	async insertAdminAuditEntry(entry: AdminAuditLogRecord): Promise<void> {
+		await db`INSERT INTO admin_audit_log (id,actor_user_id,actor_username,action,resource_type,resource_id,summary,detail_json,ip,created_at)
+		VALUES (${entry.id},${entry.actor_user_id},${entry.actor_username},${entry.action},${entry.resource_type},${entry.resource_id},${entry.summary},${entry.detail_json},${entry.ip},${entry.created_at})`;
+	},
+	async pagedAdminAuditLog(query: AuditLogQuery): Promise<PageResult<AdminAuditLogRecord>> {
+		const pattern = searchPattern(query.search);
+		const searchFilter = pattern ? db`AND (LOWER(actor_username) LIKE ${pattern} OR LOWER(summary) LIKE ${pattern} OR LOWER(action) LIKE ${pattern})` : db``;
+		const actorFilter = query.actorUserId ? db`AND actor_user_id=${query.actorUserId}` : db``;
+		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
+		const resourceTypeFilter = query.resourceType ? db`AND resource_type=${query.resourceType}` : db``;
+		const resourceIdFilter = query.resourceId ? db`AND resource_id=${query.resourceId}` : db``;
+		const sinceFilter = query.since !== undefined ? db`AND created_at >= ${query.since}` : db``;
+		const untilFilter = query.until !== undefined ? db`AND created_at <= ${query.until}` : db``;
+		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+      SELECT COUNT(*) AS count FROM admin_audit_log
+      WHERE 1=1 ${searchFilter} ${actorFilter} ${actionFilter} ${resourceTypeFilter} ${resourceIdFilter} ${sinceFilter} ${untilFilter}
+    `) as Array<{ count: number | string }>;
+		const items = (await db`
+      SELECT * FROM admin_audit_log
+      WHERE 1=1 ${searchFilter} ${actorFilter} ${actionFilter} ${resourceTypeFilter} ${resourceIdFilter} ${sinceFilter} ${untilFilter}
+      ORDER BY ${order}
+      LIMIT ${query.pageSize} OFFSET ${offset}
+    `) as AdminAuditLogRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async purgeAdminAuditLogOlderThan(cutoff: number): Promise<number> {
+		return deletedRowCount(await db`DELETE FROM admin_audit_log WHERE created_at < ${cutoff}`);
+	},
+	async purgeAllAdminAuditLog(): Promise<number> {
+		return deletedRowCount(await db`DELETE FROM admin_audit_log`);
 	},
 };

@@ -1,4 +1,5 @@
 import type { Web } from "@rabbit-company/web";
+import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { repository } from "../db/repository.ts";
 import { config } from "../config.ts";
 import { getAdminSession } from "../services/session-service.ts";
@@ -13,13 +14,24 @@ import { streamRuleSetCatalog } from "../services/stream-protection-service.ts";
 import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
+import {
+	isAdministrator,
+	requireAdministrator,
+	requireLevel,
+	resolveAdminUser,
+	streamAccessLevel,
+	type AuthenticatedAdmin,
+} from "../services/admin-permission-service.ts";
+import { recordAdminAudit } from "../services/admin-audit-service.ts";
 
 const METRIC_BUCKETS_MS = [
 	60_000, 300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 172_800_000, 345_600_000, 604_800_000,
 ] as const;
 
-async function guard(request: Request): Promise<Response | null> {
-	return (await getAdminSession(request)) ? null : jsonResponse({ error: "Unauthorized" }, 401);
+async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
+	const session = await getAdminSession(request);
+	const user = session ? await resolveAdminUser(session) : null;
+	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function mutationGuard(request: Request): Response | null {
@@ -56,15 +68,24 @@ function eventTypeParam(url: URL): StreamEventType | undefined {
 		: undefined;
 }
 
-async function firstStream(): Promise<StreamRecord | null> {
-	return (await repository.allStreams())[0] ?? null;
+async function streamsVisibleToUser(user: AuthenticatedAdmin): Promise<StreamRecord[]> {
+	return isAdministrator(user) ? repository.allStreams() : repository.adminStreamsForUser(user.id);
 }
 
-async function selectedStream(url: URL): Promise<{ stream: StreamRecord | null; error: Response | null }> {
+async function selectedStream(url: URL, user: AuthenticatedAdmin): Promise<{ stream: StreamRecord | null; error: Response | null }> {
 	const requestedId = stringParam(url, "streamId");
-	if (!requestedId) return { stream: await firstStream(), error: null };
+	if (!requestedId) return { stream: (await streamsVisibleToUser(user))[0] ?? null, error: null };
 	const stream = await repository.streamById(requestedId);
-	return stream ? { stream, error: null } : { stream: null, error: jsonResponse({ error: "Selected stream was not found" }, 404) };
+	if (!stream) return { stream: null, error: jsonResponse({ error: "Selected stream was not found" }, 404) };
+	if ((await streamAccessLevel(user, stream.id)) === "none") return { stream: null, error: jsonResponse({ error: "Forbidden" }, 403) };
+	return { stream, error: null };
+}
+
+const NO_ACCESS_STREAM_ID = "__no-accessible-stream__";
+
+function streamsScopeId(selection: { stream: StreamRecord | null }, user: AuthenticatedAdmin): string | undefined {
+	if (selection.stream) return selection.stream.id;
+	return isAdministrator(user) ? undefined : NO_ACCESS_STREAM_ID;
 }
 
 function parseStreamDefaultNetworkAction(value: unknown, fallback: StreamDefaultNetworkAction): StreamDefaultNetworkAction {
@@ -193,10 +214,11 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	);
 
 	app.get("/_burrowgate/api/admin/streams", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		return jsonResponse({
-			items: (await repository.allStreams()).map(streamView),
+			items: (await streamsVisibleToUser(user)).map(streamView),
 			certificates: (await repository.streamCertificateOptions()).map(certificateView),
 			statuses: streamProxyManager.statusesView(),
 			defaults: {
@@ -207,11 +229,24 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/streams", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
 		try {
 			const stream = await buildStream(await body(ctx.req));
 			await saveAndActivate(stream);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream.create",
+				resourceType: "stream",
+				resourceId: stream.id,
+				summary: `Created stream on port ${stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() }, 201);
 		} catch (error) {
 			return mutationError(error, "Unable to create stream");
@@ -219,14 +254,27 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/streams/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
 		const previous = await repository.streamById(ctx.params.id);
 		if (!previous) return jsonResponse({ error: "Stream not found" }, 404);
+		const denied = requireLevel(await streamAccessLevel(user, previous.id), "manage");
+		if (denied) return denied;
 		try {
 			const stream = await buildStream(await body(ctx.req), previous);
 			await saveAndActivate(stream, previous);
 			invalidateStreamRateLimiter(stream.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream.update",
+				resourceType: "stream",
+				resourceId: stream.id,
+				summary: `Updated stream on port ${stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() });
 		} catch (error) {
 			return mutationError(error, "Unable to update stream");
@@ -234,32 +282,58 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/streams/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
 		const stream = await repository.streamById(ctx.params.id);
 		if (!stream) return jsonResponse({ error: "Stream not found" }, 404);
 		await streamProxyManager.remove(stream.id);
 		await flushStreamMonitoring();
 		await repository.deleteStream(stream.id);
 		invalidateStreamRateLimiter(stream.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "stream.delete",
+			resourceType: "stream",
+			resourceId: stream.id,
+			summary: `Deleted stream on port ${stream.incoming_port}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true });
 	});
 
 	app.get("/_burrowgate/api/admin/streams/active", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		return jsonResponse({ items: streamProxyManager.activeConnections(), statuses: streamProxyManager.statusesView() });
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		if (isAdministrator(user)) {
+			return jsonResponse({ items: streamProxyManager.activeConnections(), statuses: streamProxyManager.statusesView() });
+		}
+		const visibleStreamIds = new Set((await streamsVisibleToUser(user)).map((stream) => stream.id));
+		return jsonResponse({
+			items: streamProxyManager.activeConnections().filter((connection) => visibleStreamIds.has(connection.streamId)),
+			statuses: streamProxyManager.statusesView(),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/streams/overview", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		await flushStreamMonitoring();
 		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
+		const visibleStreamIds = isAdministrator(user) ? null : new Set((await streamsVisibleToUser(user)).map((stream) => stream.id));
 		const selectedRange = range(url);
 		return jsonResponse({
-			...(await repository.streamOverview(stringParam(url, "streamId"), selectedRange.since, selectedRange.until)),
-			active: streamProxyManager.activeConnections(),
+			...(await repository.streamOverview(scopeStreamId, selectedRange.since, selectedRange.until)),
+			active: streamProxyManager.activeConnections().filter((connection) => !visibleStreamIds || visibleStreamIds.has(connection.streamId)),
 			geoip: geoIpStatus(),
 			rangeFrom: selectedRange.since,
 			rangeTo: selectedRange.until,
@@ -267,15 +341,19 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/streams/metrics", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		await flushStreamMonitoring();
 		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const durationMs = selectedRange.until - selectedRange.since;
 		const bucketMs = metricBucketSize(durationMs);
 		return jsonResponse({
-			...(await repository.streamMetrics(stringParam(url, "streamId"), selectedRange.since, selectedRange.until, bucketMs)),
+			...(await repository.streamMetrics(scopeStreamId, selectedRange.since, selectedRange.until, bucketMs)),
 			rangeFrom: selectedRange.since,
 			rangeTo: selectedRange.until,
 			rangeDurationMs: durationMs,
@@ -284,14 +362,18 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/streams/events", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		await flushStreamMonitoring();
 		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		return jsonResponse(
 			await repository.pagedStreamEvents({
-				streamId: stringParam(url, "streamId"),
+				streamId: scopeStreamId,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				search: stringParam(url, "search"),
@@ -306,13 +388,17 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/streams/bandwidth", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		await flushStreamMonitoring();
 		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
 		return jsonResponse(
 			await repository.pagedStreamBandwidth({
-				streamId: stringParam(url, "streamId"),
+				streamId: scopeStreamId,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				search: stringParam(url, "search"),
@@ -326,9 +412,10 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.get("/_burrowgate/api/admin/streams/network-policy", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		return jsonResponse({
@@ -340,11 +427,16 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/streams/network-policy", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const networkPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (networkPolicyDenied) return networkPolicyDenied;
 		try {
 			const body = (await ctx.req.json()) as { defaultIpAction?: StreamDefaultNetworkAction; defaultCountryAction?: StreamDefaultNetworkAction };
 			const defaultIpAction = parseStreamDefaultNetworkAction(body.defaultIpAction, selection.stream.default_ip_action ?? "inherit");
@@ -352,6 +444,14 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			await repository.updateStreamNetworkDefaults(selection.stream.id, defaultIpAction, defaultCountryAction, Date.now());
 			invalidateStreamNetworkPolicy(selection.stream.id);
 			await streamProxyManager.enforceNetworkPolicy({ ...selection.stream, default_ip_action: defaultIpAction, default_country_action: defaultCountryAction });
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_network_policy.update",
+				resourceType: "stream",
+				resourceId: selection.stream.id,
+				summary: `Updated default network policy for stream on port ${selection.stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse({ defaultIpAction, defaultCountryAction });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
@@ -359,11 +459,16 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/streams/country-rules", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const countryRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (countryRuleDenied) return countryRuleDenied;
 		const body = (await ctx.req.json()) as { countryCode?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.countryCode || !["allow", "block"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid country rule" }, 400);
@@ -375,6 +480,14 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		try {
 			const rule = await addStreamCountryRule(selection.stream.id, body.countryCode, body.action!, body.reason ?? "", expiresAt);
 			await streamProxyManager.enforceNetworkPolicy(selection.stream);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_country_rule.create",
+				resourceType: "stream_country_rule",
+				resourceId: rule.id,
+				summary: `Added country rule (${rule.action}) for ${rule.country_code} on stream port ${selection.stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(rule, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
@@ -382,21 +495,35 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/streams/country-rules/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const countryRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (countryRuleDenied) return countryRuleDenied;
 		await repository.deleteStreamCountryRuleForStream(ctx.params.id!, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "stream_country_rule.delete",
+			resourceType: "stream_country_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted a country rule on stream port ${selection.stream.incoming_port}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true });
 	});
 
 	app.get("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		const url = new URL(ctx.req.url);
-		const selection = await selectedStream(url);
+		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
 		return jsonResponse(
@@ -414,11 +541,16 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.post("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		const body = (await ctx.req.json()) as { networkCidr?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.networkCidr || !["allow", "block"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid rule" }, 400);
@@ -430,6 +562,14 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		try {
 			const rule = await addStreamIpRule(selection.stream.id, body.networkCidr, body.action!, body.reason ?? "", parsedExpiresAt);
 			await streamProxyManager.enforceNetworkPolicy(selection.stream);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_ip_rule.create",
+				resourceType: "stream_ip_rule",
+				resourceId: rule.id,
+				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on stream port ${selection.stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(rule, 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
@@ -437,56 +577,97 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 	});
 
 	app.delete("/_burrowgate/api/admin/streams/ip-rules/:id", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		await repository.deleteStreamRuleForStream(ctx.params.id!, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "stream_ip_rule.delete",
+			resourceType: "stream_ip_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted an IP rule on stream port ${selection.stream.incoming_port}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted: true });
 	});
 
 	app.post("/_burrowgate/api/admin/streams/ip-rules/bulk-delete", async (ctx) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (ipRuleDenied) return ipRuleDenied;
 		const body = (await ctx.req.json()) as { ids?: unknown };
 		const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
 		if (ids.length === 0 || ids.length > 200) return jsonResponse({ error: "Provide 1 to 200 rule IDs" }, 400);
 		const deleted = await repository.deleteStreamRulesForStream(ids, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "stream_ip_rule.bulk_delete",
+			resourceType: "stream",
+			resourceId: selection.stream.id,
+			summary: `Deleted ${deleted} IP rule(s) on stream port ${selection.stream.incoming_port}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
 		return jsonResponse({ deleted });
 	});
 
 	app.get("/_burrowgate/api/admin/streams/protection-catalog", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
 		return jsonResponse({ items: streamRuleSetCatalog() });
 	});
 
 	app.get("/_burrowgate/api/admin/streams/protection-policy", async (ctx) => {
-		const denied = await guard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		return jsonResponse(resolveStreamProtectionPolicy(selection.stream));
 	});
 
 	app.addRoute("PUT", "/_burrowgate/api/admin/streams/protection-policy", async (ctx: any) => {
-		const denied = (await guard(ctx.req)) ?? mutationGuard(ctx.req);
-		if (denied) return denied;
-		const selection = await selectedStream(new URL(ctx.req.url));
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const protectionPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (protectionPolicyDenied) return protectionPolicyDenied;
 		try {
 			const body = await ctx.req.json();
 			const protectionPolicyJson = serializeStreamProtectionPolicy(body, selection.stream.protection_policy_json);
 			await repository.updateStreamProtectionPolicy(selection.stream.id, protectionPolicyJson, Date.now());
 			streamProxyManager.refreshRecord({ ...selection.stream, protection_policy_json: protectionPolicyJson });
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_protection_policy.update",
+				resourceType: "stream",
+				resourceId: selection.stream.id,
+				summary: `Updated protection policy for stream on port ${selection.stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
 			return jsonResponse(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson }));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update protection policy" }, 400);

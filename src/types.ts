@@ -426,9 +426,64 @@ export interface AdminSessionRecord {
 	id: string;
 	token_hash: string;
 	username: string;
+	user_id: string | null;
 	created_at: number;
 	expires_at: number;
 	last_seen_at: number;
+}
+
+export type AdminRole = "administrator" | "member";
+export type AdminAccessLevel = "none" | "viewer" | "manager";
+
+export interface AdminUserRecord {
+	id: string;
+	username: string;
+	password_hash: string;
+	role: AdminRole;
+	totp_secret_encrypted: string | null;
+	totp_enrolled_at: number | null;
+	must_enroll_totp: number;
+	enabled: number;
+	created_at: number;
+	updated_at: number;
+	created_by_user_id: string | null;
+}
+
+export interface AdminRecoveryCodeRecord {
+	id: string;
+	user_id: string;
+	code_hash: string;
+	created_at: number;
+	used_at: number | null;
+}
+
+export interface AdminUserSitePermissionRecord {
+	user_id: string;
+	site_id: string;
+	level: Exclude<AdminAccessLevel, "none">;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface AdminUserStreamPermissionRecord {
+	user_id: string;
+	stream_id: string;
+	level: Exclude<AdminAccessLevel, "none">;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface AdminAuditLogRecord {
+	id: string;
+	actor_user_id: string | null;
+	actor_username: string;
+	action: string;
+	resource_type: string | null;
+	resource_id: string | null;
+	summary: string;
+	detail_json: string | null;
+	ip: string;
+	created_at: number;
 }
 
 export interface GatewayState {

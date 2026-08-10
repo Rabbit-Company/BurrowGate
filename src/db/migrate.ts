@@ -216,6 +216,54 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   expires_at BIGINT NOT NULL,
   last_seen_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_users (
+  id VARCHAR(64) PRIMARY KEY,
+  username VARCHAR(255) NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role VARCHAR(32) NOT NULL DEFAULT 'member',
+  totp_secret_encrypted TEXT NULL,
+  totp_enrolled_at BIGINT NULL,
+  must_enroll_totp INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  created_by_user_id VARCHAR(64) NULL
+);
+CREATE TABLE IF NOT EXISTS admin_recovery_codes (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  code_hash VARCHAR(64) NOT NULL,
+  created_at BIGINT NOT NULL,
+  used_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_user_site_permissions (
+  user_id VARCHAR(64) NOT NULL,
+  site_id VARCHAR(64) NOT NULL,
+  level VARCHAR(16) NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, site_id)
+);
+CREATE TABLE IF NOT EXISTS admin_user_stream_permissions (
+  user_id VARCHAR(64) NOT NULL,
+  stream_id VARCHAR(64) NOT NULL,
+  level VARCHAR(16) NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, stream_id)
+);
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id VARCHAR(64) PRIMARY KEY,
+  actor_user_id VARCHAR(64) NULL,
+  actor_username VARCHAR(255) NOT NULL,
+  action VARCHAR(64) NOT NULL,
+  resource_type VARCHAR(32) NULL,
+  resource_id VARCHAR(64) NULL,
+  summary TEXT NOT NULL,
+  detail_json TEXT NULL,
+  ip VARCHAR(128) NOT NULL,
+  created_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS site_tls_settings (
   site_id VARCHAR(64) PRIMARY KEY,
   mode VARCHAR(32) NOT NULL DEFAULT 'disabled',
@@ -472,6 +520,14 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_site_origins_site_priority ON site_origins (site_id, enabled, priority)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_site_state ON origin_backend_health_status (site_id, state)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_events_origin_created ON origin_backend_health_events (origin_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_users_enabled_username ON admin_users (enabled, username)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_recovery_codes_user ON admin_recovery_codes (user_id, used_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_user_site_permissions_site ON admin_user_site_permissions (site_id, user_id)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_user_stream_permissions_stream ON admin_user_stream_permissions (stream_id, user_id)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_audit_log_created ON admin_audit_log (created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_audit_log_actor_created ON admin_audit_log (actor_user_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_audit_log_resource ON admin_audit_log (resource_type, resource_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions (user_id, expires_at)",
 ];
 
 function isMySql(): boolean {
@@ -598,6 +654,14 @@ async function ensureAccessSessionColumns(): Promise<void> {
 	}
 }
 
+async function ensureAdminSessionColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE admin_sessions ADD COLUMN user_id VARCHAR(64) NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
+}
+
 async function ensureStreamEventColumns(): Promise<void> {
 	try {
 		await db.unsafe("ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL");
@@ -666,6 +730,7 @@ export async function migrate(): Promise<void> {
 	await ensureStreamColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessSessionColumns();
+	await ensureAdminSessionColumns();
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();
 	await ensurePrimaryOrigins();

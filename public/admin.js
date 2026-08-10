@@ -9,6 +9,7 @@ const tableState = {
 	bandwidth: { page: 1, pageSize: 50, sortBy: "client_total_bytes", sortDirection: "desc" },
 	sessions: { page: 1, pageSize: 50, sortBy: "last_seen_at", sortDirection: "desc" },
 	rules: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
+	auditLog: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
 
 const selectedRuleIds = new Set();
@@ -20,6 +21,9 @@ let latencyChart = null;
 let geoMapGeometry = null;
 let geoMetrics = null;
 let sites = [];
+let currentAdmin = null;
+let usersData = { items: [], sites: [], streams: [] };
+let editingPermissionsUserId = null;
 let challengeProviders = [];
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
@@ -2905,7 +2909,315 @@ function bindFilters() {
 	});
 }
 
+async function loadCurrentAdmin() {
+	currentAdmin = await api("/me", {}, false);
+	applyCurrentAdminVisibility();
+	return currentAdmin;
+}
+
+function applyCurrentAdminVisibility() {
+	const isAdministrator = currentAdmin?.role === "administrator";
+	byId("openUsers").classList.toggle("hidden", !isAdministrator);
+	byId("openAudit").classList.toggle("hidden", !isAdministrator);
+}
+
+function openModal(name) {
+	byId(`modal-${name}`).classList.remove("hidden");
+	document.body.classList.add("modal-open");
+	if (name === "users") void loadUsers();
+	if (name === "audit") void loadAuditLog();
+	if (name === "account") void loadAccount();
+}
+
+function closeModal(name) {
+	byId(`modal-${name}`).classList.add("hidden");
+	if (!document.querySelector(".modal-overlay:not(.hidden)")) document.body.classList.remove("modal-open");
+	if (name === "users") {
+		editingPermissionsUserId = null;
+		byId("userPermissionsCard").classList.add("hidden");
+	}
+}
+
+function closeAllModals() {
+	document.querySelectorAll(".modal-overlay:not(.hidden)").forEach((overlay) => closeModal(overlay.dataset.modal));
+}
+
+function userPermissionsSummary(user) {
+	if (user.role === "administrator") return "All sites and streams";
+	const parts = [];
+	if (user.sitePermissions.length) parts.push(`${user.sitePermissions.length} site${user.sitePermissions.length === 1 ? "" : "s"}`);
+	if (user.streamPermissions.length) parts.push(`${user.streamPermissions.length} stream${user.streamPermissions.length === 1 ? "" : "s"}`);
+	return parts.length ? parts.join(", ") : "None";
+}
+
+function renderUsers() {
+	const rows = usersData.items
+		.map(
+			(user) => `<tr>
+        <td>${escapeHtml(user.username)}</td>
+        <td><span class="badge ${user.role === "administrator" ? "info" : ""}">${user.role === "administrator" ? "Administrator" : "Member"}</span></td>
+        <td>${user.totpEnrolled ? '<span class="badge ok">Enrolled</span>' : '<span class="badge warn">Pending</span>'}</td>
+        <td>${user.enabled ? '<span class="badge ok">Enabled</span>' : '<span class="badge bad">Disabled</span>'}</td>
+        <td>${escapeHtml(userPermissionsSummary(user))}</td>
+        <td class="row-actions">
+          ${user.role === "administrator" ? "" : `<button class="button secondary compact" data-user-permissions="${escapeHtml(user.id)}" type="button">Permissions</button>`}
+          <button class="button secondary compact" data-user-reset-password="${escapeHtml(user.id)}" type="button">Reset password</button>
+          <button class="button secondary compact" data-user-reset-totp="${escapeHtml(user.id)}" type="button">Reset 2FA</button>
+          <button class="button danger compact" data-user-delete="${escapeHtml(user.id)}" type="button">Delete</button>
+        </td>
+      </tr>`,
+		)
+		.join("");
+	byId("users").innerHTML = rows || '<tr><td colspan="6" class="empty-cell">No users yet.</td></tr>';
+}
+
+async function loadUsers() {
+	setTableLoading("users", 6);
+	try {
+		usersData = await api("/users", {}, false);
+		renderUsers();
+	} catch (error) {
+		setTableError("users", 6, error);
+	}
+}
+
+async function createUser(event) {
+	event.preventDefault();
+	const form = event.currentTarget;
+	const payload = Object.fromEntries(new FormData(form));
+	try {
+		await api("/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }, false);
+		form.reset();
+		showToast("User created.");
+		await loadUsers();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+function permissionsGrid(id, resources, current, resourceKey) {
+	const currentByResource = new Map(current.map((entry) => [entry[resourceKey], entry.level]));
+	byId(id).innerHTML = resources.length
+		? resources
+				.map((resource) => {
+					const level = currentByResource.get(resource.id) ?? "none";
+					return `<label class="permission-row"><span>${escapeHtml(resource.label)}</span><select class="select" data-permission-resource="${escapeHtml(resource.id)}">
+          <option value="none" ${level === "none" ? "selected" : ""}>None</option>
+          <option value="viewer" ${level === "viewer" ? "selected" : ""}>Viewer</option>
+          <option value="manager" ${level === "manager" ? "selected" : ""}>Manager</option>
+        </select></label>`;
+				})
+				.join("")
+		: '<p class="muted">None configured yet.</p>';
+}
+
+function openUserPermissions(userId) {
+	const user = usersData.items.find((item) => item.id === userId);
+	if (!user) return;
+	editingPermissionsUserId = userId;
+	byId("userPermissionsTitle").textContent = `Permissions for ${user.username}`;
+	permissionsGrid(
+		"userSitePermissions",
+		usersData.sites.map((site) => ({ id: site.id, label: site.name })),
+		user.sitePermissions,
+		"siteId",
+	);
+	permissionsGrid(
+		"userStreamPermissions",
+		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.forwardHost}:${stream.forwardPort} (port ${stream.incomingPort})` })),
+		user.streamPermissions,
+		"streamId",
+	);
+	byId("userPermissionsCard").classList.remove("hidden");
+}
+
+async function saveUserPermissions() {
+	if (!editingPermissionsUserId) return;
+	const sitePermissions = [...document.querySelectorAll("#userSitePermissions [data-permission-resource]")]
+		.map((select) => ({ siteId: select.dataset.permissionResource, level: select.value }))
+		.filter((entry) => entry.level !== "none");
+	const streamPermissions = [...document.querySelectorAll("#userStreamPermissions [data-permission-resource]")]
+		.map((select) => ({ streamId: select.dataset.permissionResource, level: select.value }))
+		.filter((entry) => entry.level !== "none");
+	try {
+		await api(
+			`/users/${encodeURIComponent(editingPermissionsUserId)}`,
+			{ method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ sitePermissions, streamPermissions }) },
+			false,
+		);
+		showToast("Permissions updated.");
+		byId("userPermissionsCard").classList.add("hidden");
+		await loadUsers();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function loadAccount() {
+	const me = currentAdmin ?? (await loadCurrentAdmin());
+	byId("accountSummary").textContent =
+		`Signed in as ${me.username} (${me.role === "administrator" ? "Administrator" : "Member"}). Two-factor authentication: ${me.totpEnrolled ? "enrolled" : "not enrolled"}.`;
+}
+
+async function changePassword(event) {
+	event.preventDefault();
+	const form = event.currentTarget;
+	const payload = Object.fromEntries(new FormData(form));
+	try {
+		await api("/me/password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }, false);
+		showToast("Password changed. Please log in again.");
+		setTimeout(() => {
+			location.href = "/_burrowgate/admin/login";
+		}, 1_500);
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function regenerateRecoveryCodes(event) {
+	event.preventDefault();
+	const form = event.currentTarget;
+	const payload = Object.fromEntries(new FormData(form));
+	try {
+		const result = await api(
+			"/me/recovery-codes/regenerate",
+			{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) },
+			false,
+		);
+		form.reset();
+		const list = byId("newRecoveryCodes");
+		list.innerHTML = result.codes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join("");
+		list.classList.remove("hidden");
+		showToast("Recovery codes regenerated.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+function renderAuditLog(items) {
+	byId("auditLog").innerHTML = items.length
+		? items
+				.map((entry) => {
+					const resource = entry.resource_type ? (entry.resource_id ? `${entry.resource_type} (${entry.resource_id})` : entry.resource_type) : "";
+					return `<tr>
+        <td>${escapeHtml(formatDate(entry.created_at))}</td>
+        <td>${escapeHtml(entry.actor_username)}</td>
+        <td>${escapeHtml(entry.action)}</td>
+        <td class="truncate-cell" title="${escapeHtml(resource)}">${escapeHtml(resource)}</td>
+        <td class="truncate-cell" title="${escapeHtml(entry.summary)}">${escapeHtml(entry.summary)}</td>
+        <td>${escapeHtml(entry.ip)}</td>
+      </tr>`;
+				})
+				.join("")
+		: '<tr><td colspan="6" class="empty-cell">No audit log entries.</td></tr>';
+}
+
+async function loadAuditLog() {
+	setTableLoading("auditLog", 6);
+	try {
+		const state = tableState.auditLog;
+		const params = queryString({
+			page: state.page,
+			pageSize: state.pageSize,
+			search: byId("auditSearch").value,
+			sortBy: state.sortBy,
+			sortDirection: state.sortDirection,
+		});
+		const result = await api(`/audit-log?${params}`, {}, false);
+		renderAuditLog(result.items);
+		updatePagination("auditLog", result, loadAuditLog);
+	} catch (error) {
+		setTableError("auditLog", 6, error);
+	}
+}
+
+async function purgeAuditLog() {
+	const choice = prompt("Purge entries older than how many days? Enter 0 to purge all entries.", "90");
+	if (choice === null) return;
+	const days = Number(choice.trim());
+	if (!Number.isFinite(days) || days < 0) {
+		showToast("Enter a non-negative number of days.", "bad");
+		return;
+	}
+	let confirmMessage = "Purge the entire audit log? This cannot be undone.";
+	if (days > 0) {
+		try {
+			const cutoff = Date.now() - days * 86_400_000;
+			const preview = await api(`/audit-log?until=${cutoff}&pageSize=1`, {}, false);
+			confirmMessage =
+				preview.total > 0
+					? `This will purge ${preview.total} entr${preview.total === 1 ? "y" : "ies"} older than ${days} day(s). Continue?`
+					: `No entries are older than ${days} day(s) yet, so nothing will be purged. Continue anyway?`;
+		} catch {
+			confirmMessage = `Purge audit log entries older than ${days} day(s)?`;
+		}
+	}
+	if (!confirm(confirmMessage)) return;
+	try {
+		const payload = days === 0 ? { all: true } : { olderThanDays: days };
+		const result = await api("/audit-log/purge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }, false);
+		showToast(`Purged ${result.purged} entr${result.purged === 1 ? "y" : "ies"}.`);
+		tableState.auditLog.page = 1;
+		await loadAuditLog();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
 async function handleBodyClick(event) {
+	const userPermissionsButton = event.target.closest("button[data-user-permissions]");
+	if (userPermissionsButton) {
+		openUserPermissions(userPermissionsButton.dataset.userPermissions);
+		return;
+	}
+	const userResetPasswordButton = event.target.closest("button[data-user-reset-password]");
+	if (userResetPasswordButton) {
+		const password = prompt("New password for this user (minimum 8 characters):");
+		if (!password) return;
+		userResetPasswordButton.disabled = true;
+		try {
+			await api(
+				`/users/${encodeURIComponent(userResetPasswordButton.dataset.userResetPassword)}/reset-password`,
+				{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) },
+				false,
+			);
+			showToast("Password reset. The user has been signed out everywhere.");
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			userResetPasswordButton.disabled = false;
+		}
+		return;
+	}
+	const userResetTotpButton = event.target.closest("button[data-user-reset-totp]");
+	if (userResetTotpButton) {
+		if (!confirm("Reset two-factor authentication for this user? They will need to enroll again on next login.")) return;
+		userResetTotpButton.disabled = true;
+		try {
+			await api(`/users/${encodeURIComponent(userResetTotpButton.dataset.userResetTotp)}/totp/reset`, { method: "POST" }, false);
+			showToast("Two-factor authentication reset.");
+			await loadUsers();
+		} catch (error) {
+			userResetTotpButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+	const userDeleteButton = event.target.closest("button[data-user-delete]");
+	if (userDeleteButton) {
+		if (!confirm("Delete this user? This cannot be undone.")) return;
+		userDeleteButton.disabled = true;
+		try {
+			await api(`/users/${encodeURIComponent(userDeleteButton.dataset.userDelete)}`, { method: "DELETE" }, false);
+			showToast("User deleted.");
+			await loadUsers();
+		} catch (error) {
+			userDeleteButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
 	const bandwidthBlockButton = event.target.closest("button[data-bandwidth-block]");
 	if (bandwidthBlockButton) {
 		const ip = bandwidthBlockButton.dataset.bandwidthBlock;
@@ -3121,6 +3433,36 @@ async function handleBulkUnbanRules() {
 
 function bindActions() {
 	document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
+	byId("openUsers").addEventListener("click", () => openModal("users"));
+	byId("openAudit").addEventListener("click", () => openModal("audit"));
+	byId("openAccount").addEventListener("click", () => openModal("account"));
+	document.querySelectorAll(".modal-overlay").forEach((overlay) => {
+		overlay.addEventListener("click", (event) => {
+			if (event.target === overlay) closeModal(overlay.dataset.modal);
+		});
+		overlay.querySelector("[data-modal-close]").addEventListener("click", () => closeModal(overlay.dataset.modal));
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") closeAllModals();
+	});
+	byId("userForm").addEventListener("submit", createUser);
+	byId("refreshUsers").addEventListener("click", () => void loadUsers());
+	byId("closeUserPermissions").addEventListener("click", () => {
+		editingPermissionsUserId = null;
+		byId("userPermissionsCard").classList.add("hidden");
+	});
+	byId("saveUserPermissions").addEventListener("click", () => void saveUserPermissions());
+	byId("passwordForm").addEventListener("submit", changePassword);
+	byId("recoveryCodesForm").addEventListener("submit", regenerateRecoveryCodes);
+	byId("refreshAuditLog").addEventListener("click", () => void loadAuditLog());
+	byId("purgeAuditLog").addEventListener("click", () => void purgeAuditLog());
+	byId("auditSearch").addEventListener(
+		"input",
+		debounce(() => {
+			tableState.auditLog.page = 1;
+			void loadAuditLog();
+		}),
+	);
 	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setSiteEditorTab(tab.dataset.siteEditorTab)));
 	document.querySelectorAll("[data-route-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setRouteEditorTab(tab.dataset.routeEditorTab)));
 	byId("siteSelector").addEventListener("change", (event) => void chooseSite(event.currentTarget.value));
@@ -3429,6 +3771,7 @@ async function start() {
 	resetSiteForm();
 	resetRoutePolicyForm();
 	try {
+		await loadCurrentAdmin();
 		await loadSites();
 		await loadOverview();
 		await Promise.all([loadTraffic(), loadMetrics(), loadGeoMetrics()]);
