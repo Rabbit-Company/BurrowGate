@@ -108,6 +108,14 @@ export function adminPage(): string {
   </div>
 </section>
 
+<section class="card pad">
+  <div class="row between responsive">
+    <div><h2>Top referrers</h2><p id="refererSubtitle" class="muted">External referring domains for the selected range</p></div>
+    <strong id="refererTotal">0</strong>
+  </div>
+  <div id="refererList" class="geo-country-list"><p class="muted">No external referrers in this range.</p></div>
+</section>
+
 <nav class="tabs" aria-label="Dashboard sections">
   <button class="tab active" data-tab="traffic" type="button">Traffic</button>
   <button class="tab" data-tab="bandwidth" type="button">Bandwidth</button>
@@ -134,7 +142,7 @@ export function adminPage(): string {
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Cache", "cache_status")}</th><th>${sortButton("Protection", "protection_status")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="10" class="empty-cell">Loading...</td></tr></tbody></table></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th>${sortButton("Country", "country_code")}</th><th>${sortButton("Method", "method")}</th><th>${sortButton("Path", "path")}</th><th>Referrer</th><th id="eventOriginColumnHeader" class="hidden">Origin</th><th>${sortButton("Status", "status")}</th><th>${sortButton("Decision", "decision")}</th><th>${sortButton("Cache", "cache_status")}</th><th>${sortButton("Protection", "protection_status")}</th><th>${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="11" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>

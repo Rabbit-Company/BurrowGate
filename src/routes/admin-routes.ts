@@ -1194,6 +1194,24 @@ export function registerAdminRoutes(app: Web<any>): void {
 		});
 	});
 
+	app.get("/_burrowgate/api/admin/referer-metrics", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const range = requestedDateRange(url);
+		const referrers = await repository.refererMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			referrers,
+		});
+	});
+
 	app.get("/_burrowgate/api/admin/overview", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;

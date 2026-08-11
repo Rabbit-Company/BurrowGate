@@ -1,12 +1,29 @@
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
+import { normalizeHost } from "../utils/http.ts";
 import { randomId } from "../utils/crypto.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
-import type { HttpCacheStatus } from "../types.ts";
+import type { HttpCacheStatus, SiteRecord } from "../types.ts";
 import type { ManagedProtectionMatch, ManagedProtectionSeverity, ManagedProtectionStatus } from "./managed-protection-service.ts";
 
 const blockedSiteIds = new Set<string>();
+
+const REFERER_MAX_LENGTH = 2048;
+const SAME_SITE_REFERER = "(same site)";
+
+export function refererFields(request: Request, site: SiteRecord): { referer: string | null; refererHost: string | null } {
+	const header = request.headers.get("referer");
+	if (!header) return { referer: null, refererHost: null };
+	const referer = header.length > REFERER_MAX_LENGTH ? header.slice(0, REFERER_MAX_LENGTH) : header;
+	let host: string | null;
+	try {
+		host = normalizeHost(new URL(header).hostname);
+	} catch {
+		host = null;
+	}
+	return { referer, refererHost: host ? (host === site.public_host ? SAME_SITE_REFERER : host) : null };
+}
 
 export function blockSiteEvents(siteId: string): void {
 	blockedSiteIds.add(siteId);
@@ -37,6 +54,8 @@ export async function recordEvent(input: {
 	protectionMatches?: ManagedProtectionMatch[] | null;
 	requestId?: string | null;
 	accessUsername?: string | null;
+	referer?: string | null;
+	refererHost?: string | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
@@ -63,6 +82,8 @@ export async function recordEvent(input: {
 			protection_ruleset_version: input.protectionRulesetVersion ?? null,
 			protection_matches_json: input.protectionMatches?.length ? JSON.stringify(input.protectionMatches) : null,
 			access_username: input.accessUsername ?? null,
+			referer: input.referer ?? null,
+			referer_host: input.refererHost ?? null,
 			created_at: Date.now(),
 		});
 	} catch (error) {

@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS request_events (
 	protection_ruleset_version VARCHAR(64) NULL,
 	protection_matches_json TEXT NULL,
 	access_username VARCHAR(255) NULL,
+	referer TEXT NULL,
+	referer_host VARCHAR(255) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -501,6 +503,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_cache_created ON request_events (site_id, cache_status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_created ON request_events (site_id, protection_status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_rule_created ON request_events (site_id, protection_rule_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_referer_host_created ON request_events (site_id, referer_host, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -773,6 +776,8 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN protection_ruleset_version VARCHAR(64) NULL",
 		"ALTER TABLE request_events ADD COLUMN protection_matches_json TEXT NULL",
 		"ALTER TABLE request_events ADD COLUMN access_username VARCHAR(255) NULL",
+		"ALTER TABLE request_events ADD COLUMN referer TEXT NULL",
+		"ALTER TABLE request_events ADD COLUMN referer_host VARCHAR(255) NULL",
 	]) {
 		try {
 			await db.unsafe(statement);

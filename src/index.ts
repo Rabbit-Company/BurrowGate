@@ -11,7 +11,7 @@ import { registerAcmeRoutes } from "./routes/acme-routes.ts";
 import { registerChallengeRoutes } from "./routes/challenge-routes.ts";
 import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
-import { recordEvent } from "./services/event-service.ts";
+import { recordEvent, refererFields } from "./services/event-service.ts";
 import { resolveRequestId, siteErrorResponse } from "./services/error-response-service.ts";
 import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./services/ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
@@ -148,12 +148,15 @@ async function gateway(ctx: any): Promise<Response> {
 	const ip = getClientIp(ctx) ?? "unknown";
 	const url = new URL(request.url);
 	const requestId = resolveRequestId(request);
+	const { referer, refererHost } = refererFields(request, site);
 	const eventBase: {
 		siteId: string;
 		ip: string;
 		method: string;
 		path: string;
 		requestId: string;
+		referer: string | null;
+		refererHost: string | null;
 		countryCode?: string | null;
 		protectionStatus?: ManagedProtectionStatus | null;
 		protectionRuleId?: string | null;
@@ -168,6 +171,8 @@ async function gateway(ctx: any): Promise<Response> {
 		method: request.method,
 		path: url.pathname + url.search,
 		requestId,
+		referer,
+		refererHost,
 	};
 
 	if (!requestIsSecure(request) && config.https.enabled) {

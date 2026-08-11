@@ -20,6 +20,7 @@ let trafficChart = null;
 let latencyChart = null;
 let geoMapGeometry = null;
 let geoMetrics = null;
+let refererMetrics = null;
 let sites = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
@@ -583,6 +584,12 @@ function countryBadge(codeInput) {
 	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
 }
 
+function refererLabel(host) {
+	if (!host) return '<span class="muted">Direct</span>';
+	if (host === "(same site)") return '<span class="muted">Same site</span>';
+	return escapeHtml(host);
+}
+
 function setTrafficOriginVisibility(origins = []) {
 	trafficHasMultipleOrigins = origins.length > 1;
 	byId("eventOriginFilter").classList.toggle("hidden", !trafficHasMultipleOrigins);
@@ -591,7 +598,7 @@ function setTrafficOriginVisibility(origins = []) {
 }
 
 function trafficColumnCount() {
-	return trafficHasMultipleOrigins ? 11 : 10;
+	return trafficHasMultipleOrigins ? 12 : 11;
 }
 
 async function loadTraffic() {
@@ -645,6 +652,7 @@ async function loadTraffic() {
           <td>${countryBadge(event.country_code)}</td>
           <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
           <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
+          <td title="${escapeHtml(event.referer || "No referrer")}">${refererLabel(event.referer_host)}</td>
           ${trafficHasMultipleOrigins ? `<td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>` : ""}
           <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
           <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
@@ -1494,7 +1502,7 @@ function resetSiteScopedPages() {
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
 	for (const name of ["bandwidth", "cache", "sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadTraffic()];
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics(), loadTraffic()];
 	if (activeTab === "cache") {
 		loadedTabs.add("cache");
 		tasks.push(loadCacheMetrics());
@@ -2877,6 +2885,29 @@ async function loadGeoMetrics() {
 	renderGeoMap();
 }
 
+async function loadRefererMetrics() {
+	refererMetrics = await api(`/referer-metrics?${queryString(rangeQuery())}`);
+	renderRefererList();
+}
+
+function renderRefererList() {
+	if (!refererMetrics) return;
+	const items = refererMetrics.referrers ?? [];
+	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
+	const rangeLabel = rangeDurationLabel(refererMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
+	byId("refererSubtitle").textContent = `External referring domains for the selected range (${rangeLabel})`;
+	byId("refererTotal").textContent = `${formatNumber(total)} requests`;
+	byId("refererList").innerHTML =
+		items.length === 0
+			? '<p class="muted">No external referrers in this range.</p>'
+			: items
+					.map((item) => {
+						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
+						return `<div class="geo-country-row"><div class="row between"><span>${escapeHtml(item.refererHost)}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+					})
+					.join("");
+}
+
 async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated") {
 	dateRangeIsAutomatic = false;
 	setDateRangeInputs(from, to);
@@ -2884,7 +2915,7 @@ async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated")
 	tableState.traffic.page = 1;
 	tableState.bandwidth.page = 1;
 	tableState.sessions.page = 1;
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()];
 	if (loadedTabs.has("traffic")) tasks.push(loadTraffic());
 	if (loadedTabs.has("bandwidth")) tasks.push(loadBandwidth());
 	if (loadedTabs.has("sessions")) tasks.push(loadSessions());
@@ -2906,7 +2937,7 @@ async function runWithButton(button, task) {
 }
 
 async function refreshDashboard() {
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics()];
+	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
 	if (activeTab === "bandwidth") tasks.push(loadBandwidth());
 	if (activeTab === "cache") tasks.push(loadCacheMetrics());
@@ -3841,7 +3872,7 @@ function bindActions() {
 		"click",
 		(event) =>
 			void runWithButton(event.currentTarget, async () => {
-				await Promise.all([loadBandwidth(), loadMetrics(), loadGeoMetrics()]);
+				await Promise.all([loadBandwidth(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()]);
 				markUpdated("Bandwidth updated");
 			}),
 	);
@@ -3968,7 +3999,7 @@ async function start() {
 		await loadCurrentAdmin();
 		await loadSites();
 		await loadOverview();
-		await Promise.all([loadTraffic(), loadMetrics(), loadGeoMetrics()]);
+		await Promise.all([loadTraffic(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()]);
 		markUpdated("Loaded");
 	} catch (error) {
 		showToast(error.message, "bad");

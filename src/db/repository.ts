@@ -780,7 +780,7 @@ export const repository = {
 		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.created_at})`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -812,7 +812,7 @@ export const repository = {
 		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
 		const searchFilter = pattern
-			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(access_username,'')) LIKE ${pattern} OR session_id=${exactSearch})`
+			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(access_username,'')) LIKE ${pattern} OR LOWER(COALESCE(referer_host,'')) LIKE ${pattern} OR session_id=${exactSearch})`
 			: db``;
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
 		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;
@@ -1606,6 +1606,19 @@ export const repository = {
 			sessions: sessionRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
 			bandwidth: bandwidthRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
 		};
+	},
+	async refererMetrics(siteId: string | undefined, since: number, until: number): Promise<Array<{ refererHost: string; count: number }>> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const rows = (await db`
+      SELECT referer_host, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+        AND referer_host IS NOT NULL AND referer_host != '(same site)'
+      GROUP BY referer_host
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ referer_host: string; count: number | string }>;
+		return rows.map((row) => ({ refererHost: row.referer_host, count: toNumber(row.count) }));
 	},
 	async eventsMissingCountry(limit: number): Promise<Array<{ id: string; ip: string }>> {
 		if (limit <= 0) return [];
