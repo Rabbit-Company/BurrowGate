@@ -355,24 +355,24 @@ async function userViewById(userId: string): Promise<AccessUserView> {
 	return userView({ ...user, site_count: (await repository.accessSiteIdsForUser(userId)).length });
 }
 
-export async function setAccessUserTotpRequired(userId: string, required: boolean): Promise<AccessUserView> {
-	const existing = await repository.accessUserById(userId);
+export async function setAccessUserTotpRequired(siteId: string, userId: string, required: boolean): Promise<AccessUserView> {
+	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, totp_required: required ? 1 : 0, updated_at: Date.now() });
 	await repository.revokeSessionsForAccessUser(userId, Date.now());
 	return userViewById(userId);
 }
 
-export async function resetAccessUserTotp(userId: string): Promise<AccessUserView> {
-	const existing = await repository.accessUserById(userId);
+export async function resetAccessUserTotp(siteId: string, userId: string): Promise<AccessUserView> {
+	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, totp_secret_encrypted: null, totp_enrolled_at: null, updated_at: Date.now() });
 	await repository.revokeSessionsForAccessUser(userId, Date.now());
 	return userViewById(userId);
 }
 
-export async function generateAccessUserApiToken(userId: string): Promise<{ view: AccessUserView; token: string }> {
-	const existing = await repository.accessUserById(userId);
+export async function generateAccessUserApiToken(siteId: string, userId: string): Promise<{ view: AccessUserView; token: string }> {
+	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	const token = randomToken(32);
 	await repository.updateAccessUser({
@@ -384,8 +384,8 @@ export async function generateAccessUserApiToken(userId: string): Promise<{ view
 	return { view: await userViewById(userId), token };
 }
 
-export async function revokeAccessUserApiToken(userId: string): Promise<AccessUserView> {
-	const existing = await repository.accessUserById(userId);
+export async function revokeAccessUserApiToken(siteId: string, userId: string): Promise<AccessUserView> {
+	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, api_token_hash: null, api_token_created_at: null, updated_at: Date.now() });
 	return userViewById(userId);

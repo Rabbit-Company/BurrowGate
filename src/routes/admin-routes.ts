@@ -1052,7 +1052,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (accessUserDenied) return accessUserDenied;
 		try {
 			const body = (await ctx.req.json()) as { required?: unknown };
-			const updated = await setAccessUserTotpRequired(ctx.params.id, body.required === true);
+			const updated = await setAccessUserTotpRequired(selection.site.id, ctx.params.id, body.required === true);
 			await recordAdminAudit({
 				actor: user,
 				action: "access_user.totp_required.update",
@@ -1080,7 +1080,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
 		try {
-			const updated = await resetAccessUserTotp(ctx.params.id);
+			const updated = await resetAccessUserTotp(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
 				actor: user,
 				action: "access_user.totp.reset",
@@ -1108,7 +1108,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
 		try {
-			const { view, token } = await generateAccessUserApiToken(ctx.params.id);
+			const { view, token } = await generateAccessUserApiToken(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
 				actor: user,
 				action: "access_user.api_token.generate",
@@ -1136,7 +1136,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
 		try {
-			const updated = await revokeAccessUserApiToken(ctx.params.id);
+			const updated = await revokeAccessUserApiToken(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
 				actor: user,
 				action: "access_user.api_token.revoke",
@@ -1161,6 +1161,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(new URL(ctx.req.url), user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (accessUserDenied) return accessUserDenied;
 		try {
 			const body = (await ctx.req.json()) as { userIds?: unknown };
 			const imported = await importAccessUsers(selection.site.id, body?.userIds);
