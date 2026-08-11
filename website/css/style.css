@@ -1169,3 +1169,50 @@ table.config-table td.default code {
 		padding: 36px 24px;
 	}
 }
+
+.link-accent {
+	color: var(--accent);
+	text-decoration: none;
+}
+.text-sm {
+	font-size: 13.5px;
+}
+.mt-24 {
+	margin: 24px 0 0;
+}
+.mt-36 {
+	margin-top: 36px;
+}
+.mb-32 {
+	margin-bottom: 32px;
+}
+.gap-16 {
+	gap: 16px;
+}
+.tech-strip-label {
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-bottom: 20px;
+}
+.quickstart-grid {
+	align-items: center;
+	gap: 56px;
+}
+.quickstart-title {
+	font-size: clamp(26px, 3.2vw, 34px);
+	letter-spacing: -0.02em;
+	margin-bottom: 16px;
+}
+.quick-install-head {
+	margin-bottom: 20px;
+	gap: 16px;
+}
+.quick-install-title {
+	font-size: 20px;
+	margin-bottom: 6px;
+}
+.quick-install-sub {
+	margin: 0;
+	font-size: 14.5px;
+}

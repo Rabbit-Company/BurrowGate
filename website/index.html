@@ -84,7 +84,7 @@
 			<section class="hero">
 				<div class="shell hero-grid">
 					<div class="hero-copy">
-						<div class="eyebrow" style="justify-content: center">Open source &middot; self-hosted &middot; Bun-native</div>
+						<div class="eyebrow center">Open source &middot; self-hosted &middot; Bun-native</div>
 						<h1>Put a gate between the internet and your <span class="grad">origin servers</span>.</h1>
 						<p class="lead">
 							BurrowGate is a self-hosted reverse proxy and access gateway. It blocks bots and scrapers, enforces route-level access policy, terminates TLS, and
@@ -147,9 +147,7 @@
 			<!-- Tech strip -->
 			<section class="section-tight">
 				<div class="shell">
-					<p class="muted center" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 20px">
-						Runs on infrastructure you already trust
-					</p>
+					<p class="muted center tech-strip-label">Runs on infrastructure you already trust</p>
 					<div class="tech-strip">
 						<span class="tech-pill"
 							><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -196,7 +194,7 @@
 			<section class="section section-border-top">
 				<div class="shell">
 					<div class="section-head center">
-						<div class="eyebrow" style="justify-content: center">Why self-host it</div>
+						<div class="eyebrow center">Why self-host it</div>
 						<h2>One gateway, full control</h2>
 						<p>No per-request pricing, no third-party seeing your traffic, no black-box rules. BurrowGate runs on your own VPS and answers only to you.</p>
 					</div>
@@ -250,7 +248,7 @@
 			<section class="section section-border-top">
 				<div class="shell">
 					<div class="section-head center">
-						<div class="eyebrow" style="justify-content: center">Capabilities</div>
+						<div class="eyebrow center">Capabilities</div>
 						<h2>Everything a production edge needs</h2>
 						<p>From TLS termination to WAF rules to TCP/UDP streams - BurrowGate covers the full path between the internet and your origin.</p>
 					</div>
@@ -321,7 +319,7 @@
 							<p>Traffic, bandwidth, and session analytics with an interactive country map and OpenMetrics export.</p>
 						</div>
 					</div>
-					<div class="row center" style="margin-top: 36px">
+					<div class="row center mt-36">
 						<a class="button secondary" href="/features.html">
 							See the full feature list
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -336,7 +334,7 @@
 			<section class="section section-border-top">
 				<div class="shell">
 					<div class="section-head center">
-						<div class="eyebrow" style="justify-content: center">See it in action</div>
+						<div class="eyebrow center">See it in action</div>
 						<h2>A dashboard for every layer of the edge</h2>
 						<p>Traffic, sessions, network rules, streams, and bandwidth - all in one control panel.</p>
 					</div>
@@ -496,7 +494,7 @@
 							</div>
 						</button>
 					</div>
-					<div class="row center" style="margin-top: 36px">
+					<div class="row center mt-36">
 						<a class="button secondary" href="/screenshots.html">
 							View the full gallery
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -510,11 +508,11 @@
 			<!-- Quickstart -->
 			<section class="section section-border-top" id="quickstart">
 				<div class="shell">
-					<div class="grid grid-2" style="align-items: center; gap: 56px">
+					<div class="grid grid-2 quickstart-grid">
 						<div>
 							<div class="eyebrow">Get started</div>
-							<h2 style="font-size: clamp(26px, 3.2vw, 34px); letter-spacing: -0.02em; margin-bottom: 16px">Deploy in minutes</h2>
-							<p class="muted" style="margin-bottom: 32px">
+							<h2 class="quickstart-title">Deploy in minutes</h2>
+							<p class="muted mb-32">
 								A Linux VPS, Docker, and a domain pointed at it is all you need. BurrowGate generates a dashboard password, encryption key, and temporary
 								certificate on first boot.
 							</p>
@@ -542,7 +540,7 @@
 								</div>
 							</div>
 						</div>
-						<div class="grid" style="gap: 16px">
+						<div class="grid gap-16">
 							<div class="code-block">
 								<div class="code-block-head">
 									<span>terminal</span>
@@ -598,9 +596,9 @@ docker compose exec burrowgate cat /app/data/bootstrap-admin-password.txt</code>
 								</div>
 								<pre><code><span class="tok-k">https</span>://<span class="tok-s">SERVER_IP</span>/_burrowgate/admin</code></pre>
 							</div>
-							<p class="muted" style="font-size: 13.5px">
+							<p class="muted text-sm">
 								Full install steps, environment variables, and the config reference live in
-								<a href="/docs.html" style="color: var(--accent); text-decoration: none">the docs</a>.
+								<a href="/docs.html" class="link-accent">the docs</a>.
 							</p>
 						</div>
 					</div>
@@ -611,7 +609,7 @@ docker compose exec burrowgate cat /app/data/bootstrap-admin-password.txt</code>
 			<section class="section section-border-top">
 				<div class="shell">
 					<div class="cta-band">
-						<div class="eyebrow" style="justify-content: center">Community</div>
+						<div class="eyebrow center">Community</div>
 						<h2>Built in the open, improved by its users</h2>
 						<p>BurrowGate is GPLv3-licensed and developed on GitHub. Report issues, request features, or just come talk shop on Discord.</p>
 						<div class="row center wrap">
