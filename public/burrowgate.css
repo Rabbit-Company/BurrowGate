@@ -741,6 +741,21 @@ form.grid label {
 .totp-recovery {
 	margin-top: 18px;
 }
+.auth-divider {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 18px 0;
+	color: var(--muted, #9ca3af);
+	font-size: 0.85rem;
+}
+.auth-divider::before,
+.auth-divider::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: rgba(148, 163, 184, 0.25);
+}
 .totp-recovery-codes {
 	display: grid;
 	grid-template-columns: 1fr 1fr;

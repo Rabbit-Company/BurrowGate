@@ -233,6 +233,8 @@ export interface AccessSessionRecord {
 	origin_id?: string | null;
 }
 
+export type AuthSource = "password" | "sso";
+
 export interface AccessUserRecord {
 	id: string;
 	username: string;
@@ -245,6 +247,21 @@ export interface AccessUserRecord {
 	totp_enrolled_at: number | null;
 	api_token_hash: string | null;
 	api_token_created_at: number | null;
+	sso_subject: string | null;
+	auth_source: AuthSource;
+}
+
+export interface SiteSsoSettingsRecord {
+	site_id: string;
+	enabled: number;
+	enforce_sso: number;
+	issuer_url: string | null;
+	client_id: string | null;
+	client_secret_encrypted: string | null;
+	scopes: string;
+	button_label: string;
+	created_at: number;
+	updated_at: number;
 }
 
 export interface SiteAccessSettingsRecord {
@@ -453,6 +470,21 @@ export interface AdminUserRecord {
 	created_at: number;
 	updated_at: number;
 	created_by_user_id: string | null;
+	sso_subject: string | null;
+	auth_source: AuthSource;
+}
+
+export interface AdminSsoSettingsRecord {
+	id: string;
+	enabled: number;
+	enforce_sso: number;
+	issuer_url: string | null;
+	client_id: string | null;
+	client_secret_encrypted: string | null;
+	scopes: string;
+	button_label: string;
+	created_at: number;
+	updated_at: number;
 }
 
 export interface AdminRecoveryCodeRecord {

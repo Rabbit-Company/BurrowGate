@@ -80,6 +80,10 @@ identity-cookie-v1\n
 
 The origin can obtain the session ID from `X-BurrowGate-Session-Id`. Frontend JavaScript cannot independently verify an HMAC because it does not have the origin signing secret, so it should treat the username as display data rather than an authorization decision. Server-side code must verify the signature before trusting the cookie.
 
+## Single sign-on
+
+Each site's access list can optionally accept sign-ins from an external OpenID Connect provider instead of, or alongside, local passwords. See [SSO.md](SSO.md) for setup and behavior details, including how it interacts with dashboard single sign-on.
+
 ## Transport security
 
 Always use HTTPS for sites with access authentication. The login session cookie is HTTP-only and follows the site's configured session lifetime. Rotating a password or revoking the session invalidates access before that lifetime ends.

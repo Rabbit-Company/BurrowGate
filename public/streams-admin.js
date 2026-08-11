@@ -547,6 +547,7 @@ function applyCurrentAdminVisibility() {
 	byId("newStream").classList.toggle("hidden", !isAdministrator);
 	byId("openUsers").classList.toggle("hidden", !isAdministrator);
 	byId("openAudit").classList.toggle("hidden", !isAdministrator);
+	byId("openSso").classList.toggle("hidden", !isAdministrator);
 }
 
 function openModal(name) {
@@ -555,6 +556,51 @@ function openModal(name) {
 	if (name === "users") void loadUsers();
 	if (name === "audit") void loadAuditLog();
 	if (name === "account") void loadAccount();
+	if (name === "sso") void loadAdminSso();
+}
+
+async function loadAdminSso() {
+	try {
+		const settings = await api("/sso");
+		byId("adminSsoEnabled").checked = Boolean(settings.enabled);
+		byId("adminSsoEnforce").checked = Boolean(settings.enforceSso);
+		byId("adminSsoIssuer").value = settings.issuerUrl ?? "";
+		byId("adminSsoClientId").value = settings.clientId ?? "";
+		byId("adminSsoClientSecret").value = "";
+		byId("adminSsoScopes").value = settings.scopes || "openid email profile";
+		byId("adminSsoButtonLabel").value = settings.buttonLabel || "Single sign-on";
+		byId("adminSsoSecretStatus").textContent = settings.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
+		byId("adminSsoRedirectUri").textContent = `${location.origin}/_burrowgate/admin/sso/callback`;
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function saveAdminSso() {
+	const button = byId("saveAdminSso");
+	button.disabled = true;
+	try {
+		const secret = byId("adminSsoClientSecret").value;
+		await api("/sso", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				enabled: byId("adminSsoEnabled").checked,
+				enforceSso: byId("adminSsoEnforce").checked,
+				issuerUrl: byId("adminSsoIssuer").value,
+				clientId: byId("adminSsoClientId").value,
+				...(secret ? { clientSecret: secret } : {}),
+				scopes: byId("adminSsoScopes").value,
+				buttonLabel: byId("adminSsoButtonLabel").value,
+			}),
+		});
+		await loadAdminSso();
+		showToast("Single sign-on settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
 }
 
 function closeModal(name) {
@@ -1734,6 +1780,8 @@ byId("logout").addEventListener("click", async () => {
 byId("openUsers").addEventListener("click", () => openModal("users"));
 byId("openAudit").addEventListener("click", () => openModal("audit"));
 byId("openAccount").addEventListener("click", () => openModal("account"));
+byId("openSso").addEventListener("click", () => openModal("sso"));
+byId("saveAdminSso").addEventListener("click", () => void saveAdminSso());
 document.querySelectorAll(".modal-overlay").forEach((overlay) => {
 	overlay.addEventListener("click", (event) => {
 		if (event.target === overlay) closeModal(overlay.dataset.modal);

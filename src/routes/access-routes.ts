@@ -17,6 +17,7 @@ import {
 	recordAccessTotpFailure,
 	setPendingAccessTotpSecret,
 } from "../services/access-list-service.ts";
+import { beginAccessSsoLogin, completeAccessSsoLogin, siteSsoLoginInfo } from "../services/access-sso-service.ts";
 import { createFlow } from "../services/challenge-service.ts";
 import { recordEvent } from "../services/event-service.ts";
 import { findAccessSession, userAgentHash } from "../services/session-service.ts";
@@ -87,7 +88,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 				settings.send_username_to_upstream === 1 ? await accessIdentitySetCookies(ctx.req, site, session, user.username) : clearAccessIdentityCookies(ctx.req);
 			return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
 		}
-		return appendSetCookies(htmlResponse(accessLoginPage(site, returnPath)), clearAccessIdentityCookies(ctx.req));
+		return appendSetCookies(htmlResponse(accessLoginPage(site, returnPath, "", await siteSsoLoginInfo(site.id))), clearAccessIdentityCookies(ctx.req));
 	});
 
 	app.post("/_burrowgate/access/login", async (ctx) => {
@@ -96,7 +97,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
 		const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
 		if (!site) return htmlResponse("No BurrowGate site is configured for this host.", 421);
-		if (!sameOriginRequest(ctx.req)) return htmlResponse(accessLoginPage(site, returnPath, "Request validation failed."), 403);
+		if (!sameOriginRequest(ctx.req)) return htmlResponse(accessLoginPage(site, returnPath, "Request validation failed.", await siteSsoLoginInfo(site.id)), 403);
 		const settings = await accessSettingsForSite(site.id);
 		if (settings.enabled !== 1) return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), clearAccessIdentityCookies(ctx.req));
 		const ip = getClientIp(ctx) ?? "unknown";
@@ -124,6 +125,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 						site,
 						returnPath,
 						limited ? `Too many failed attempts. Try again in ${result.retryAfterSeconds} seconds.` : "Invalid username or password.",
+						await siteSsoLoginInfo(site.id),
 					),
 					limited ? 429 : 401,
 					limited ? { "retry-after": String(result.retryAfterSeconds) } : undefined,
@@ -159,6 +161,61 @@ export function registerAccessRoutes(app: Web<any>): void {
 			latencyMs: Math.round(performance.now() - started),
 		});
 		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
+	});
+
+	app.get("/_burrowgate/access/login/sso", async (ctx) => {
+		const { site, ip, returnPath } = await context(ctx);
+		if (!site) return htmlResponse("No BurrowGate site is configured for this host.", 421);
+		const settings = await accessSettingsForSite(site.id);
+		if (settings.enabled !== 1) return Response.redirect(new URL(returnPath, ctx.req.url).href, 302);
+		const session = await findAccessSession(ctx.req, site, ip);
+		if (!session) {
+			const flow = await createFlow(site, `/_burrowgate/access/login/sso?return=${encodeURIComponent(returnPath)}`, ip, await userAgentHash(ctx.req));
+			return Response.redirect(new URL(`/_burrowgate/verify?flow=${encodeURIComponent(flow.id)}`, ctx.req.url).href, 302);
+		}
+		try {
+			const redirectUri = new URL("/_burrowgate/access/sso/callback", ctx.req.url).href;
+			const url = await beginAccessSsoLogin(site.id, returnPath, redirectUri);
+			return Response.redirect(url, 302);
+		} catch (error) {
+			return htmlResponse(
+				accessLoginPage(site, returnPath, error instanceof Error ? error.message : "Unable to start single sign-on", await siteSsoLoginInfo(site.id)),
+				400,
+			);
+		}
+	});
+
+	app.get("/_burrowgate/access/sso/callback", async (ctx) => {
+		const url = new URL(ctx.req.url);
+		const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
+		if (!site) return htmlResponse("No BurrowGate site is configured for this host.", 421);
+		const ip = getClientIp(ctx) ?? "unknown";
+		const code = url.searchParams.get("code") ?? "";
+		const state = url.searchParams.get("state") ?? "";
+		const idpError = url.searchParams.get("error");
+		if (idpError || !code || !state) {
+			return htmlResponse(accessLoginPage(site, "/", "Single sign-on was cancelled or failed.", await siteSsoLoginInfo(site.id)), 400);
+		}
+		const session = await findAccessSession(ctx.req, site, ip);
+		if (!session) return Response.redirect(new URL(loginPath("/"), ctx.req.url).href, 302);
+		try {
+			const { user, returnPath } = await completeAccessSsoLogin(site.id, code, state);
+			const cookies = await issueAccessSession(ctx, site, session, user);
+			await recordEvent({
+				siteId: site.id,
+				sessionId: session.id,
+				ip,
+				method: "GET",
+				path: "/_burrowgate/access/sso/callback",
+				status: 302,
+				decision: "access-authenticated",
+				accessUsername: user.username,
+				latencyMs: 0,
+			});
+			return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
+		} catch (error) {
+			return htmlResponse(accessLoginPage(site, "/", error instanceof Error ? error.message : "Single sign-on failed.", await siteSsoLoginInfo(site.id)), 400);
+		}
 	});
 
 	app.get("/_burrowgate/access/login/enroll", async (ctx) => {

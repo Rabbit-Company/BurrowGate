@@ -60,6 +60,7 @@ import {
 	updateAccessSettings,
 	updateAccessUser,
 } from "../services/access-list-service.ts";
+import { siteSsoSettingsView, updateSiteSsoSettings } from "../services/access-sso-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
 import { adminPage, loginPage, totpEnrollPage, totpRecoveryCodesPage, totpVerifyPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
@@ -94,6 +95,7 @@ import {
 	updateAdminUser,
 } from "../services/admin-user-service.ts";
 import { pagedAdminAuditLog, purgeAdminAuditLog, recordAdminAudit } from "../services/admin-audit-service.ts";
+import { adminSsoLoginInfo, adminSsoSettingsView, beginAdminSsoLogin, completeAdminSsoLogin, updateAdminSsoSettings } from "../services/admin-sso-service.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
 	const session = await getAdminSession(request);
@@ -224,7 +226,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 	app.get("/_burrowgate/admin/login", async (ctx) =>
 		(await getAdminSession(ctx.req))
 			? Response.redirect(new URL("/_burrowgate/admin", ctx.req.url).href, 302)
-			: htmlResponse(loginPage(cookieCanBeIssuedForRequest(ctx.req) ? undefined : insecureCookieConfigurationMessage())),
+			: htmlResponse(loginPage(cookieCanBeIssuedForRequest(ctx.req) ? undefined : insecureCookieConfigurationMessage(), await adminSsoLoginInfo())),
 	);
 
 	app.post("/_burrowgate/admin/login", async (ctx) => {
@@ -233,15 +235,54 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const password = String(form.get("password") ?? "");
 		const ip = getClientIp(ctx) ?? "unknown";
 		const { user, retryAfterSeconds } = await authenticateAdminPassword(ip, username, password);
-		if (retryAfterSeconds > 0) return htmlResponse(loginPage("Too many failed attempts. Try again later."), 429);
-		if (!user) return htmlResponse(loginPage("Invalid username or password"), 401);
+		if (retryAfterSeconds > 0) return htmlResponse(loginPage("Too many failed attempts. Try again later.", await adminSsoLoginInfo()), 429);
+		if (!user) return htmlResponse(loginPage("Invalid username or password", await adminSsoLoginInfo()), 401);
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {
-			return htmlResponse(loginPage(insecureCookieConfigurationMessage()), 409);
+			return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
 		}
 		const mode = user.must_enroll_totp === 1 ? "totp-enroll" : "totp-verify";
 		const token = beginPendingLogin(mode, user.id);
 		const location = mode === "totp-enroll" ? "/_burrowgate/admin/login/enroll" : "/_burrowgate/admin/login/totp";
 		return new Response(null, { status: 302, headers: { location, "set-cookie": pendingLoginCookie(ctx.req, token) } });
+	});
+
+	app.get("/_burrowgate/admin/login/sso", async (ctx) => {
+		if (await getAdminSession(ctx.req)) return Response.redirect(new URL("/_burrowgate/admin", ctx.req.url).href, 302);
+		if (!cookieCanBeIssuedForRequest(ctx.req)) return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
+		try {
+			const redirectUri = new URL("/_burrowgate/admin/sso/callback", ctx.req.url).href;
+			const url = await beginAdminSsoLogin(redirectUri);
+			return Response.redirect(url, 302);
+		} catch (error) {
+			return htmlResponse(loginPage(error instanceof Error ? error.message : "Unable to start single sign-on", await adminSsoLoginInfo()), 400);
+		}
+	});
+
+	app.get("/_burrowgate/admin/sso/callback", async (ctx) => {
+		const url = new URL(ctx.req.url);
+		const code = url.searchParams.get("code") ?? "";
+		const state = url.searchParams.get("state") ?? "";
+		const idpError = url.searchParams.get("error");
+		if (idpError || !code || !state) {
+			return htmlResponse(loginPage("Single sign-on was cancelled or failed.", await adminSsoLoginInfo()), 400);
+		}
+		if (!cookieCanBeIssuedForRequest(ctx.req)) return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
+		try {
+			const { user, provisioned } = await completeAdminSsoLogin(code, state);
+			const session = await createAdminSession(ctx.req, user.username, user.id);
+			const actor: AuthenticatedAdmin = { id: user.id, username: user.username, role: user.role };
+			await recordAdminAudit({
+				actor,
+				action: provisioned ? "admin_user.sso_provisioned" : "admin_user.sso_login",
+				resourceType: "admin_user",
+				resourceId: user.id,
+				summary: provisioned ? `Provisioned user ${user.username} via single sign-on` : `Signed in via single sign-on as ${user.username}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return appendSetCookies(new Response(null, { status: 302, headers: { location: "/_burrowgate/admin" } }), [session.cookie]);
+		} catch (error) {
+			return htmlResponse(loginPage(error instanceof Error ? error.message : "Single sign-on failed.", await adminSsoLoginInfo()), 400);
+		}
 	});
 
 	app.get("/_burrowgate/admin/login/enroll", async (ctx) => {
@@ -851,6 +892,45 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse(await accessListView(selection.site.id));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update access-list settings" }, 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/access-list/sso", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before configuring single sign-on" }, 400);
+		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "view");
+		if (denied) return denied;
+		return jsonResponse(await siteSsoSettingsView(selection.site.id));
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/access-list/sso", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before configuring single sign-on" }, 400);
+		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (denied) return denied;
+		try {
+			const settings = await updateSiteSsoSettings(selection.site.id, (await ctx.req.json()) as any);
+			await recordAdminAudit({
+				actor: user,
+				action: "access_list.sso.update",
+				resourceType: "site",
+				resourceId: selection.site.id,
+				summary: `Updated single sign-on settings for ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(settings);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update single sign-on settings" }, 400);
 		}
 	});
 
@@ -2034,6 +2114,36 @@ export function registerAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ codes });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to regenerate recovery codes" }, 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/sso", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		return jsonResponse(await adminSsoSettingsView());
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/sso", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		try {
+			const settings = await updateAdminSsoSettings((await ctx.req.json()) as any);
+			await recordAdminAudit({
+				actor: user,
+				action: "admin_sso.settings.update",
+				summary: "Updated dashboard single sign-on settings",
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(settings);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update single sign-on settings" }, 400);
 		}
 	});
 

@@ -14,7 +14,7 @@ export function streamsAdminPage(): string {
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
   <div><div class="brand"><span class="mark"></span> BurrowGate</div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a class="active" href="/_burrowgate/admin/streams">Streams</a></nav><p class="muted header-subtitle">TCP and UDP stream proxy control plane</p></div>
-  <div class="dashboard-controls"><label class="site-picker"><span>Stream</span><select id="streamSelector" class="select"><option value="">All streams</option></select></label><label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label><div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="openUsers" class="button secondary icon-button hidden" type="button" aria-label="Users" title="Users">${tablerIcon("users")}</button><button id="openAudit" class="button secondary icon-button hidden" type="button" aria-label="Audit log" title="Audit log">${tablerIcon("history")}</button><button id="openAccount" class="button secondary icon-button" type="button" aria-label="Account" title="Account">${tablerIcon("user")}</button><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div></div>
+  <div class="dashboard-controls"><label class="site-picker"><span>Stream</span><select id="streamSelector" class="select"><option value="">All streams</option></select></label><label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label><div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="openUsers" class="button secondary icon-button hidden" type="button" aria-label="Users" title="Users">${tablerIcon("users")}</button><button id="openSso" class="button secondary icon-button hidden" type="button" aria-label="Single sign-on" title="Single sign-on">${tablerIcon("key")}</button><button id="openAudit" class="button secondary icon-button hidden" type="button" aria-label="Audit log" title="Audit log">${tablerIcon("history")}</button><button id="openAccount" class="button secondary icon-button" type="button" aria-label="Account" title="Account">${tablerIcon("user")}</button><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div></div>
 </header>
 
 <section class="card date-range-card"><div class="date-range-layout"><div class="date-range-copy"><h2>Date range</h2><p class="muted">Lifecycle logs and transferred-data totals use this interval. Active connections are always live.</p></div><label><span>From</span><input id="dateFrom" class="input" type="datetime-local" step="60"></label><label><span>To</span><input id="dateTo" class="input" type="datetime-local" step="60"></label><div class="row date-range-actions"><button id="applyDateRange" class="button" type="button">Apply</button><button id="resetDateRange" class="button secondary" type="button">Last 24 hours</button></div></div></section>
@@ -147,6 +147,29 @@ export function streamsAdminPage(): string {
         </div>
         <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Summary</th><th>IP</th></tr></thead><tbody id="auditLog"><tr><td colspan="6" class="empty-cell">Open the audit log to load entries.</td></tr></tbody></table></div>
         ${pagination("auditLog")}
+      </article>
+    </div>
+  </div>
+</div>
+
+<div id="modal-sso" class="modal-overlay hidden" data-modal="sso">
+  <div class="modal">
+    <div class="modal-header"><h2>Dashboard single sign-on</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <article class="card">
+        <div class="pad section-heading"><div><h2>OpenID Connect</h2><p class="muted">Let dashboard users sign in through an external identity provider (Okta, Entra ID, Google Workspace, Keycloak, ...). New accounts are provisioned with the Member role and no permissions until an administrator grants access. Shared with the Web Proxy dashboard.</p></div><button id="saveAdminSso" class="button" type="button">Save</button></div>
+        <div class="pad pad-topless grid">
+          <label class="check-row"><input id="adminSsoEnabled" type="checkbox"><span><strong>Enable single sign-on</strong><small class="muted">Adds a "Sign in with SSO" option to the dashboard login page.</small></span></label>
+          <label class="check-row"><input id="adminSsoEnforce" type="checkbox"><span><strong>Require single sign-on</strong><small class="muted">Hides the password form by default. A "Use a local account instead" link always remains available so administrators cannot be locked out.</small></span></label>
+          <div class="site-form-grid">
+            <label><span>Issuer URL</span><input id="adminSsoIssuer" class="input" type="url" placeholder="https://login.example.com/oauth2/default"><small class="muted">BurrowGate fetches <code>/.well-known/openid-configuration</code> from this URL.</small></label>
+            <label><span>Client ID</span><input id="adminSsoClientId" class="input" autocomplete="off"></label>
+            <label><span>Client secret</span><input id="adminSsoClientSecret" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current"><small id="adminSsoSecretStatus" class="muted">No client secret is configured.</small></label>
+            <label><span>Scopes</span><input id="adminSsoScopes" class="input" value="openid email profile"></label>
+            <label><span>Button label</span><input id="adminSsoButtonLabel" class="input" value="Single sign-on"></label>
+          </div>
+          <p class="notice muted">Redirect URI to register at the identity provider: <code id="adminSsoRedirectUri"></code></p>
+        </div>
       </article>
     </div>
   </div>

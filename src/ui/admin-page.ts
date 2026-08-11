@@ -1,9 +1,17 @@
 import { escapeHtml, page, tablerIcon } from "./layout.ts";
 
-export function loginPage(error = ""): string {
+export function loginPage(error = "", sso?: { enabled: boolean; enforceSso: boolean; buttonLabel: string }): string {
+	const passwordForm = `<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form>`;
+	const ssoButton = sso?.enabled ? `<a class="button" href="/_burrowgate/admin/login/sso">${escapeHtml(sso.buttonLabel)}</a>` : "";
+	const body =
+		sso?.enabled && sso.enforceSso
+			? `${ssoButton}<details class="totp-recovery"><summary>Use a local account instead</summary>${passwordForm}</details>`
+			: sso?.enabled
+				? `${ssoButton}<div class="auth-divider"><span>or</span></div>${passwordForm}`
+				: passwordForm;
 	return page(
 		"Admin login",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}${body}</section></main>`,
 	);
 }
 
@@ -46,7 +54,7 @@ export function adminPage(): string {
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>
-    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="openUsers" class="button secondary icon-button hidden" type="button" aria-label="Users" title="Users">${tablerIcon("users")}</button><button id="openAudit" class="button secondary icon-button hidden" type="button" aria-label="Audit log" title="Audit log">${tablerIcon("history")}</button><button id="openAccount" class="button secondary icon-button" type="button" aria-label="Account" title="Account">${tablerIcon("user")}</button><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div>
+    <div class="row dashboard-actions"><span id="lastUpdated" class="refresh-status">Loaded on demand</span><button id="openUsers" class="button secondary icon-button hidden" type="button" aria-label="Users" title="Users">${tablerIcon("users")}</button><button id="openSso" class="button secondary icon-button hidden" type="button" aria-label="Single sign-on" title="Single sign-on">${tablerIcon("key")}</button><button id="openAudit" class="button secondary icon-button hidden" type="button" aria-label="Audit log" title="Audit log">${tablerIcon("history")}</button><button id="openAccount" class="button secondary icon-button" type="button" aria-label="Account" title="Account">${tablerIcon("user")}</button><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div>
   </div>
 </header>
 
@@ -364,6 +372,21 @@ export function adminPage(): string {
         </div>
       </article>
       <article class="card">
+        <div class="pad section-heading"><div><h2>Single sign-on</h2><p class="muted">Let this site's users sign in through an external identity provider instead of a local password. New accounts are provisioned and assigned to this site automatically.</p></div><button id="saveAccessSso" class="button" type="button">Save</button></div>
+        <div class="pad pad-topless grid">
+          <label class="check-row"><input id="accessSsoEnabled" type="checkbox"><span><strong>Enable single sign-on</strong><small class="muted">Adds a "Sign in with SSO" option to this site's sign-in page.</small></span></label>
+          <label class="check-row"><input id="accessSsoEnforce" type="checkbox"><span><strong>Require single sign-on</strong><small class="muted">Hides the password form by default behind a "Use a local account instead" link.</small></span></label>
+          <div class="site-form-grid">
+            <label><span>Issuer URL</span><input id="accessSsoIssuer" class="input" type="url" placeholder="https://login.example.com/oauth2/default"></label>
+            <label><span>Client ID</span><input id="accessSsoClientId" class="input" autocomplete="off"></label>
+            <label><span>Client secret</span><input id="accessSsoClientSecret" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current"><small id="accessSsoSecretStatus" class="muted">No client secret is configured.</small></label>
+            <label><span>Scopes</span><input id="accessSsoScopes" class="input" value="openid email profile"></label>
+            <label><span>Button label</span><input id="accessSsoButtonLabel" class="input" value="Single sign-on"></label>
+          </div>
+          <p class="notice muted">Redirect URI to register at the identity provider: <code id="accessSsoRedirectUri"></code></p>
+        </div>
+      </article>
+      <article class="card">
         <div class="pad"><h2>Create user</h2><form id="accessUserForm" class="site-form"><div class="site-form-grid"><label><span>Username</span><input id="accessUsername" class="input" autocomplete="off" maxlength="255" placeholder="ziga" required><small class="muted">Usernames are lowercase and global across all sites.</small></label><label><span>Password</span><input id="accessPassword" class="input" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required><small class="muted">Passwords are stored as secure hashes.</small></label></div><label class="check-row"><input id="accessUserEnabled" type="checkbox" checked><span><strong>User enabled</strong><small class="muted">Disabled shared users cannot sign in to any assigned site.</small></span></label><button class="button" type="submit">Create and assign</button></form></div>
       </article>
       <article class="card">
@@ -638,6 +661,29 @@ export function adminPage(): string {
         </div>
         <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Summary</th><th>IP</th></tr></thead><tbody id="auditLog"><tr><td colspan="6" class="empty-cell">Open the audit log to load entries.</td></tr></tbody></table></div>
         ${pagination("auditLog")}
+      </article>
+    </div>
+  </div>
+</div>
+
+<div id="modal-sso" class="modal-overlay hidden" data-modal="sso">
+  <div class="modal">
+    <div class="modal-header"><h2>Dashboard single sign-on</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <article class="card">
+        <div class="pad section-heading"><div><h2>OpenID Connect</h2><p class="muted">Let dashboard users sign in through an external identity provider (Authentik, Keycloak, Authelia, Microsoft ADFS, Azure/Entra ID, Okta, Duo, ...). New accounts are provisioned with the Member role and no permissions until an administrator grants access.</p></div><button id="saveAdminSso" class="button" type="button">Save</button></div>
+        <div class="pad pad-topless grid">
+          <label class="check-row"><input id="adminSsoEnabled" type="checkbox"><span><strong>Enable single sign-on</strong><small class="muted">Adds a "Sign in with SSO" option to the dashboard login page.</small></span></label>
+          <label class="check-row"><input id="adminSsoEnforce" type="checkbox"><span><strong>Require single sign-on</strong><small class="muted">Hides the password form by default. A "Use a local account instead" link always remains available so administrators cannot be locked out.</small></span></label>
+          <div class="site-form-grid">
+            <label><span>Issuer URL</span><input id="adminSsoIssuer" class="input" type="url" placeholder="https://login.example.com/oauth2/default"><small class="muted">BurrowGate fetches <code>/.well-known/openid-configuration</code> from this URL.</small></label>
+            <label><span>Client ID</span><input id="adminSsoClientId" class="input" autocomplete="off"></label>
+            <label><span>Client secret</span><input id="adminSsoClientSecret" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current"><small id="adminSsoSecretStatus" class="muted">No client secret is configured.</small></label>
+            <label><span>Scopes</span><input id="adminSsoScopes" class="input" value="openid email profile"></label>
+            <label><span>Button label</span><input id="adminSsoButtonLabel" class="input" value="Single sign-on"></label>
+          </div>
+          <p class="notice muted">Redirect URI to register at the identity provider: <code id="adminSsoRedirectUri"></code></p>
+        </div>
       </article>
     </div>
   </div>

@@ -1,6 +1,6 @@
 {
 	"name": "burrowgate",
-	"version": "1.7.0",
+	"version": "1.8.0",
 	"private": true,
 	"type": "module",
 	"description": "Self-hosted reverse proxy with route policies, GeoIP, rate limiting, managed WAF, browser challenges, TLS termination, and traffic monitoring.",
@@ -19,6 +19,7 @@
 		"@rabbit-company/web-middleware": "^0.18.2",
 		"acme-client": "5.4.0",
 		"chart.js": "4.5.1",
+		"jose": "^6.2.8",
 		"maxmind": "5.0.7",
 		"qrcode": "^1.5.4"
 	},

@@ -447,6 +447,30 @@ CREATE TABLE IF NOT EXISTS origin_health_events (
   error TEXT NULL,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_sso_settings (
+  id VARCHAR(16) PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  enforce_sso INTEGER NOT NULL DEFAULT 0,
+  issuer_url TEXT NULL,
+  client_id TEXT NULL,
+  client_secret_encrypted TEXT NULL,
+  scopes VARCHAR(512) NOT NULL DEFAULT 'openid email profile',
+  button_label VARCHAR(255) NOT NULL DEFAULT 'Single sign-on',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_sso_settings (
+  site_id VARCHAR(64) PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  enforce_sso INTEGER NOT NULL DEFAULT 0,
+  issuer_url TEXT NULL,
+  client_id TEXT NULL,
+  client_secret_encrypted TEXT NULL,
+  scopes VARCHAR(512) NOT NULL DEFAULT 'openid email profile',
+  button_label VARCHAR(255) NOT NULL DEFAULT 'Single sign-on',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS health_alert_outbox (
   id VARCHAR(64) PRIMARY KEY,
   site_id VARCHAR(64) NOT NULL,
@@ -535,6 +559,8 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_admin_audit_log_actor_created ON admin_audit_log (actor_user_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_audit_log_resource ON admin_audit_log (resource_type, resource_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions (user_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_users_sso_subject ON admin_users (sso_subject)",
+	"CREATE INDEX IF NOT EXISTS idx_access_users_sso_subject ON access_users (sso_subject)",
 ];
 
 function isMySql(): boolean {
@@ -678,6 +704,34 @@ async function ensureAccessUserColumns(): Promise<void> {
 	}
 }
 
+async function ensureAdminUserSsoColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE admin_users ADD COLUMN sso_subject VARCHAR(512) NULL",
+		"ALTER TABLE admin_users ADD COLUMN auth_source VARCHAR(16) NOT NULL DEFAULT 'password'",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
+async function ensureAccessUserSsoColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE access_users ADD COLUMN sso_subject VARCHAR(512) NULL",
+		"ALTER TABLE access_users ADD COLUMN auth_source VARCHAR(16) NOT NULL DEFAULT 'password'",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAdminSessionColumns(): Promise<void> {
 	try {
 		await db.unsafe("ALTER TABLE admin_sessions ADD COLUMN user_id VARCHAR(64) NULL");
@@ -756,6 +810,8 @@ export async function migrate(): Promise<void> {
 	await ensureGeoIpColumns();
 	await ensureAccessUserColumns();
 	await ensureAccessSessionColumns();
+	await ensureAdminUserSsoColumns();
+	await ensureAccessUserSsoColumns();
 	await ensureAdminSessionColumns();
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();

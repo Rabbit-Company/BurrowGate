@@ -23,6 +23,15 @@ let geoMetrics = null;
 let sites = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
+let accessSso = {
+	enabled: false,
+	enforceSso: false,
+	issuerUrl: "",
+	clientId: "",
+	clientSecretConfigured: false,
+	scopes: "openid email profile",
+	buttonLabel: "Single sign-on",
+};
 let editingPermissionsUserId = null;
 let challengeProviders = [];
 let defaultEventRetentionDays = 7;
@@ -1865,16 +1874,40 @@ function renderAccessList() {
 		.join("");
 }
 
+function renderAccessSso() {
+	byId("accessSsoEnabled").checked = Boolean(accessSso.enabled);
+	byId("accessSsoEnforce").checked = Boolean(accessSso.enforceSso);
+	byId("accessSsoIssuer").value = accessSso.issuerUrl ?? "";
+	byId("accessSsoClientId").value = accessSso.clientId ?? "";
+	byId("accessSsoClientSecret").value = "";
+	byId("accessSsoScopes").value = accessSso.scopes || "openid email profile";
+	byId("accessSsoButtonLabel").value = accessSso.buttonLabel || "Single sign-on";
+	byId("accessSsoSecretStatus").textContent = accessSso.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
+	const site = sites.find((candidate) => candidate.id === selectedSiteId);
+	byId("accessSsoRedirectUri").textContent = site ? `https://${site.publicHost}/_burrowgate/access/sso/callback` : "Select a site";
+}
+
 async function loadAccessList() {
 	if (!selectedSiteId) {
 		accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
+		accessSso = {
+			enabled: false,
+			enforceSso: false,
+			issuerUrl: "",
+			clientId: "",
+			clientSecretConfigured: false,
+			scopes: "openid email profile",
+			buttonLabel: "Single sign-on",
+		};
 		renderAccessList();
+		renderAccessSso();
 		return;
 	}
 	byId("accessUserList").innerHTML = '<div class="empty-state-inline"><span class="spinner"></span> Loading access users...</div>';
 	try {
-		accessList = await api("/access-list");
+		[accessList, accessSso] = await Promise.all([api("/access-list"), api("/access-list/sso")]);
 		renderAccessList();
+		renderAccessSso();
 	} catch (error) {
 		byId("accessUserList").innerHTML = `<div class="empty-state-inline error-text">${escapeHtml(error.message)}</div>`;
 	}
@@ -1888,6 +1921,81 @@ async function saveAccessSettings() {
 	});
 	renderAccessList();
 	showToast("Access authentication settings saved.");
+}
+
+async function saveAccessSso() {
+	const button = byId("saveAccessSso");
+	button.disabled = true;
+	try {
+		const secret = byId("accessSsoClientSecret").value;
+		accessSso = await api("/access-list/sso", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				enabled: byId("accessSsoEnabled").checked,
+				enforceSso: byId("accessSsoEnforce").checked,
+				issuerUrl: byId("accessSsoIssuer").value,
+				clientId: byId("accessSsoClientId").value,
+				...(secret ? { clientSecret: secret } : {}),
+				scopes: byId("accessSsoScopes").value,
+				buttonLabel: byId("accessSsoButtonLabel").value,
+			}),
+		});
+		renderAccessSso();
+		showToast("Single sign-on settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function loadAdminSso() {
+	try {
+		const settings = await api("/sso", {}, false);
+		byId("adminSsoEnabled").checked = Boolean(settings.enabled);
+		byId("adminSsoEnforce").checked = Boolean(settings.enforceSso);
+		byId("adminSsoIssuer").value = settings.issuerUrl ?? "";
+		byId("adminSsoClientId").value = settings.clientId ?? "";
+		byId("adminSsoClientSecret").value = "";
+		byId("adminSsoScopes").value = settings.scopes || "openid email profile";
+		byId("adminSsoButtonLabel").value = settings.buttonLabel || "Single sign-on";
+		byId("adminSsoSecretStatus").textContent = settings.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
+		byId("adminSsoRedirectUri").textContent = `${location.origin}/_burrowgate/admin/sso/callback`;
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function saveAdminSso() {
+	const button = byId("saveAdminSso");
+	button.disabled = true;
+	try {
+		const secret = byId("adminSsoClientSecret").value;
+		await api(
+			"/sso",
+			{
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					enabled: byId("adminSsoEnabled").checked,
+					enforceSso: byId("adminSsoEnforce").checked,
+					issuerUrl: byId("adminSsoIssuer").value,
+					clientId: byId("adminSsoClientId").value,
+					...(secret ? { clientSecret: secret } : {}),
+					scopes: byId("adminSsoScopes").value,
+					buttonLabel: byId("adminSsoButtonLabel").value,
+				}),
+			},
+			false,
+		);
+		await loadAdminSso();
+		showToast("Single sign-on settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
 }
 
 async function createAccessUser(event) {
@@ -2932,6 +3040,7 @@ function applyCurrentAdminVisibility() {
 	const isAdministrator = currentAdmin?.role === "administrator";
 	byId("openUsers").classList.toggle("hidden", !isAdministrator);
 	byId("openAudit").classList.toggle("hidden", !isAdministrator);
+	byId("openSso").classList.toggle("hidden", !isAdministrator);
 }
 
 function openModal(name) {
@@ -2940,6 +3049,7 @@ function openModal(name) {
 	if (name === "users") void loadUsers();
 	if (name === "audit") void loadAuditLog();
 	if (name === "account") void loadAccount();
+	if (name === "sso") void loadAdminSso();
 }
 
 function closeModal(name) {
@@ -3515,6 +3625,9 @@ function bindActions() {
 	byId("openUsers").addEventListener("click", () => openModal("users"));
 	byId("openAudit").addEventListener("click", () => openModal("audit"));
 	byId("openAccount").addEventListener("click", () => openModal("account"));
+	byId("openSso").addEventListener("click", () => openModal("sso"));
+	byId("saveAdminSso").addEventListener("click", () => void saveAdminSso());
+	byId("saveAccessSso").addEventListener("click", () => void saveAccessSso());
 	document.querySelectorAll(".modal-overlay").forEach((overlay) => {
 		overlay.addEventListener("click", (event) => {
 			if (event.target === overlay) closeModal(overlay.dataset.modal);

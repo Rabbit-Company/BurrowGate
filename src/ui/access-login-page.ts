@@ -1,10 +1,25 @@
 import type { SiteRecord } from "../types.ts";
 import { escapeHtml, page } from "./layout.ts";
 
-export function accessLoginPage(site: SiteRecord, returnPath: string, error = ""): string {
+export function accessLoginPage(
+	site: SiteRecord,
+	returnPath: string,
+	error = "",
+	sso?: { enabled: boolean; enforceSso: boolean; buttonLabel: string },
+): string {
+	const passwordForm = `<form method="post" action="/_burrowgate/access/login" class="grid"><input type="hidden" name="return" value="${escapeHtml(returnPath)}"><label>Username<input class="input" name="username" autocomplete="username" maxlength="255" required autofocus></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password" maxlength="1024" required></label><button class="button" type="submit">Sign in</button></form>`;
+	const ssoButton = sso?.enabled
+		? `<a class="button" href="/_burrowgate/access/login/sso?return=${encodeURIComponent(returnPath)}">${escapeHtml(sso.buttonLabel)}</a>`
+		: "";
+	const body =
+		sso?.enabled && sso.enforceSso
+			? `${ssoButton}<details class="totp-recovery"><summary>Use a local account instead</summary>${passwordForm}</details>`
+			: sso?.enabled
+				? `${ssoButton}<div class="auth-divider"><span>or</span></div>${passwordForm}`
+				: passwordForm;
 	return page(
 		"Sign in",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Sign in to ${escapeHtml(site.name)}</h1><p class="muted">Your identity is verified by BurrowGate before the request reaches the protected application.</p>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<form method="post" action="/_burrowgate/access/login" class="grid"><input type="hidden" name="return" value="${escapeHtml(returnPath)}"><label>Username<input class="input" name="username" autocomplete="username" maxlength="255" required autofocus></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password" maxlength="1024" required></label><button class="button" type="submit">Sign in</button></form></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Sign in to ${escapeHtml(site.name)}</h1><p class="muted">Your identity is verified by BurrowGate before the request reaches the protected application.</p>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}${body}</section></main>`,
 	);
 }
 

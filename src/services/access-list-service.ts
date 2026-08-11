@@ -215,6 +215,8 @@ export async function createAccessUser(siteId: string, input: AccessUserInput): 
 		totp_enrolled_at: null,
 		api_token_hash: null,
 		api_token_created_at: null,
+		sso_subject: null,
+		auth_source: "password",
 	};
 	await repository.insertAccessUser(user);
 	await repository.assignAccessUser(siteId, user.id, now);

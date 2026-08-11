@@ -29,7 +29,7 @@ export interface AdminUserView {
 	streamPermissions: Array<{ streamId: string; level: Exclude<AdminAccessLevel, "none"> }>;
 }
 
-function normalizeAdminUsername(value: unknown): string {
+export function normalizeAdminUsername(value: unknown): string {
 	const username = String(value ?? "")
 		.trim()
 		.toLowerCase();
@@ -150,6 +150,8 @@ export async function createAdminUser(input: AdminUserInput, createdByUserId: st
 		created_at: now,
 		updated_at: now,
 		created_by_user_id: createdByUserId,
+		sso_subject: null,
+		auth_source: "password",
 	};
 	await repository.insertAdminUser(user);
 	await applyPermissions(user.id, input);
@@ -259,6 +261,8 @@ export async function ensureBootstrapAdministrator(): Promise<void> {
 		created_at: now,
 		updated_at: now,
 		created_by_user_id: null,
+		sso_subject: null,
+		auth_source: "password",
 	});
 	Logger.info("[BurrowGate] Bootstrapped first Administrator account:");
 	Logger.info(`[BurrowGate]   Username: ${username}`);

@@ -10,6 +10,7 @@ import type {
 	AdminAuditLogRecord,
 	AdminRecoveryCodeRecord,
 	AdminSessionRecord,
+	AdminSsoSettingsRecord,
 	AdminUserRecord,
 	AdminUserSitePermissionRecord,
 	AdminUserStreamPermissionRecord,
@@ -23,6 +24,7 @@ import type {
 	RoutePolicyRecord,
 	SiteRecord,
 	SiteAccessSettingsRecord,
+	SiteSsoSettingsRecord,
 	SiteTlsSettingsRecord,
 	BandwidthMinuteRecord,
 	StreamRecord,
@@ -344,6 +346,7 @@ export const repository = {
 			await transaction`DELETE FROM site_origins WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM certificates WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_tls_settings WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM site_sso_settings WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM sites WHERE id=${siteId}`;
 		});
 	},
@@ -536,14 +539,18 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at,totp_required,totp_secret_encrypted,totp_enrolled_at,api_token_hash,api_token_created_at)
-		VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at},${user.totp_required},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.api_token_hash},${user.api_token_created_at})`;
+		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at,totp_required,totp_secret_encrypted,totp_enrolled_at,api_token_hash,api_token_created_at,sso_subject,auth_source)
+		VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at},${user.totp_required},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.api_token_hash},${user.api_token_created_at},${user.sso_subject},${user.auth_source})`;
 	},
 	async updateAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at},totp_required=${user.totp_required},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},api_token_hash=${user.api_token_hash},api_token_created_at=${user.api_token_created_at} WHERE id=${user.id}`;
+		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at},totp_required=${user.totp_required},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},api_token_hash=${user.api_token_hash},api_token_created_at=${user.api_token_created_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
 	},
 	async accessUserByApiTokenHash(hash: string): Promise<AccessUserRecord | null> {
 		const rows = (await db`SELECT * FROM access_users WHERE api_token_hash=${hash} LIMIT 1`) as AccessUserRecord[];
+		return rows[0] ?? null;
+	},
+	async accessUserBySsoSubject(subject: string): Promise<AccessUserRecord | null> {
+		const rows = (await db`SELECT * FROM access_users WHERE sso_subject=${subject} LIMIT 1`) as AccessUserRecord[];
 		return rows[0] ?? null;
 	},
 	async deleteAccessUser(userId: string): Promise<void> {
@@ -2125,11 +2132,15 @@ export const repository = {
 		return rows.filter((row) => row.id !== excludedUserId).length;
 	},
 	async insertAdminUser(user: AdminUserRecord): Promise<void> {
-		await db`INSERT INTO admin_users (id,username,password_hash,role,totp_secret_encrypted,totp_enrolled_at,must_enroll_totp,enabled,created_at,updated_at,created_by_user_id)
-		VALUES (${user.id},${user.username},${user.password_hash},${user.role},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.must_enroll_totp},${user.enabled},${user.created_at},${user.updated_at},${user.created_by_user_id})`;
+		await db`INSERT INTO admin_users (id,username,password_hash,role,totp_secret_encrypted,totp_enrolled_at,must_enroll_totp,enabled,created_at,updated_at,created_by_user_id,sso_subject,auth_source)
+		VALUES (${user.id},${user.username},${user.password_hash},${user.role},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.must_enroll_totp},${user.enabled},${user.created_at},${user.updated_at},${user.created_by_user_id},${user.sso_subject},${user.auth_source})`;
 	},
 	async updateAdminUser(user: AdminUserRecord): Promise<void> {
-		await db`UPDATE admin_users SET username=${user.username},password_hash=${user.password_hash},role=${user.role},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},must_enroll_totp=${user.must_enroll_totp},enabled=${user.enabled},updated_at=${user.updated_at} WHERE id=${user.id}`;
+		await db`UPDATE admin_users SET username=${user.username},password_hash=${user.password_hash},role=${user.role},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},must_enroll_totp=${user.must_enroll_totp},enabled=${user.enabled},updated_at=${user.updated_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
+	},
+	async adminUserBySsoSubject(subject: string): Promise<AdminUserRecord | null> {
+		const rows = (await db`SELECT * FROM admin_users WHERE sso_subject=${subject} LIMIT 1`) as AdminUserRecord[];
+		return rows[0] ?? null;
 	},
 	async deleteAdminUserCascade(userId: string): Promise<void> {
 		await db.begin(async (transaction) => {
@@ -2233,5 +2244,73 @@ export const repository = {
 	},
 	async purgeAllAdminAuditLog(): Promise<number> {
 		return deletedRowCount(await db`DELETE FROM admin_audit_log`);
+	},
+	async adminSsoSettings(): Promise<AdminSsoSettingsRecord | null> {
+		const rows = (await db`SELECT * FROM admin_sso_settings WHERE id='instance' LIMIT 1`) as AdminSsoSettingsRecord[];
+		return rows[0] ?? null;
+	},
+	async ensureAdminSsoSettings(now = Date.now()): Promise<AdminSsoSettingsRecord> {
+		const existing = await this.adminSsoSettings();
+		if (existing) return existing;
+		const settings: AdminSsoSettingsRecord = {
+			id: "instance",
+			enabled: 0,
+			enforce_sso: 0,
+			issuer_url: null,
+			client_id: null,
+			client_secret_encrypted: null,
+			scopes: "openid email profile",
+			button_label: "Single sign-on",
+			created_at: now,
+			updated_at: now,
+		};
+		try {
+			await db`INSERT INTO admin_sso_settings (id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+		} catch {
+			return (await this.adminSsoSettings()) ?? settings;
+		}
+		return settings;
+	},
+	async saveAdminSsoSettings(settings: AdminSsoSettingsRecord): Promise<void> {
+		const existing = await this.adminSsoSettings();
+		if (existing) {
+			await db`UPDATE admin_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE id=${settings.id}`;
+		} else {
+			await db`INSERT INTO admin_sso_settings (id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+		}
+	},
+	async siteSsoSettings(siteId: string): Promise<SiteSsoSettingsRecord | null> {
+		const rows = (await db`SELECT * FROM site_sso_settings WHERE site_id=${siteId} LIMIT 1`) as SiteSsoSettingsRecord[];
+		return rows[0] ?? null;
+	},
+	async ensureSiteSsoSettings(siteId: string, now = Date.now()): Promise<SiteSsoSettingsRecord> {
+		const existing = await this.siteSsoSettings(siteId);
+		if (existing) return existing;
+		const settings: SiteSsoSettingsRecord = {
+			site_id: siteId,
+			enabled: 0,
+			enforce_sso: 0,
+			issuer_url: null,
+			client_id: null,
+			client_secret_encrypted: null,
+			scopes: "openid email profile",
+			button_label: "Single sign-on",
+			created_at: now,
+			updated_at: now,
+		};
+		try {
+			await db`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+		} catch {
+			return (await this.siteSsoSettings(siteId)) ?? settings;
+		}
+		return settings;
+	},
+	async saveSiteSsoSettings(settings: SiteSsoSettingsRecord): Promise<void> {
+		const existing = await this.siteSsoSettings(settings.site_id);
+		if (existing) {
+			await db`UPDATE site_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+		} else {
+			await db`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+		}
 	},
 };
