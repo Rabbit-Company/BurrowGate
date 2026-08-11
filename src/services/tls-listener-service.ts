@@ -19,6 +19,8 @@ interface ListenerDependencies {
 	bootstrapCertificate?: () => Promise<TlsCertificateOption | null>;
 }
 
+const REQUEST_IDLE_TIMEOUT_SECONDS = 255;
+
 const reloadHandlers = new Set<() => Promise<void>>();
 
 export function registerTlsReloadHandler(handler: () => Promise<void>): () => void {
@@ -59,6 +61,7 @@ export class TlsListenerManager {
 		return serve({
 			hostname: config.host,
 			port: options.port,
+			idleTimeout: REQUEST_IDLE_TIMEOUT_SECONDS,
 			...(options.reusePort ? { reusePort: true } : {}),
 			...(options.tls ? { tls: options.tls } : {}),
 			fetch: async (request, server) => await this.dispatch(request, server as unknown as WebSocketUpgradeServer, transport),
