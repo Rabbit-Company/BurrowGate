@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Screenshots - BurrowGate</title>
+		<meta
+			name="description"
+			content="A tour of the BurrowGate dashboard: traffic monitoring, network policies, managed protection, GeoIP analytics, access lists, streams, and more."
+		/>
+		<link rel="canonical" href="https://burrowgate.org/screenshots.html" />
+
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="BurrowGate" />
+		<meta property="og:title" content="Screenshots - BurrowGate" />
+		<meta
+			property="og:description"
+			content="A tour of the BurrowGate dashboard: traffic monitoring, network policies, managed protection, GeoIP analytics, access lists, streams, and more."
+		/>
+		<meta property="og:url" content="https://burrowgate.org/screenshots.html" />
+		<meta property="og:image" content="https://burrowgate.org/assets/og-image.png" />
+		<meta name="twitter:card" content="summary_large_image" />
+
+		<meta name="theme-color" content="#070a0f" />
+		<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+		<link rel="alternate icon" href="/assets/favicon.ico" />
+		<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+		<link rel="stylesheet" href="/css/style.css" />
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+
+		<header class="site-header">
+			<div class="shell row between">
+				<a class="brand" href="/">
+					<span class="mark" aria-hidden="true"></span>
+					BurrowGate
+				</a>
+
+				<button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M4 7h16M4 12h16M4 17h16" />
+					</svg>
+				</button>
+
+				<div class="nav-primary-links">
+					<ul class="nav-links">
+						<li><a href="/features.html">Features</a></li>
+						<li><a href="/screenshots.html" class="active">Screenshots</a></li>
+						<li><a href="/docs.html">Docs</a></li>
+						<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub</a></li>
+					</ul>
+					<div class="nav-actions">
+						<a class="button secondary" href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord</a>
+						<a class="button gradient" href="/#quickstart">Get started</a>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<main id="main">
+			<section class="page-hero">
+				<div class="shell">
+					<div class="eyebrow" style="justify-content: center">Gallery</div>
+					<h1>A look inside the dashboard</h1>
+					<p>Click any card to view it full size. Most dashboard pages run long, so their screenshots open in a scrollable viewer.</p>
+				</div>
+			</section>
+
+			<section class="section">
+				<div class="shell">
+					<div class="filter-bar" role="tablist" aria-label="Filter screenshots by category">
+						<button class="filter-chip active" data-filter="all" type="button">All</button>
+						<button class="filter-chip" data-filter="monitoring" type="button">Monitoring</button>
+						<button class="filter-chip" data-filter="security" type="button">Security &amp; Access</button>
+						<button class="filter-chip" data-filter="streams" type="button">Streams</button>
+						<button class="filter-chip" data-filter="config" type="button">Configuration</button>
+					</div>
+
+					<div class="grid grid-3" id="shot-grid">
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="monitoring"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/traffic.webp"
+							data-alt="BurrowGate traffic monitoring page"
+							data-title="Traffic monitoring"
+							data-desc="Full page capture - scroll to see the entire view."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge accent">Monitoring</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/traffic.webp"
+									alt="BurrowGate traffic monitoring page"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
+										<circle cx="12" cy="12" r="3" /></svg
+									><strong>Traffic</strong><span>screenshots/traffic.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Traffic</h3>
+								<p>Request volume, blocked requests, errors, and latency charts.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="monitoring"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/sessions.webp"
+							data-alt="BurrowGate visitor session monitoring"
+							data-title="Sessions"
+							data-desc="Active, expired, and revoked visitor sessions."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge accent">Monitoring</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/sessions.webp"
+									alt="BurrowGate visitor session monitoring"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="8" cy="15" r="4" />
+										<path d="M11 12l8-8" />
+										<path d="M16 7l2 2" />
+										<path d="M13 10l2 2" /></svg
+									><strong>Sessions</strong><span>screenshots/sessions.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Sessions</h3>
+								<p>Active, expired, and revoked visitor sessions.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="monitoring"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/bandwidth.webp"
+							data-alt="BurrowGate bandwidth monitoring"
+							data-title="Bandwidth"
+							data-desc="Client-side and upstream bandwidth, split by protocol and country."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge accent">Monitoring</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/bandwidth.webp"
+									alt="BurrowGate bandwidth monitoring"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M17 3l4 4-4 4" />
+										<path d="M21 7H9" />
+										<path d="M7 21l-4-4 4-4" />
+										<path d="M3 17h12" /></svg
+									><strong>Bandwidth</strong><span>screenshots/bandwidth.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Bandwidth</h3>
+								<p>Client-side vs. upstream traffic, by IP, protocol, and country.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card"
+							type="button"
+							data-category="monitoring"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/geoip-map.webp"
+							data-alt="BurrowGate GeoIP interactive world map"
+							data-title="GeoIP analytics"
+							data-desc="Interactive SVG world map for request and session volume."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge accent">Monitoring</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/geoip-map.webp"
+									alt="BurrowGate GeoIP interactive world map"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="12" cy="12" r="8" />
+										<path d="M4 12h16" />
+										<path d="M12 4a12 12 0 0 1 0 16" />
+										<path d="M12 4a12 12 0 0 0 0 16" /></svg
+									><strong>GeoIP map</strong><span>screenshots/geoip-map.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>GeoIP analytics</h3>
+								<p>Interactive world map for request volume by country.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="monitoring"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/cache.webp"
+							data-alt="BurrowGate cache dashboard"
+							data-title="Cache"
+							data-desc="Hit ratio, top paths, and scoped purge controls."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge accent">Monitoring</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/cache.webp"
+									alt="BurrowGate cache dashboard"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<ellipse cx="12" cy="5" rx="7" ry="3" />
+										<path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+										<path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></svg
+									><strong>Cache</strong><span>screenshots/cache.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Cache</h3>
+								<p>Hit ratio, top paths, runtime memory, and scoped purge.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="security"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/network-policies.webp"
+							data-alt="BurrowGate network policies"
+							data-title="Network policies"
+							data-desc="IPv4, IPv6, CIDR, and country rules."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge warn">Security</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/network-policies.webp"
+									alt="BurrowGate network policies"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M4 5h16l-6 7v6l-4 2v-8z" /></svg
+									><strong>Network policies</strong><span>screenshots/network-policies.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Network policies</h3>
+								<p>IP, CIDR, and country pass/bypass/block/challenge rules.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="security"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/route-policies.webp"
+							data-alt="BurrowGate route policies"
+							data-title="Route policies"
+							data-desc="Per-path and per-method access modes and rate limits."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge warn">Security</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/route-policies.webp"
+									alt="BurrowGate route policies"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M4 15a8 8 0 1 1 16 0" />
+										<path d="M12 15l4-5" />
+										<circle cx="12" cy="15" r="1" /></svg
+									><strong>Route policies</strong><span>screenshots/route-policies.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Route policies</h3>
+								<p>Per-path and per-method access modes and rate limits.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="security"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/managed-protection.webp"
+							data-alt="BurrowGate managed request protection rules"
+							data-title="Managed protection"
+							data-desc="Monitor and block mode outcomes for WAF-style rules."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge warn">Security</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/managed-protection.webp"
+									alt="BurrowGate managed request protection rules"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+										<path d="M9 12l2 2 4-4" /></svg
+									><strong>Managed protection</strong><span>screenshots/managed-protection.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Managed protection</h3>
+								<p>Monitor/block modes with per-route overrides and audit trail.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="security"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/access-lists.webp"
+							data-alt="BurrowGate access list users"
+							data-title="Access lists"
+							data-desc="Global users, TOTP enrollment, and SSO configuration."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge warn">Security</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/access-lists.webp"
+									alt="BurrowGate access list users"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="8" cy="15" r="4" />
+										<path d="M11 12l8-8" />
+										<path d="M16 7l2 2" />
+										<path d="M13 10l2 2" /></svg
+									><strong>Access lists</strong><span>screenshots/access-lists.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Access lists</h3>
+								<p>Global users, TOTP two-factor, and OIDC SSO.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card"
+							type="button"
+							data-category="security"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/challenge-page.webp"
+							data-alt="BurrowGate visitor-facing browser challenge page"
+							data-title="Challenge page"
+							data-desc="The proof-of-work challenge a visitor sees before verification."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge warn">Security</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/challenge-page.webp"
+									alt="BurrowGate visitor-facing browser challenge page"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z" /></svg
+									><strong>Challenge page</strong><span>screenshots/challenge-page.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Challenge page</h3>
+								<p>The visitor-facing proof-of-work verification screen.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="streams"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/streams.webp"
+							data-alt="BurrowGate TCP and UDP streams dashboard"
+							data-title="Streams"
+							data-desc="Live TCP connections, UDP peers, and per-stream bandwidth."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge info">Streams</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/streams.webp"
+									alt="BurrowGate TCP and UDP streams dashboard"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M4 8h13l-3-3" />
+										<path d="M20 16H7l3 3" /></svg
+									><strong>Streams</strong><span>screenshots/streams.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>TCP &amp; UDP streams</h3>
+								<p>Live connections, UDP peers, and per-port bandwidth.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="config"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/tls.webp"
+							data-alt="BurrowGate TLS certificate management"
+							data-title="TLS certificates"
+							data-desc="Let's Encrypt automation and uploaded certificate management."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge">Configuration</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/tls.webp"
+									alt="BurrowGate TLS certificate management"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<rect x="5" y="11" width="14" height="9" rx="2" />
+										<path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg
+									><strong>TLS certificates</strong><span>screenshots/tls.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>TLS certificates</h3>
+								<p>Let's Encrypt automation and uploaded certificate chains.</p>
+							</div>
+						</button>
+
+						<button
+							class="shot-card tall"
+							type="button"
+							data-category="config"
+							data-lightbox-trigger
+							data-full="https://cdn.rabbit-company.com/burrowgate/screenshots/sites.webp"
+							data-alt="BurrowGate sites list and editor"
+							data-title="Sites"
+							data-desc="Hostname routing, origins, and per-site defaults."
+						>
+							<div class="shot-media">
+								<span class="shot-tag badge">Configuration</span>
+								<img
+									src="https://cdn.rabbit-company.com/burrowgate/screenshots/sites.webp"
+									alt="BurrowGate sites list and editor"
+									loading="lazy"
+									onerror="this.remove()"
+								/>
+								<div class="shot-placeholder">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.6"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<rect x="4" y="4" width="16" height="6" rx="1.5" />
+										<rect x="4" y="14" width="16" height="6" rx="1.5" />
+										<path d="M8 7h.01M8 17h.01" /></svg
+									><strong>Sites</strong><span>screenshots/sites.webp</span>
+								</div>
+								<span class="shot-expand"
+									><svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<circle cx="10" cy="10" r="7" />
+										<path d="M21 21l-4.3-4.3" />
+										<path d="M10 7v6M7 10h6" /></svg
+								></span>
+							</div>
+							<div class="shot-meta">
+								<h3>Sites</h3>
+								<p>Hostname routing, origins, TLS, and per-site defaults.</p>
+							</div>
+						</button>
+					</div>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="cta-band">
+						<div class="eyebrow" style="justify-content: center">Like what you see</div>
+						<h2>Run it in front of your own sites</h2>
+						<p>Self-hosted, GPLv3-licensed, and ready for Docker Compose.</p>
+						<div class="row center wrap">
+							<a class="button gradient lg" href="/#quickstart">Get started</a>
+							<a class="button secondary lg" href="/features.html">Browse features</a>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<div class="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+			<div class="lightbox-inner">
+				<div class="lightbox-head">
+					<div>
+						<h3></h3>
+						<p></p>
+					</div>
+					<button class="lightbox-close" type="button" aria-label="Close">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M6 6l12 12M18 6L6 18" />
+						</svg>
+					</button>
+				</div>
+				<div class="lightbox-media">
+					<img src="" alt="" />
+				</div>
+				<p class="lightbox-hint">Press Esc or click outside the image to close.</p>
+			</div>
+		</div>
+
+		<footer class="site-footer">
+			<div class="shell">
+				<div class="footer-grid">
+					<div class="footer-brand">
+						<a class="brand" href="/"><span class="mark" aria-hidden="true"></span>BurrowGate</a>
+						<p>A self-hosted reverse proxy and access gateway. Open-source and built with love by Rabbit Company.</p>
+						<div class="footer-social">
+							<a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener" aria-label="GitHub"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.06 11.06 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.58.24 2.75.12 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"
+									/></svg
+							></a>
+							<a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener" aria-label="Discord"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.319 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.955 2.42-2.157 2.42Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.946 2.42-2.157 2.42Z"
+									/></svg
+							></a>
+							<a href="https://rabbit-company.com/" target="_blank" rel="noopener" aria-label="Rabbit Company website"
+								><svg
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<circle cx="12" cy="12" r="8" />
+									<path d="M4 12h16" />
+									<path d="M12 4a12 12 0 0 1 0 16" />
+									<path d="M12 4a12 12 0 0 0 0 16" /></svg
+							></a>
+						</div>
+					</div>
+					<div class="footer-col">
+						<h4>Product</h4>
+						<ul>
+							<li><a href="/features.html">Features</a></li>
+							<li><a href="/screenshots.html">Screenshots</a></li>
+							<li><a href="/docs.html">Documentation</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/releases" target="_blank" rel="noopener">Releases</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Community</h4>
+						<ul>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub repository</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/issues" target="_blank" rel="noopener">Report an issue</a></li>
+							<li><a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord server</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Company</h4>
+						<ul>
+							<li><a href="https://rabbit-company.com/" target="_blank" rel="noopener">Rabbit Company</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/LICENSE" target="_blank" rel="noopener">GPLv3 license</a></li>
+						</ul>
+					</div>
+				</div>
+				<div class="footer-bottom">
+					<span>&copy; <span id="year">2026</span> Rabbit Company. Made with love, open-source under GPLv3.</span>
+					<span>burrowgate.org</span>
+				</div>
+			</div>
+		</footer>
+
+		<script src="/js/main.js"></script>
+	</body>
+</html>

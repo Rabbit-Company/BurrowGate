@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Features - BurrowGate</title>
+		<meta
+			name="description"
+			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, monitoring, and more."
+		/>
+		<link rel="canonical" href="https://burrowgate.org/features.html" />
+
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="BurrowGate" />
+		<meta property="og:title" content="Features - BurrowGate" />
+		<meta
+			property="og:description"
+			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, and monitoring."
+		/>
+		<meta property="og:url" content="https://burrowgate.org/features.html" />
+		<meta property="og:image" content="https://burrowgate.org/assets/og-image.png" />
+		<meta name="twitter:card" content="summary_large_image" />
+
+		<meta name="theme-color" content="#070a0f" />
+		<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+		<link rel="alternate icon" href="/assets/favicon.ico" />
+		<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+		<link rel="stylesheet" href="/css/style.css" />
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+
+		<header class="site-header">
+			<div class="shell row between">
+				<a class="brand" href="/">
+					<span class="mark" aria-hidden="true"></span>
+					BurrowGate
+				</a>
+
+				<button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M4 7h16M4 12h16M4 17h16" />
+					</svg>
+				</button>
+
+				<div class="nav-primary-links">
+					<ul class="nav-links">
+						<li><a href="/features.html" class="active">Features</a></li>
+						<li><a href="/screenshots.html">Screenshots</a></li>
+						<li><a href="/docs.html">Docs</a></li>
+						<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub</a></li>
+					</ul>
+					<div class="nav-actions">
+						<a class="button secondary" href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord</a>
+						<a class="button gradient" href="/#quickstart">Get started</a>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<main id="main">
+			<section class="page-hero">
+				<div class="shell">
+					<div class="eyebrow" style="justify-content: center">Full feature list</div>
+					<h1>Everything between the internet and your origin</h1>
+					<p>Ten layers of control, all configured from one dashboard and stored in one database you own.</p>
+				</div>
+			</section>
+
+			<section class="section">
+				<div class="shell">
+					<div class="grid grid-2">
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<rect x="4" y="4" width="16" height="6" rx="1.5" />
+									<rect x="4" y="14" width="16" height="6" rx="1.5" />
+									<path d="M8 7h.01M8 17h.01" />
+								</svg>
+							</div>
+							<h3>Reverse proxy &amp; TLS</h3>
+							<p>Multi-site routing with automated certificates.</p>
+							<ul>
+								<li>Native HTTP and HTTPS listeners on ports 80 and 443</li>
+								<li>Multi-site reverse proxy routing by hostname</li>
+								<li>Automatic Let's Encrypt certificates via ACME HTTP-01, or upload your own PEM chain</li>
+								<li>SNI certificate selection for multiple domains on one listener</li>
+								<li>Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying</li>
+								<li>Signed <code>X-BurrowGate-*</code> origin verification headers (HMAC-SHA256)</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+									<path d="M9 12l2 2 4-4" />
+								</svg>
+							</div>
+							<h3>Bot &amp; abuse protection</h3>
+							<p>Keep automated traffic away from your application.</p>
+							<ul>
+								<li>Managed request protection (WAF) with monitor and block modes</li>
+								<li>Per-route overrides, rule exclusions, and auditable outcomes</li>
+								<li>Pluggable challenge providers with ordered challenge chains</li>
+								<li>SHA-256 browser proof-of-work challenge</li>
+								<li>Opaque, revocable visitor sessions - only a SHA-256 hash is stored</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 5h16l-6 7v6l-4 2v-8z" />
+								</svg>
+							</div>
+							<h3>Network &amp; access policies</h3>
+							<p>Decide who reaches your origin, and how.</p>
+							<ul>
+								<li>IPv4, IPv6, CIDR, and country pass, bypass, block, and challenge rules</li>
+								<li>Site-wide default IP and country actions for allow and blocklists</li>
+								<li>Per-route access modes: inherit, challenge, bypass, or block</li>
+								<li>Access lists with global users, Argon2id password hashing, and rate-limited logins</li>
+								<li>TOTP two-factor enrollment and OIDC SSO with back-channel logout</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 15a8 8 0 1 1 16 0" />
+									<path d="M12 15l4-5" />
+									<circle cx="12" cy="15" r="1" />
+								</svg>
+							</div>
+							<h3>Rate limiting &amp; request limits</h3>
+							<p>Layered limits at the edge, not in your app.</p>
+							<ul>
+								<li>Fixed-window, sliding-window, and token-bucket rate limiters</li>
+								<li>Identity by client IP, verified session, or a selected application header</li>
+								<li>Counters shared across a policy or separated by path and method</li>
+								<li>Request body, request-target, and combined header byte limits</li>
+								<li>Violations rejected with <code>413</code>, <code>414</code>, or <code>431</code> and logged as events</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M17 3l4 4-4 4" />
+									<path d="M21 7H9" />
+									<path d="M7 21l-4-4 4-4" />
+									<path d="M3 17h12" />
+								</svg>
+							</div>
+							<h3>Load balancing &amp; origin health</h3>
+							<p>Multi-origin pools that heal themselves.</p>
+							<ul>
+								<li>Priority failover, round robin, and smooth weighted round robin</li>
+								<li>Session affinity with deterministic client-IP fallback for sessionless requests</li>
+								<li>Per-origin health checks, thresholds, and automatic unhealthy-origin removal</li>
+								<li>Optional 503 maintenance mode with <code>Retry-After</code> when the whole pool is down</li>
+								<li>Webhook alerts: generic signed JSON, Slack, Discord, and ntfy with a durable retrying outbox</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<ellipse cx="12" cy="5" rx="7" ry="3" />
+									<path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+									<path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+								</svg>
+							</div>
+							<h3>Safe static-asset caching</h3>
+							<p>Bounded, process-memory caching with real safety checks.</p>
+							<ul>
+								<li>Entries isolated by site, route-policy version, URL query, and accepted encoding</li>
+								<li>Per-site/per-route enable, TTL, object-size, and extension overrides</li>
+								<li>Cookies, auth headers, range requests, and private responses bypass storage automatically</li>
+								<li>Dashboard reports hit ratio, origin requests avoided, top paths, and memory usage</li>
+								<li>Scoped purge by site, path prefix, or route policy</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 8h13l-3-3" />
+									<path d="M20 16H7l3 3" />
+								</svg>
+							</div>
+							<h3>TCP &amp; UDP streams</h3>
+							<p>Proxy more than HTTP from the same gateway.</p>
+							<ul>
+								<li>Native TCP and UDP stream proxying independent of the HTTP path</li>
+								<li>Optional incoming TCP TLS termination, or raw passthrough</li>
+								<li>Live TCP connection lists and synthetic UDP peer sessions</li>
+								<li>Connect, disconnect, and error logs with GeoIP-enriched client country</li>
+								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 20V10" />
+									<path d="M10 20V4" />
+									<path d="M16 20v-7" />
+									<path d="M4 20h16" />
+								</svg>
+							</div>
+							<h3>Monitoring &amp; analytics</h3>
+							<p>Full visibility, exportable to your existing stack.</p>
+							<ul>
+								<li>Paginated, filterable, sortable traffic, session, route, rule, and site monitoring</li>
+								<li>Bandwidth split between client-side and upstream, by site, IP, protocol, and country</li>
+								<li>Interactive GeoIP world map for requests and new sessions</li>
+								<li>Exact date-time range selection and drag-to-select directly on graphs</li>
+								<li>Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h13M20 18h0" />
+									<circle cx="16" cy="6" r="2" />
+									<circle cx="8" cy="12" r="2" />
+									<circle cx="17" cy="18" r="2" />
+								</svg>
+							</div>
+							<h3>Customization</h3>
+							<p>Make BurrowGate's edge responses match your brand.</p>
+							<ul>
+								<li>Per-site HTML or JSON error responses with escaped, editable templates</li>
+								<li>Per-site custom HTML challenge pages</li>
+								<li>Request/response header policies with route-level overrides</li>
+								<li>Custom responses cover network blocks, rate limits, and origin failures without touching successful traffic</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<rect x="5" y="11" width="14" height="9" rx="2" />
+									<path d="M8 11V7a4 4 0 0 1 8 0v4" />
+								</svg>
+							</div>
+							<h3>Storage &amp; deployment</h3>
+							<p>Runs on infrastructure you already operate.</p>
+							<ul>
+								<li>SQLite by default, with PostgreSQL, MySQL, and MariaDB support via Bun.SQL</li>
+								<li>Production-ready Docker Compose deployment with an optional GeoIP-updater profile</li>
+								<li>Per-site traffic retention from 1 to 365 days with automatic maintenance cleanup</li>
+								<li>Certificate and ACME private keys encrypted at rest with AES-256-GCM</li>
+							</ul>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="section-head center">
+						<div class="eyebrow" style="justify-content: center">How decisions are made</div>
+						<h2>Network policy precedence</h2>
+						<p>When more than one rule could apply to a request, BurrowGate resolves it in a fixed, documented order.</p>
+					</div>
+					<div class="card pad-lg">
+						<div class="steps">
+							<div class="step">
+								<span class="step-num">1</span>
+								<div>
+									<h3>Longest matching IP or CIDR rule</h3>
+									<p>The most specific network match always wins first.</p>
+								</div>
+							</div>
+							<div class="step">
+								<span class="step-num">2</span>
+								<div>
+									<h3>Explicit country rule</h3>
+									<p>A configured rule for the request's GeoIP country.</p>
+								</div>
+							</div>
+							<div class="step">
+								<span class="step-num">3</span>
+								<div>
+									<h3>Default country action</h3>
+									<p>The site's fallback action when no explicit country rule matches.</p>
+								</div>
+							</div>
+							<div class="step">
+								<span class="step-num">4</span>
+								<div>
+									<h3>Default IP action</h3>
+									<p>The site's fallback action for unmatched IP addresses.</p>
+								</div>
+							</div>
+							<div class="step">
+								<span class="step-num">5</span>
+								<div>
+									<h3>Route policy</h3>
+									<p>Path and method-based overrides apply last, on top of network policy.</p>
+								</div>
+							</div>
+						</div>
+						<p class="muted" style="margin: 24px 0 0; font-size: 13.5px">
+							Country policy fails open when the GeoIP database is unavailable - IP rules and the default IP action keep applying. Full precedence rules live in
+							<a
+								href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_POLICIES.md"
+								target="_blank"
+								rel="noopener"
+								style="color: var(--accent); text-decoration: none"
+								>docs/NETWORK_POLICIES.md</a
+							>.
+						</p>
+					</div>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="cta-band">
+						<div class="eyebrow" style="justify-content: center">Ready to try it</div>
+						<h2>Put BurrowGate in front of your first site</h2>
+						<p>One Docker Compose file and a domain is all it takes to get started.</p>
+						<div class="row center wrap">
+							<a class="button gradient lg" href="/#quickstart">Get started</a>
+							<a class="button secondary lg" href="/screenshots.html">See the dashboard</a>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">
+			<div class="shell">
+				<div class="footer-grid">
+					<div class="footer-brand">
+						<a class="brand" href="/"><span class="mark" aria-hidden="true"></span>BurrowGate</a>
+						<p>A self-hosted reverse proxy and access gateway. Open-source and built with love by Rabbit Company.</p>
+						<div class="footer-social">
+							<a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener" aria-label="GitHub"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.06 11.06 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.58.24 2.75.12 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"
+									/></svg
+							></a>
+							<a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener" aria-label="Discord"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.319 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.955 2.42-2.157 2.42Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.946 2.42-2.157 2.42Z"
+									/></svg
+							></a>
+							<a href="https://rabbit-company.com/" target="_blank" rel="noopener" aria-label="Rabbit Company website"
+								><svg
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<circle cx="12" cy="12" r="8" />
+									<path d="M4 12h16" />
+									<path d="M12 4a12 12 0 0 1 0 16" />
+									<path d="M12 4a12 12 0 0 0 0 16" /></svg
+							></a>
+						</div>
+					</div>
+					<div class="footer-col">
+						<h4>Product</h4>
+						<ul>
+							<li><a href="/features.html">Features</a></li>
+							<li><a href="/screenshots.html">Screenshots</a></li>
+							<li><a href="/docs.html">Documentation</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/releases" target="_blank" rel="noopener">Releases</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Community</h4>
+						<ul>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub repository</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/issues" target="_blank" rel="noopener">Report an issue</a></li>
+							<li><a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord server</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Company</h4>
+						<ul>
+							<li><a href="https://rabbit-company.com/" target="_blank" rel="noopener">Rabbit Company</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/LICENSE" target="_blank" rel="noopener">GPLv3 license</a></li>
+						</ul>
+					</div>
+				</div>
+				<div class="footer-bottom">
+					<span>&copy; <span id="year">2026</span> Rabbit Company. Made with love, open-source under GPLv3.</span>
+					<span>burrowgate.org</span>
+				</div>
+			</div>
+		</footer>
+
+		<script src="/js/main.js"></script>
+	</body>
+</html>

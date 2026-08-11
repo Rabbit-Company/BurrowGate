@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="mark" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(230 40) rotate(90) scale(560 900)">
+      <stop stop-color="#172033"/>
+      <stop offset="1" stop-color="#070a0f"/>
+    </radialGradient>
+    <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <g transform="translate(100 96) scale(2.6)" fill="none" stroke="#0b1020" stroke-width="0">
+    <rect width="64" height="64" rx="16" fill="url(#mark)"/>
+    <g transform="translate(14 14) scale(1.5)" fill="none" stroke="#0b1020" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 21h14a2 2 0 0 0 2 -2v-7a9 9 0 0 0 -18 0v7a2 2 0 0 0 2 2"/>
+      <path d="M8 21v-9a4 4 0 1 1 8 0v9"/>
+      <path d="M3 17h4"/>
+      <path d="M17 17h4"/>
+    </g>
+  </g>
+
+  <text x="100" y="360" font-family="Liberation Sans, Arial, sans-serif" font-weight="700" font-size="88" fill="#e5e7eb">BurrowGate</text>
+
+  <text x="103" y="420" font-family="Liberation Sans, Arial, sans-serif" font-weight="400" font-size="30" fill="#94a3b8">Self-hosted reverse proxy &amp; access gateway</text>
+
+  <g font-family="Liberation Sans, Arial, sans-serif" font-weight="700" font-size="22">
+    <rect x="103" y="450" width="183" height="42" rx="21" fill="#052e26" stroke="#0f766e"/>
+    <text x="126" y="477" fill="#99f6e4">Open Source</text>
+
+    <rect x="302" y="450" width="160" height="42" rx="21" fill="#0c2945" stroke="#0369a1"/>
+    <text x="325" y="477" fill="#bae6fd">Bun-native</text>
+
+    <rect x="478" y="450" width="116" height="42" rx="21" fill="#1f2937" stroke="#374151"/>
+    <text x="501" y="477" fill="#e5e7eb">GPLv3</text>
+  </g>
+
+  <text x="100" y="565" font-family="Liberation Sans, Arial, sans-serif" font-weight="400" font-size="24" fill="#64748b">burrowgate.org</text>
+  <text x="1100" y="565" font-family="Liberation Sans, Arial, sans-serif" font-weight="400" font-size="24" fill="#64748b" text-anchor="end">by Rabbit Company</text>
+</svg>

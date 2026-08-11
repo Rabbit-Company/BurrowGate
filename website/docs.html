@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Documentation - BurrowGate</title>
+		<meta
+			name="description"
+			content="Install BurrowGate, configure environment variables, and dig into per-feature docs: access lists, network policies, streams, GeoIP, SSO, and more."
+		/>
+		<link rel="canonical" href="https://burrowgate.org/docs.html" />
+
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="BurrowGate" />
+		<meta property="og:title" content="Documentation - BurrowGate" />
+		<meta
+			property="og:description"
+			content="Install BurrowGate, configure environment variables, and dig into per-feature docs: access lists, network policies, streams, GeoIP, SSO, and more."
+		/>
+		<meta property="og:url" content="https://burrowgate.org/docs.html" />
+		<meta property="og:image" content="https://burrowgate.org/assets/og-image.png" />
+		<meta name="twitter:card" content="summary_large_image" />
+
+		<meta name="theme-color" content="#070a0f" />
+		<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+		<link rel="alternate icon" href="/assets/favicon.ico" />
+		<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+		<link rel="stylesheet" href="/css/style.css" />
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+
+		<header class="site-header">
+			<div class="shell row between">
+				<a class="brand" href="/">
+					<span class="mark" aria-hidden="true"></span>
+					BurrowGate
+				</a>
+
+				<button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M4 7h16M4 12h16M4 17h16" />
+					</svg>
+				</button>
+
+				<div class="nav-primary-links">
+					<ul class="nav-links">
+						<li><a href="/features.html">Features</a></li>
+						<li><a href="/screenshots.html">Screenshots</a></li>
+						<li><a href="/docs.html" class="active">Docs</a></li>
+						<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub</a></li>
+					</ul>
+					<div class="nav-actions">
+						<a class="button secondary" href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord</a>
+						<a class="button gradient" href="/#quickstart">Get started</a>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<main id="main">
+			<section class="page-hero">
+				<div class="shell">
+					<div class="eyebrow" style="justify-content: center">Documentation</div>
+					<h1>Install it, configure it, run it</h1>
+					<p>The full reference lives in the GitHub repository and stays versioned with the code. This page is a map to it.</p>
+				</div>
+			</section>
+
+			<!-- Quick install recap -->
+			<section class="section-tight">
+				<div class="shell">
+					<div class="card pad-lg">
+						<div class="row between wrap" style="margin-bottom: 20px; gap: 16px">
+							<div>
+								<h2 style="font-size: 20px; margin-bottom: 6px">Quick install</h2>
+								<p class="muted" style="margin: 0; font-size: 14.5px">A Linux VPS with Docker, public ports 80/443, and a domain pointed at it.</p>
+							</div>
+							<a class="button secondary" href="https://github.com/Rabbit-Company/BurrowGate#quick-start" target="_blank" rel="noopener">
+								Full quick start
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</a>
+						</div>
+						<div class="code-block">
+							<div class="code-block-head">
+								<span>terminal</span>
+								<button class="code-copy" data-copy-target="code-quick" type="button">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<rect x="9" y="9" width="11" height="11" rx="2" />
+										<path d="M5 15V5a2 2 0 0 1 2-2h10" />
+									</svg>
+									Copy
+								</button>
+							</div>
+							<pre id="code-quick"><code><span class="tok-c"># fetch the Compose file and start BurrowGate</span>
+mkdir burrowgate &amp;&amp; cd burrowgate
+curl -fsSLO https://raw.githubusercontent.com/Rabbit-Company/BurrowGate/main/docker-compose.yml
+docker compose up -d
+
+<span class="tok-c"># read the generated dashboard password</span>
+docker compose exec burrowgate cat /app/data/bootstrap-admin-password.txt
+
+<span class="tok-c"># then open</span>
+<span class="tok-k">https</span>://<span class="tok-s">SERVER_IP</span>/_burrowgate/admin</code></pre>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<!-- Doc index -->
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="section-head">
+						<div class="eyebrow">Feature guides</div>
+						<h2>Documentation index</h2>
+						<p>Each guide covers one part of BurrowGate in depth and lives alongside the source code on GitHub.</p>
+					</div>
+					<div class="grid grid-3">
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/ACCESS_LISTS.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Access Lists</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Global users, Argon2id passwords, TOTP enrollment, and signed identity headers.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/SSO.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>SSO</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>OIDC single sign-on setup, enforcement, and back-channel logout.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_POLICIES.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Network Policies</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>IP, CIDR, and country rules, default actions, and precedence order.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/ROUTE_POLICIES.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Route Policies</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Per-path access modes, rate limits, header policies, and caching.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/MANAGED_PROTECTION.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Managed Protection</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Managed WAF rules, monitor/block modes, and versioned rule metadata.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/ADDING_CHALLENGES.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Adding Challenges</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>How the challenge provider registry works, for building your own.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/CHALLENGE_PAGES.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Challenge Pages</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Customizing the HTML a visitor sees during a browser challenge.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/ERROR_RESPONSES.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Error Responses</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Custom HTML or JSON responses for blocks, limits, and origin failures.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/TLS.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>TLS</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Let's Encrypt automation, uploaded certificates, and key encryption.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/STREAMS.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Streams</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>TCP/UDP proxying, TLS termination, and Compose port mapping.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/BANDWIDTH.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Bandwidth</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Client vs. upstream bandwidth counters and aggregation.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/GEOIP.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>GeoIP</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>MaxMind database setup and the optional auto-updater profile.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/OPENMETRICS.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>OpenMetrics</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>Prometheus and OpenTelemetry Collector export reference.</p>
+						</a>
+					</div>
+				</div>
+			</section>
+
+			<!-- Config reference -->
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="section-head">
+						<div class="eyebrow">Configuration</div>
+						<h2>Common environment variables</h2>
+						<p>
+							The most frequently changed settings. See
+							<a
+								href="https://github.com/Rabbit-Company/BurrowGate/blob/main/.env.example"
+								target="_blank"
+								rel="noopener"
+								style="color: var(--accent); text-decoration: none"
+								>.env.example</a
+							>
+							on GitHub for the complete list.
+						</p>
+					</div>
+					<div class="config-table-wrap">
+						<table class="config-table">
+							<thead>
+								<tr>
+									<th>Variable</th>
+									<th>Default</th>
+									<th>Description</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td><code>BG_HOST</code></td>
+									<td class="default"><code>0.0.0.0</code></td>
+									<td>Listener address</td>
+								</tr>
+								<tr>
+									<td><code>BG_HTTP_PORT</code> / <code>BG_HTTPS_PORT</code></td>
+									<td class="default"><code>80</code> / <code>443</code></td>
+									<td>Internal listener ports</td>
+								</tr>
+								<tr>
+									<td><code>DATABASE_URL</code></td>
+									<td class="default"><code>sqlite://./data/burrowgate.db</code></td>
+									<td>Bun.SQL database URL - also accepts <code>postgres://</code> and <code>mysql://</code></td>
+								</tr>
+								<tr>
+									<td><code>BG_ADMIN_USERNAME</code></td>
+									<td class="default"><code>admin</code></td>
+									<td>Dashboard username</td>
+								</tr>
+								<tr>
+									<td><code>BG_ADMIN_PASSWORD</code></td>
+									<td class="default">generated</td>
+									<td>Dashboard password</td>
+								</tr>
+								<tr>
+									<td><code>BG_MASTER_KEY</code></td>
+									<td class="default">generated</td>
+									<td>Encrypts certificate and ACME private keys - back this up with your database</td>
+								</tr>
+								<tr>
+									<td><code>BG_EVENT_RETENTION_DAYS</code></td>
+									<td class="default"><code>7</code></td>
+									<td>Default monitoring retention for new sites and streams</td>
+								</tr>
+								<tr>
+									<td><code>BG_GEOIP_ENABLED</code></td>
+									<td class="default"><code>true</code></td>
+									<td>Enable country-level GeoIP enrichment</td>
+								</tr>
+								<tr>
+									<td><code>BG_OPENMETRICS_ENABLED</code></td>
+									<td class="default"><code>false</code></td>
+									<td>Expose <code>/_burrowgate/metrics</code> for Prometheus-compatible scraping</td>
+								</tr>
+								<tr>
+									<td><code>BG_DEFAULT_POW_DIFFICULTY</code></td>
+									<td class="default"><code>18</code></td>
+									<td>Default SHA-256 challenge difficulty</td>
+								</tr>
+								<tr>
+									<td><code>BG_WEBSOCKET_ENABLED</code></td>
+									<td class="default"><code>true</code></td>
+									<td>Enable WebSocket proxying</td>
+								</tr>
+								<tr>
+									<td><code>BG_ACME_EMAIL</code></td>
+									<td class="default">empty</td>
+									<td>Default ACME contact email for Let's Encrypt</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="cta-band">
+						<div class="eyebrow" style="justify-content: center">Need more detail</div>
+						<h2>The full README covers everything</h2>
+						<p>Sites, load balancing, TLS, sessions, monitoring, and current limitations - all in one place.</p>
+						<div class="row center wrap">
+							<a class="button gradient lg" href="https://github.com/Rabbit-Company/BurrowGate#readme" target="_blank" rel="noopener">Read the README</a>
+							<a class="button secondary lg" href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Ask on Discord</a>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">
+			<div class="shell">
+				<div class="footer-grid">
+					<div class="footer-brand">
+						<a class="brand" href="/"><span class="mark" aria-hidden="true"></span>BurrowGate</a>
+						<p>A self-hosted reverse proxy and access gateway. Open-source and built with love by Rabbit Company.</p>
+						<div class="footer-social">
+							<a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener" aria-label="GitHub"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.06 11.06 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.58.24 2.75.12 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"
+									/></svg
+							></a>
+							<a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener" aria-label="Discord"
+								><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.319 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.955 2.42-2.157 2.42Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.946 2.42-2.157 2.42Z"
+									/></svg
+							></a>
+							<a href="https://rabbit-company.com/" target="_blank" rel="noopener" aria-label="Rabbit Company website"
+								><svg
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<circle cx="12" cy="12" r="8" />
+									<path d="M4 12h16" />
+									<path d="M12 4a12 12 0 0 1 0 16" />
+									<path d="M12 4a12 12 0 0 0 0 16" /></svg
+							></a>
+						</div>
+					</div>
+					<div class="footer-col">
+						<h4>Product</h4>
+						<ul>
+							<li><a href="/features.html">Features</a></li>
+							<li><a href="/screenshots.html">Screenshots</a></li>
+							<li><a href="/docs.html">Documentation</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/releases" target="_blank" rel="noopener">Releases</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Community</h4>
+						<ul>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub repository</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/issues" target="_blank" rel="noopener">Report an issue</a></li>
+							<li><a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord server</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Company</h4>
+						<ul>
+							<li><a href="https://rabbit-company.com/" target="_blank" rel="noopener">Rabbit Company</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/LICENSE" target="_blank" rel="noopener">GPLv3 license</a></li>
+						</ul>
+					</div>
+				</div>
+				<div class="footer-bottom">
+					<span>&copy; <span id="year">2026</span> Rabbit Company. Made with love, open-source under GPLv3.</span>
+					<span>burrowgate.org</span>
+				</div>
+			</div>
+		</footer>
+
+		<script src="/js/main.js"></script>
+	</body>
+</html>
