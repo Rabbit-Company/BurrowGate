@@ -12,6 +12,132 @@ const tableState = {
 	auditLog: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
 
+const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.admin.column-visibility";
+
+const COLUMN_REGISTRY = {
+	traffic: [
+		{ key: "country", label: "Country" },
+		{ key: "method", label: "Method" },
+		{ key: "path", label: "Path" },
+		{ key: "referer", label: "Referrer" },
+		{ key: "origin", label: "Origin", apply: () => setTrafficOriginVisibility(trafficOrigins) },
+		{ key: "status", label: "Status" },
+		{ key: "decision", label: "Decision" },
+		{ key: "cache", label: "Cache" },
+		{ key: "protection", label: "Protection" },
+		{ key: "latency", label: "Latency" },
+	],
+	bandwidth: [
+		{ key: "country", label: "Country" },
+		{ key: "toClient", label: "To client" },
+		{ key: "fromClient", label: "From client" },
+		{ key: "fromOrigin", label: "From origin" },
+		{ key: "toOrigin", label: "To origin" },
+		{ key: "clientTotal", label: "Client total" },
+		{ key: "upstreamTotal", label: "Upstream total" },
+	],
+	sessions: [
+		{ key: "country", label: "Country" },
+		{ key: "created", label: "Created" },
+		{ key: "lastSeen", label: "Last seen" },
+		{ key: "expires", label: "Expires" },
+		{ key: "requests", label: "Requests" },
+	],
+	rules: [
+		{ key: "reason", label: "Reason" },
+		{ key: "ruleId", label: "Rule ID" },
+		{ key: "created", label: "Created" },
+		{ key: "expires", label: "Expires" },
+	],
+};
+
+function readColumnVisibility() {
+	try {
+		const stored = JSON.parse(localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY) ?? "{}");
+		return stored && typeof stored === "object" ? stored : {};
+	} catch {
+		return {};
+	}
+}
+
+let columnVisibility = readColumnVisibility();
+
+function saveColumnVisibility() {
+	try {
+		localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibility));
+	} catch {}
+}
+
+function isColumnVisible(tableKey, columnKey) {
+	return columnVisibility[tableKey]?.[columnKey] !== false;
+}
+
+const TABLE_RELOADERS = {
+	traffic: () => loadTraffic(),
+	bandwidth: () => loadBandwidth(),
+	sessions: () => loadSessions(),
+	rules: () => loadRules(),
+};
+
+function setColumnVisible(tableKey, columnKey, visible) {
+	columnVisibility[tableKey] ??= {};
+	columnVisibility[tableKey][columnKey] = visible;
+	saveColumnVisibility();
+	applyColumnVisibility(tableKey);
+	TABLE_RELOADERS[tableKey]?.();
+}
+
+function applyColumnVisibility(tableKey) {
+	for (const column of COLUMN_REGISTRY[tableKey] ?? []) {
+		if (column.apply) {
+			column.apply();
+			continue;
+		}
+		const visible = isColumnVisible(tableKey, column.key);
+		document.querySelectorAll(`[data-column="${tableKey}:${column.key}"]`).forEach((element) => element.classList.toggle("hidden", !visible));
+	}
+}
+
+function visibleColumnCount(tableKey, fixedCount, eligible = () => true) {
+	const columns = COLUMN_REGISTRY[tableKey] ?? [];
+	return fixedCount + columns.filter((column) => eligible(column.key) && isColumnVisible(tableKey, column.key)).length;
+}
+
+function columnsMenuMarkup(tableKey) {
+	const columns = COLUMN_REGISTRY[tableKey] ?? [];
+	if (columns.length === 0) return "";
+	const items = columns
+		.map(
+			(column) =>
+				`<label class="columns-menu-item"><input type="checkbox" data-column-toggle="${tableKey}:${column.key}"${isColumnVisible(tableKey, column.key) ? " checked" : ""}> ${escapeHtml(column.label)}</label>`,
+		)
+		.join("");
+	return `<details class="columns-menu-details"><summary class="button secondary compact">Columns</summary><div class="columns-menu">${items}</div></details>`;
+}
+
+function insertColumnsMenus(anchors) {
+	for (const [tableKey, containerId] of Object.entries(anchors)) {
+		const markup = columnsMenuMarkup(tableKey);
+		if (!markup) continue;
+		byId(containerId)?.insertAdjacentHTML("afterbegin", markup);
+	}
+	for (const tableKey of Object.keys(anchors)) applyColumnVisibility(tableKey);
+}
+
+function bindColumnsMenus() {
+	document.addEventListener("change", (event) => {
+		const target = event.target;
+		if (!(target instanceof HTMLInputElement) || !target.dataset.columnToggle) return;
+		const [tableKey, columnKey] = target.dataset.columnToggle.split(":");
+		setColumnVisible(tableKey, columnKey, target.checked);
+	});
+	document.addEventListener("click", (event) => {
+		for (const details of document.querySelectorAll("details.columns-menu-details[open]")) {
+			if (!details.contains(event.target)) details.removeAttribute("open");
+		}
+	});
+}
+
 const selectedRuleIds = new Set();
 
 let activeTab = "traffic";
@@ -82,6 +208,7 @@ let activeSiteEditorTab = "general";
 let activeRouteEditorTab = "general";
 let siteOrigins = [];
 let trafficHasMultipleOrigins = false;
+let trafficOrigins = [];
 let editingOriginId = null;
 let routePolicies = [];
 let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
@@ -591,14 +718,15 @@ function refererLabel(host) {
 }
 
 function setTrafficOriginVisibility(origins = []) {
+	trafficOrigins = origins;
 	trafficHasMultipleOrigins = origins.length > 1;
 	byId("eventOriginFilter").classList.toggle("hidden", !trafficHasMultipleOrigins);
-	byId("eventOriginColumnHeader").classList.toggle("hidden", !trafficHasMultipleOrigins);
+	byId("eventOriginColumnHeader").classList.toggle("hidden", !trafficHasMultipleOrigins || !isColumnVisible("traffic", "origin"));
 	if (!trafficHasMultipleOrigins) byId("eventOrigin").value = "";
 }
 
 function trafficColumnCount() {
-	return trafficHasMultipleOrigins ? 12 : 11;
+	return visibleColumnCount("traffic", 2, (key) => key !== "origin" || trafficHasMultipleOrigins);
 }
 
 async function loadTraffic() {
@@ -649,16 +777,16 @@ async function loadTraffic() {
 							(event) => `<tr>
           <td>${formatDate(event.created_at)}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
-          <td>${countryBadge(event.country_code)}</td>
-          <td><span class="method-badge">${escapeHtml(event.method)}</span></td>
-          <td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>
-          <td title="${escapeHtml(event.referer || "No referrer")}">${refererLabel(event.referer_host)}</td>
-          ${trafficHasMultipleOrigins ? `<td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>` : ""}
-          <td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>
-          <td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>
-			<td>${event.cache_status ? `<span class="badge ${event.cache_status === "hit" ? "ok" : event.cache_status === "miss" ? "warn" : "info"}">${escapeHtml(event.cache_status)}</span>` : '<span class="muted">-</span>'}</td>
-			<td title="${escapeHtml(event.protection_rule_id ?? "No managed rule matched")}">${event.protection_status ? `<span class="badge ${event.protection_status === "blocked" ? "bad" : event.protection_status === "monitored" ? "warn" : "ok"}">${event.protection_status === "monitored" ? "would block" : escapeHtml(event.protection_status)}</span>` : '<span class="muted">-</span>'}</td>
-          <td>${formatDuration(event.latency_ms)}</td>
+          ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
+          ${isColumnVisible("traffic", "method") ? `<td><span class="method-badge">${escapeHtml(event.method)}</span></td>` : ""}
+          ${isColumnVisible("traffic", "path") ? `<td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>` : ""}
+          ${isColumnVisible("traffic", "referer") ? `<td class="referrer-cell" title="${escapeHtml(event.referer || "No referrer")}">${refererLabel(event.referer_host)}</td>` : ""}
+          ${trafficHasMultipleOrigins && isColumnVisible("traffic", "origin") ? `<td title="${escapeHtml(event.origin_id ?? "No origin selected")}">${event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? `<span class="muted">${escapeHtml(truncate(event.origin_id, 18))}</span>` : "-"}</td>` : ""}
+          ${isColumnVisible("traffic", "status") ? `<td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>` : ""}
+          ${isColumnVisible("traffic", "decision") ? `<td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>` : ""}
+			${isColumnVisible("traffic", "cache") ? `<td>${event.cache_status ? `<span class="badge ${event.cache_status === "hit" ? "ok" : event.cache_status === "miss" ? "warn" : "info"}">${escapeHtml(event.cache_status)}</span>` : '<span class="muted">-</span>'}</td>` : ""}
+			${isColumnVisible("traffic", "protection") ? `<td title="${escapeHtml(event.protection_rule_id ?? "No managed rule matched")}">${event.protection_status ? `<span class="badge ${event.protection_status === "blocked" ? "bad" : event.protection_status === "monitored" ? "warn" : "ok"}">${event.protection_status === "monitored" ? "would block" : escapeHtml(event.protection_status)}</span>` : '<span class="muted">-</span>'}</td>` : ""}
+          ${isColumnVisible("traffic", "latency") ? `<td>${formatDuration(event.latency_ms)}</td>` : ""}
         </tr>`,
 						)
 						.join("");
@@ -669,9 +797,13 @@ async function loadTraffic() {
 	}
 }
 
+function bandwidthColumnCount() {
+	return visibleColumnCount("bandwidth", 2);
+}
+
 async function loadBandwidth() {
 	const state = tableState.bandwidth;
-	setTableLoading("bandwidthIps", 9);
+	setTableLoading("bandwidthIps", bandwidthColumnCount());
 	updateSortIndicators("panel-bandwidth", state);
 	try {
 		const result = await api(
@@ -692,25 +824,25 @@ async function loadBandwidth() {
 		}
 		byId("bandwidthIps").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="9" class="empty-cell">No client bandwidth matches these filters.</td></tr>'
+				? `<tr><td colspan="${bandwidthColumnCount()}" class="empty-cell">No client bandwidth matches these filters.</td></tr>`
 				: result.items
 						.map(
 							(item) => `<tr>
           <td class="ip-cell"><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td>
-          <td>${countryBadge(item.country_code)}</td>
-          <td>${formatBytes(item.client_sent_bytes)}</td>
-          <td>${formatBytes(item.client_received_bytes)}</td>
-          <td>${formatBytes(item.upstream_received_bytes)}</td>
-          <td>${formatBytes(item.upstream_sent_bytes)}</td>
-          <td><strong>${formatBytes(item.client_total_bytes)}</strong></td>
-          <td>${formatBytes(item.upstream_total_bytes)}</td>
+          ${isColumnVisible("bandwidth", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "toClient") ? `<td>${formatBytes(item.client_sent_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "fromClient") ? `<td>${formatBytes(item.client_received_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "fromOrigin") ? `<td>${formatBytes(item.upstream_received_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "toOrigin") ? `<td>${formatBytes(item.upstream_sent_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "clientTotal") ? `<td><strong>${formatBytes(item.client_total_bytes)}</strong></td>` : ""}
+          ${isColumnVisible("bandwidth", "upstreamTotal") ? `<td>${formatBytes(item.upstream_total_bytes)}</td>` : ""}
           <td><button class="button danger compact" type="button" data-bandwidth-block="${escapeHtml(item.ip)}">Block IP</button></td>
         </tr>`,
 						)
 						.join("");
 		updatePagination("bandwidth", result, loadBandwidth);
 	} catch (error) {
-		setTableError("bandwidthIps", 9, error);
+		setTableError("bandwidthIps", bandwidthColumnCount(), error);
 	}
 }
 
@@ -720,9 +852,13 @@ function sessionState(session) {
 	return "active";
 }
 
+function sessionsColumnCount() {
+	return visibleColumnCount("sessions", 4);
+}
+
 async function loadSessions() {
 	const state = tableState.sessions;
-	setTableLoading("sessions", 9);
+	setTableLoading("sessions", sessionsColumnCount());
 	updateSortIndicators("panel-sessions", state);
 	try {
 		const result = await api(
@@ -743,7 +879,7 @@ async function loadSessions() {
 		}
 		byId("sessions").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="9" class="empty-cell">No sessions match these filters.</td></tr>'
+				? `<tr><td colspan="${sessionsColumnCount()}" class="empty-cell">No sessions match these filters.</td></tr>`
 				: result.items
 						.map((session) => {
 							const currentState = sessionState(session);
@@ -751,18 +887,18 @@ async function loadSessions() {
           <td><span class="badge ${currentState === "active" ? "ok" : currentState === "expired" ? "warn" : "bad"}">${currentState}</span></td>
           <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code>${session.access_username ? `<span class="cell-subtext">${escapeHtml(session.access_username)}</span>` : ""}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
-          <td>${countryBadge(session.country_code)}</td>
-          <td>${formatDate(session.created_at)}</td>
-          <td>${formatDate(session.last_seen_at)}</td>
-          <td>${formatDate(session.expires_at)}</td>
-          <td>${formatNumber(session.request_count)}</td>
+          ${isColumnVisible("sessions", "country") ? `<td>${countryBadge(session.country_code)}</td>` : ""}
+          ${isColumnVisible("sessions", "created") ? `<td>${formatDate(session.created_at)}</td>` : ""}
+          ${isColumnVisible("sessions", "lastSeen") ? `<td>${formatDate(session.last_seen_at)}</td>` : ""}
+          ${isColumnVisible("sessions", "expires") ? `<td>${formatDate(session.expires_at)}</td>` : ""}
+          ${isColumnVisible("sessions", "requests") ? `<td>${formatNumber(session.request_count)}</td>` : ""}
           <td>${currentState === "active" ? `<button class="button danger compact" data-session-id="${escapeHtml(session.id)}">Revoke</button>` : "-"}</td>
         </tr>`;
 						})
 						.join("");
 		updatePagination("sessions", result, loadSessions);
 	} catch (error) {
-		setTableError("sessions", 9, error);
+		setTableError("sessions", sessionsColumnCount(), error);
 	}
 }
 
@@ -781,18 +917,22 @@ function updateBulkUnbanRulesButton() {
 	selectAll.indeterminate = selectedOnPage.length > 0 && selectedOnPage.length < rowCheckboxes.length;
 }
 
+function rulesColumnCount() {
+	return visibleColumnCount("rules", 5);
+}
+
 async function loadRules() {
 	const state = tableState.rules;
 	selectedRuleIds.clear();
 	updateBulkUnbanRulesButton();
 	if (!selectedSiteId) {
-		byId("rules").innerHTML = '<tr><td colspan="9" class="empty-cell">Create or select a site before adding IP rules.</td></tr>';
+		byId("rules").innerHTML = `<tr><td colspan="${rulesColumnCount()}" class="empty-cell">Create or select a site before adding IP rules.</td></tr>`;
 		byId("countryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding country rules.</td></tr>';
 		byId("saveNetworkDefaults").disabled = true;
 		return;
 	}
 	byId("saveNetworkDefaults").disabled = false;
-	setTableLoading("rules", 9);
+	setTableLoading("rules", rulesColumnCount());
 	setTableLoading("countryRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
@@ -817,7 +957,7 @@ async function loadRules() {
 		}
 		byId("rules").innerHTML =
 			result.items.length === 0
-				? '<tr><td colspan="9" class="empty-cell">No IP rules match these filters.</td></tr>'
+				? `<tr><td colspan="${rulesColumnCount()}" class="empty-cell">No IP rules match these filters.</td></tr>`
 				: result.items
 						.map((rule) => {
 							const currentState = ruleState(rule);
@@ -826,17 +966,17 @@ async function loadRules() {
           <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
           <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
           <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
-          <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
-          <td>${rule.rule_id ? `<code>${escapeHtml(rule.rule_id)}</code>` : '<span class="badge">Manual</span>'}</td>
-          <td>${formatDate(rule.created_at)}</td>
-          <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+          ${isColumnVisible("rules", "reason") ? `<td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>` : ""}
+          ${isColumnVisible("rules", "ruleId") ? `<td>${rule.rule_id ? `<code>${escapeHtml(rule.rule_id)}</code>` : '<span class="badge">Manual</span>'}</td>` : ""}
+          ${isColumnVisible("rules", "created") ? `<td>${formatDate(rule.created_at)}</td>` : ""}
+          ${isColumnVisible("rules", "expires") ? `<td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>` : ""}
           <td><button class="button danger compact" data-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
         </tr>`;
 						})
 						.join("");
 		updatePagination("rules", result, loadRules);
 	} catch (error) {
-		setTableError("rules", 9, error);
+		setTableError("rules", rulesColumnCount(), error);
 		setTableError("countryRules", 7, error);
 	}
 }
@@ -3990,6 +4130,13 @@ function bindActions() {
 async function start() {
 	initializeDateTimeFormat();
 	initializeDateRange();
+	insertColumnsMenus({
+		traffic: "trafficHeaderActions",
+		bandwidth: "bandwidthHeaderActions",
+		sessions: "sessionsHeaderActions",
+		rules: "rulesHeaderActions",
+	});
+	bindColumnsMenus();
 	bindSortButtons();
 	bindFilters();
 	bindActions();

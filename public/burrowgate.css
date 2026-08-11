@@ -397,6 +397,45 @@ form.grid label {
 	min-width: 150px;
 }
 
+.columns-menu-details {
+	position: relative;
+	display: inline-block;
+}
+.columns-menu-details > summary {
+	list-style: none;
+	cursor: pointer;
+}
+.columns-menu-details > summary::-webkit-details-marker {
+	display: none;
+}
+.columns-menu {
+	position: absolute;
+	right: 0;
+	top: calc(100% + 6px);
+	z-index: 20;
+	min-width: 180px;
+	padding: 10px;
+	display: grid;
+	gap: 4px;
+	background: rgba(17, 24, 39, 0.98);
+	border: 1px solid #283244;
+	border-radius: 12px;
+	box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+.columns-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border-radius: 8px;
+	font-size: 13px;
+	color: #cbd5e1;
+	cursor: pointer;
+}
+.columns-menu-item:hover {
+	background: rgba(148, 163, 184, 0.1);
+}
+
 .table-wrap {
 	overflow: auto;
 	border-top: 1px solid #273244;
@@ -432,6 +471,12 @@ form.grid label {
 }
 .path-cell {
 	max-width: 30ch;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.referrer-cell {
+	max-width: 15ch;
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;

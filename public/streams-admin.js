@@ -39,6 +39,120 @@ const tableState = {
 	auditLog: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
 };
 
+const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.streams-admin.column-visibility";
+
+const COLUMN_REGISTRY = {
+	connections: [
+		{ key: "country", label: "Country" },
+		{ key: "connected", label: "Connected" },
+		{ key: "lastActivity", label: "Last activity" },
+		{ key: "toOrigin", label: "To origin" },
+		{ key: "toClient", label: "To client" },
+	],
+	events: [
+		{ key: "country", label: "Country" },
+		{ key: "event", label: "Event" },
+		{ key: "reason", label: "Reason" },
+		{ key: "rule", label: "Rule" },
+		{ key: "toOrigin", label: "To origin" },
+		{ key: "toClient", label: "To client" },
+	],
+	bandwidth: [
+		{ key: "country", label: "Country" },
+		{ key: "toOrigin", label: "To origin" },
+		{ key: "toClient", label: "To client" },
+		{ key: "total", label: "Total" },
+	],
+	rules: [
+		{ key: "reason", label: "Reason" },
+		{ key: "created", label: "Created" },
+		{ key: "expires", label: "Expires" },
+	],
+};
+
+function readColumnVisibility() {
+	try {
+		const stored = JSON.parse(localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY) ?? "{}");
+		return stored && typeof stored === "object" ? stored : {};
+	} catch {
+		return {};
+	}
+}
+
+let columnVisibility = readColumnVisibility();
+
+function saveColumnVisibility() {
+	try {
+		localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibility));
+	} catch {}
+}
+
+function isColumnVisible(tableKey, columnKey) {
+	return columnVisibility[tableKey]?.[columnKey] !== false;
+}
+
+const TABLE_RELOADERS = {
+	connections: () => renderActive(activeConnections),
+	events: () => loadEvents(),
+	bandwidth: () => loadBandwidth(),
+	rules: () => loadStreamRules(),
+};
+
+function setColumnVisible(tableKey, columnKey, visible) {
+	columnVisibility[tableKey] ??= {};
+	columnVisibility[tableKey][columnKey] = visible;
+	saveColumnVisibility();
+	applyColumnVisibility(tableKey);
+	TABLE_RELOADERS[tableKey]?.();
+}
+
+function applyColumnVisibility(tableKey) {
+	for (const column of COLUMN_REGISTRY[tableKey] ?? []) {
+		const visible = isColumnVisible(tableKey, column.key);
+		document.querySelectorAll(`[data-column="${tableKey}:${column.key}"]`).forEach((element) => element.classList.toggle("hidden", !visible));
+	}
+}
+
+function visibleColumnCount(tableKey, fixedCount) {
+	const columns = COLUMN_REGISTRY[tableKey] ?? [];
+	return fixedCount + columns.filter((column) => isColumnVisible(tableKey, column.key)).length;
+}
+
+function columnsMenuMarkup(tableKey) {
+	const columns = COLUMN_REGISTRY[tableKey] ?? [];
+	if (columns.length === 0) return "";
+	const items = columns
+		.map(
+			(column) =>
+				`<label class="columns-menu-item"><input type="checkbox" data-column-toggle="${tableKey}:${column.key}"${isColumnVisible(tableKey, column.key) ? " checked" : ""}> ${escapeHtml(column.label)}</label>`,
+		)
+		.join("");
+	return `<details class="columns-menu-details"><summary class="button secondary compact">Columns</summary><div class="columns-menu">${items}</div></details>`;
+}
+
+function insertColumnsMenus(anchors) {
+	for (const [tableKey, containerId] of Object.entries(anchors)) {
+		const markup = columnsMenuMarkup(tableKey);
+		if (!markup) continue;
+		byId(containerId)?.insertAdjacentHTML("afterbegin", markup);
+	}
+	for (const tableKey of Object.keys(anchors)) applyColumnVisibility(tableKey);
+}
+
+function bindColumnsMenus() {
+	document.addEventListener("change", (event) => {
+		const target = event.target;
+		if (!(target instanceof HTMLInputElement) || !target.dataset.columnToggle) return;
+		const [tableKey, columnKey] = target.dataset.columnToggle.split(":");
+		setColumnVisible(tableKey, columnKey, target.checked);
+	});
+	document.addEventListener("click", (event) => {
+		for (const details of document.querySelectorAll("details.columns-menu-details[open]")) {
+			if (!details.contains(event.target)) details.removeAttribute("open");
+		}
+	});
+}
+
 const escapeHtml = (value) =>
 	String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
@@ -900,6 +1014,10 @@ function activeCountries(items) {
 	return [...counts].map(([countryCode, count]) => ({ countryCode, count }));
 }
 
+function connectionsColumnCount() {
+	return visibleColumnCount("connections", 3);
+}
+
 function renderActive(items) {
 	activeConnections = items;
 	const state = tableState.connections;
@@ -913,11 +1031,19 @@ function renderActive(items) {
 	byId("activeConnections").innerHTML = filtered.length
 		? filtered
 				.map(
-					(item) =>
-						`<tr><td><span class="badge info">${item.protocol.toUpperCase()}</span></td><td><code>${item.incomingPort}</code></td><td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code></td><td>${countryBadge(item.countryCode)}</td><td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td><td>${escapeHtml(formatDate(item.lastActivityAt))}</td><td>${formatBytes(item.clientToUpstreamBytes)}</td><td>${formatBytes(item.upstreamToClientBytes)}</td></tr>`,
+					(item) => `<tr>
+          <td><span class="badge info">${item.protocol.toUpperCase()}</span></td>
+          <td><code>${item.incomingPort}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code></td>
+          ${isColumnVisible("connections", "country") ? `<td>${countryBadge(item.countryCode)}</td>` : ""}
+          ${isColumnVisible("connections", "connected") ? `<td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td>` : ""}
+          ${isColumnVisible("connections", "lastActivity") ? `<td>${escapeHtml(formatDate(item.lastActivityAt))}</td>` : ""}
+          ${isColumnVisible("connections", "toOrigin") ? `<td>${formatBytes(item.clientToUpstreamBytes)}</td>` : ""}
+          ${isColumnVisible("connections", "toClient") ? `<td>${formatBytes(item.upstreamToClientBytes)}</td>` : ""}
+        </tr>`,
 				)
 				.join("")
-		: '<tr><td colspan="8" class="empty-cell">No active connections or UDP peers.</td></tr>';
+		: `<tr><td colspan="${connectionsColumnCount()}" class="empty-cell">No active connections or UDP peers.</td></tr>`;
 }
 
 async function loadConnections() {
@@ -1123,9 +1249,13 @@ function updatePagination(prefix, result, load) {
 	};
 }
 
+function eventsColumnCount() {
+	return visibleColumnCount("events", 4);
+}
+
 async function loadEvents() {
 	const state = tableState.events;
-	byId("streamEvents").innerHTML = '<tr><td colspan="10" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
+	byId("streamEvents").innerHTML = `<tr><td colspan="${eventsColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
 	const result = await api(
 		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
 	);
@@ -1133,11 +1263,21 @@ async function loadEvents() {
 	byId("streamEvents").innerHTML = result.items.length
 		? result.items
 				.map(
-					(item) =>
-						`<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td><td>${countryBadge(item.country_code)}</td><td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td><td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td><td class="port-column"><code>${item.incoming_port}</code></td><td class="reason-cell" title="${escapeHtml(item.reason || item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td><td>${item.protection_rule_id ? `<code>${escapeHtml(item.protection_rule_id)}</code>` : "-"}</td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td></tr>`,
+					(item) => `<tr>
+          <td>${escapeHtml(formatDate(item.created_at))}</td>
+          <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td>
+          ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
+          ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
+          <td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td>
+          <td class="port-column"><code>${item.incoming_port}</code></td>
+          ${isColumnVisible("events", "reason") ? `<td class="reason-cell" title="${escapeHtml(item.reason || item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td>` : ""}
+          ${isColumnVisible("events", "rule") ? `<td>${item.protection_rule_id ? `<code>${escapeHtml(item.protection_rule_id)}</code>` : "-"}</td>` : ""}
+          ${isColumnVisible("events", "toOrigin") ? `<td>${formatBytes(item.client_to_upstream_bytes)}</td>` : ""}
+          ${isColumnVisible("events", "toClient") ? `<td>${formatBytes(item.upstream_to_client_bytes)}</td>` : ""}
+        </tr>`,
 				)
 				.join("")
-		: '<tr><td colspan="10" class="empty-cell">No stream events match these filters.</td></tr>';
+		: `<tr><td colspan="${eventsColumnCount()}" class="empty-cell">No stream events match these filters.</td></tr>`;
 	updatePagination("events", result, loadEvents);
 	updateEventsColumnVisibility();
 }
@@ -1152,9 +1292,14 @@ function updateEventsColumnVisibility() {
 	byId("eventProtocolFilter").classList.toggle("hidden", singleProtocol);
 }
 
+function streamsBandwidthColumnCount() {
+	return visibleColumnCount("bandwidth", 2);
+}
+
 async function loadBandwidth() {
 	const state = tableState.bandwidth;
-	byId("streamBandwidth").innerHTML = '<tr><td colspan="6" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
+	byId("streamBandwidth").innerHTML =
+		`<tr><td colspan="${streamsBandwidthColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
 	const result = await api(
 		`/streams/bandwidth?${queryString({ streamId: selectedStreamId, page: bandwidthPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("bandwidthSearch").value.trim(), protocol: byId("bandwidthProtocol").value, country: byId("bandwidthCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
 	);
@@ -1162,11 +1307,17 @@ async function loadBandwidth() {
 	byId("streamBandwidth").innerHTML = result.items.length
 		? result.items
 				.map(
-					(item) =>
-						`<tr><td class="ip-cell"><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td><td>${countryBadge(item.country_code)}</td><td class="port-column"><code>${item.incoming_port}</code></td><td>${formatBytes(item.client_to_upstream_bytes)}</td><td>${formatBytes(item.upstream_to_client_bytes)}</td><td><strong>${formatBytes(item.total_bytes)}</strong></td></tr>`,
+					(item) => `<tr>
+          <td class="ip-cell"><code title="${escapeHtml(`${item.ip} (${countryDisplayName(item.country_code || "ZZ")})`)}">${escapeHtml(item.ip)}</code></td>
+          ${isColumnVisible("bandwidth", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
+          <td class="port-column"><code>${item.incoming_port}</code></td>
+          ${isColumnVisible("bandwidth", "toOrigin") ? `<td>${formatBytes(item.client_to_upstream_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "toClient") ? `<td>${formatBytes(item.upstream_to_client_bytes)}</td>` : ""}
+          ${isColumnVisible("bandwidth", "total") ? `<td><strong>${formatBytes(item.total_bytes)}</strong></td>` : ""}
+        </tr>`,
 				)
 				.join("")
-		: '<tr><td colspan="6" class="empty-cell">No stream bandwidth matches these filters.</td></tr>';
+		: `<tr><td colspan="${streamsBandwidthColumnCount()}" class="empty-cell">No stream bandwidth matches these filters.</td></tr>`;
 	updatePagination("bandwidth", result, loadBandwidth);
 	updateBandwidthColumnVisibility();
 }
@@ -1231,6 +1382,10 @@ function applyStreamNetworkPolicy(policy) {
 	renderStreamCountryRulesTable();
 }
 
+function streamRulesColumnCount() {
+	return visibleColumnCount("rules", 5);
+}
+
 async function loadStreamRules() {
 	const state = tableState.rules;
 	selectedStreamRuleIds.clear();
@@ -1238,11 +1393,11 @@ async function loadStreamRules() {
 	const disabled = !rulesStreamId;
 	byId("saveStreamNetworkDefaults").disabled = disabled;
 	if (disabled) {
-		byId("streamRules").innerHTML = '<tr><td colspan="8" class="empty-cell">Create a stream before adding network rules.</td></tr>';
+		byId("streamRules").innerHTML = `<tr><td colspan="${streamRulesColumnCount()}" class="empty-cell">Create a stream before adding network rules.</td></tr>`;
 		byId("streamCountryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create a stream before adding network rules.</td></tr>';
 		return;
 	}
-	setTableLoading("streamRules", 8);
+	setTableLoading("streamRules", streamRulesColumnCount());
 	setTableLoading("streamCountryRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
@@ -1275,17 +1430,17 @@ async function loadStreamRules() {
           <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
           <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
           <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(streamActionLabel(rule.action))}</span></td>
-          <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
-          <td>${escapeHtml(formatDate(rule.created_at))}</td>
-          <td>${rule.expires_at === null ? "Never" : escapeHtml(formatDate(rule.expires_at))}</td>
+          ${isColumnVisible("rules", "reason") ? `<td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>` : ""}
+          ${isColumnVisible("rules", "created") ? `<td>${escapeHtml(formatDate(rule.created_at))}</td>` : ""}
+          ${isColumnVisible("rules", "expires") ? `<td>${rule.expires_at === null ? "Never" : escapeHtml(formatDate(rule.expires_at))}</td>` : ""}
           <td><button class="button danger compact" data-stream-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
         </tr>`;
 					})
 					.join("")
-			: '<tr><td colspan="8" class="empty-cell">No IP rules match these filters.</td></tr>';
+			: `<tr><td colspan="${streamRulesColumnCount()}" class="empty-cell">No IP rules match these filters.</td></tr>`;
 		updatePagination("streamRules", result, loadStreamRules);
 	} catch (error) {
-		setTableError("streamRules", 8, error);
+		setTableError("streamRules", streamRulesColumnCount(), error);
 		setTableError("streamCountryRules", 7, error);
 	}
 }
@@ -1628,6 +1783,13 @@ function debounce(callback, delay = 300) {
 }
 
 initializeDateTimeFormat();
+insertColumnsMenus({
+	connections: "connectionsHeaderActions",
+	events: "eventsHeaderActions",
+	bandwidth: "bandwidthHeaderActions",
+	rules: "rulesHeaderActions",
+});
+bindColumnsMenus();
 initializeRange();
 resetForm();
 
