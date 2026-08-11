@@ -1885,6 +1885,7 @@ function renderAccessSso() {
 	byId("accessSsoSecretStatus").textContent = accessSso.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
 	const site = sites.find((candidate) => candidate.id === selectedSiteId);
 	byId("accessSsoRedirectUri").textContent = site ? `https://${site.publicHost}/_burrowgate/access/sso/callback` : "Select a site";
+	byId("accessSsoBackchannelUri").textContent = site ? `https://${site.publicHost}/_burrowgate/access/sso/backchannel-logout` : "Select a site";
 }
 
 async function loadAccessList() {
@@ -1962,6 +1963,7 @@ async function loadAdminSso() {
 		byId("adminSsoButtonLabel").value = settings.buttonLabel || "Single sign-on";
 		byId("adminSsoSecretStatus").textContent = settings.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
 		byId("adminSsoRedirectUri").textContent = `${location.origin}/_burrowgate/admin/sso/callback`;
+		byId("adminSsoBackchannelUri").textContent = `${location.origin}/_burrowgate/admin/sso/backchannel-logout`;
 	} catch (error) {
 		showToast(error.message, "bad");
 	}

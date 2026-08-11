@@ -95,7 +95,14 @@ import {
 	updateAdminUser,
 } from "../services/admin-user-service.ts";
 import { pagedAdminAuditLog, purgeAdminAuditLog, recordAdminAudit } from "../services/admin-audit-service.ts";
-import { adminSsoLoginInfo, adminSsoSettingsView, beginAdminSsoLogin, completeAdminSsoLogin, updateAdminSsoSettings } from "../services/admin-sso-service.ts";
+import {
+	adminSsoLoginInfo,
+	adminSsoSettingsView,
+	beginAdminSsoLogin,
+	completeAdminSsoLogin,
+	handleAdminBackchannelLogout,
+	updateAdminSsoSettings,
+} from "../services/admin-sso-service.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
 	const session = await getAdminSession(request);
@@ -268,8 +275,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 		if (!cookieCanBeIssuedForRequest(ctx.req)) return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
 		try {
-			const { user, provisioned } = await completeAdminSsoLogin(code, state);
-			const session = await createAdminSession(ctx.req, user.username, user.id);
+			const { user, provisioned, sid } = await completeAdminSsoLogin(code, state);
+			const session = await createAdminSession(ctx.req, user.username, user.id, sid);
 			const actor: AuthenticatedAdmin = { id: user.id, username: user.username, role: user.role };
 			await recordAdminAudit({
 				actor,
@@ -369,6 +376,18 @@ export function registerAdminRoutes(app: Web<any>): void {
 			session.cookie,
 			clearPendingLoginCookie(ctx.req),
 		]);
+	});
+
+	app.post("/_burrowgate/admin/sso/backchannel-logout", async (ctx) => {
+		try {
+			const form = await ctx.req.formData();
+			const logoutToken = String(form.get("logout_token") ?? "");
+			if (!logoutToken) return jsonResponse({ error: "invalid_request", error_description: "logout_token is required" }, 400);
+			await handleAdminBackchannelLogout(logoutToken);
+			return new Response(null, { status: 200 });
+		} catch (error) {
+			return jsonResponse({ error: "invalid_request", error_description: error instanceof Error ? error.message : "Unable to process logout token" }, 400);
+		}
 	});
 
 	app.get("/_burrowgate/admin", async (ctx) =>

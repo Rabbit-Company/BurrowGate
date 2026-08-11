@@ -430,6 +430,7 @@ export async function resolveApiTokenAccess(
 		country_code: countryCodeForStorage(ip),
 		access_user_id: user.id,
 		authenticated_at: now,
+		sso_sid: null,
 	};
 	await repository.insertSession(record);
 	return { session: record, user };

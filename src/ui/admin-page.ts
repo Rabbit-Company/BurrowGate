@@ -384,6 +384,7 @@ export function adminPage(): string {
             <label><span>Button label</span><input id="accessSsoButtonLabel" class="input" value="Single sign-on"></label>
           </div>
           <p class="notice muted">Redirect URI to register at the identity provider: <code id="accessSsoRedirectUri"></code></p>
+          <p class="notice muted">Back-channel logout URI (keeps sessions in sync when the provider's session ends): <code id="accessSsoBackchannelUri"></code></p>
         </div>
       </article>
       <article class="card">
@@ -683,6 +684,7 @@ export function adminPage(): string {
             <label><span>Button label</span><input id="adminSsoButtonLabel" class="input" value="Single sign-on"></label>
           </div>
           <p class="notice muted">Redirect URI to register at the identity provider: <code id="adminSsoRedirectUri"></code></p>
+          <p class="notice muted">Back-channel logout URI (keeps BurrowGate sessions in sync when the provider's session ends): <code id="adminSsoBackchannelUri"></code></p>
         </div>
       </article>
     </div>

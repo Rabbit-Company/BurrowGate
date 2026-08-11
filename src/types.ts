@@ -231,6 +231,7 @@ export interface AccessSessionRecord {
 	access_user_id: string | null;
 	authenticated_at: number | null;
 	origin_id?: string | null;
+	sso_sid: string | null;
 }
 
 export type AuthSource = "password" | "sso";
@@ -453,6 +454,7 @@ export interface AdminSessionRecord {
 	created_at: number;
 	expires_at: number;
 	last_seen_at: number;
+	sso_sid: string | null;
 }
 
 export type AdminRole = "administrator" | "member";

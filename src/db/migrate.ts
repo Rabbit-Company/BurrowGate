@@ -561,6 +561,8 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions (user_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_users_sso_subject ON admin_users (sso_subject)",
 	"CREATE INDEX IF NOT EXISTS idx_access_users_sso_subject ON access_users (sso_subject)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_sso_sid ON admin_sessions (sso_sid)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_sso_sid ON access_sessions (site_id, sso_sid)",
 ];
 
 function isMySql(): boolean {
@@ -704,6 +706,17 @@ async function ensureAccessUserColumns(): Promise<void> {
 	}
 }
 
+async function ensureSsoSessionColumns(): Promise<void> {
+	const statements = ["ALTER TABLE admin_sessions ADD COLUMN sso_sid VARCHAR(255) NULL", "ALTER TABLE access_sessions ADD COLUMN sso_sid VARCHAR(255) NULL"];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAdminUserSsoColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE admin_users ADD COLUMN sso_subject VARCHAR(512) NULL",
@@ -812,6 +825,7 @@ export async function migrate(): Promise<void> {
 	await ensureAccessSessionColumns();
 	await ensureAdminUserSsoColumns();
 	await ensureAccessUserSsoColumns();
+	await ensureSsoSessionColumns();
 	await ensureAdminSessionColumns();
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();

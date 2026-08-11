@@ -50,6 +50,7 @@ const accessSession: AccessSessionRecord = {
 	country_code: "US",
 	access_user_id: "user_ziga",
 	authenticated_at: Date.now(),
+	sso_sid: null,
 };
 
 describe("WebSocket reverse proxy", () => {

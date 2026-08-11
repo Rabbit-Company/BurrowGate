@@ -26,6 +26,12 @@ export interface VerifiedOidcIdentity {
 	email: string | null;
 	emailVerified: boolean;
 	name: string | null;
+	sid: string | null;
+}
+
+export interface BackchannelLogoutIdentity {
+	subject: string | null;
+	sid: string | null;
 }
 
 const DISCOVERY_CACHE_TTL_MS = 10 * 60_000;
@@ -131,5 +137,35 @@ export async function verifyIdToken(document: OidcDiscoveryDocument, idToken: st
 		email: typeof payload.email === "string" ? payload.email.trim().toLowerCase() : null,
 		emailVerified: payload.email_verified === true,
 		name: typeof payload.name === "string" ? payload.name : null,
+		sid: typeof payload.sid === "string" ? payload.sid : null,
 	};
+}
+
+const BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout";
+const LOGOUT_TOKEN_FRESHNESS_MS = 5 * 60_000;
+const usedLogoutTokenIds = new Map<string, number>();
+
+function sweepUsedLogoutTokenIds(now: number): void {
+	for (const [jti, expiresAt] of usedLogoutTokenIds) if (expiresAt <= now) usedLogoutTokenIds.delete(jti);
+}
+
+export async function verifyBackchannelLogoutToken(document: OidcDiscoveryDocument, logoutToken: string, clientId: string): Promise<BackchannelLogoutIdentity> {
+	const { payload } = await jwtVerify(logoutToken, remoteJwks(document), { issuer: document.issuer, audience: clientId });
+	if (payload.nonce !== undefined) throw new Error("Logout token must not contain a nonce claim");
+	const events = payload.events;
+	if (!events || typeof events !== "object" || !(BACKCHANNEL_LOGOUT_EVENT in events)) {
+		throw new Error("Logout token is missing the back-channel logout event claim");
+	}
+	const subject = typeof payload.sub === "string" ? payload.sub : null;
+	const sid = typeof payload.sid === "string" ? payload.sid : null;
+	if (!subject && !sid) throw new Error("Logout token must contain a subject or session identifier");
+	const jti = typeof payload.jti === "string" ? payload.jti : null;
+	if (!jti) throw new Error("Logout token must contain a jti claim");
+	const iat = typeof payload.iat === "number" ? payload.iat * 1_000 : 0;
+	const now = Date.now();
+	if (!iat || Math.abs(now - iat) > LOGOUT_TOKEN_FRESHNESS_MS) throw new Error("Logout token is expired or not yet valid");
+	sweepUsedLogoutTokenIds(now);
+	if (usedLogoutTokenIds.has(jti)) throw new Error("Logout token has already been used");
+	usedLogoutTokenIds.set(jti, now + LOGOUT_TOKEN_FRESHNESS_MS);
+	return { subject, sid };
 }

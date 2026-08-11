@@ -71,6 +71,7 @@ export async function createAccessSession(
 		country_code: countryCodeForStorage(ip),
 		access_user_id: null,
 		authenticated_at: null,
+		sso_sid: null,
 	};
 	await repository.insertSession(record);
 	return {
@@ -85,7 +86,12 @@ export async function createAccessSession(
 	};
 }
 
-export async function createAdminSession(request: Request, username: string, userId: string | null = null): Promise<{ token: string; cookie: string }> {
+export async function createAdminSession(
+	request: Request,
+	username: string,
+	userId: string | null = null,
+	ssoSid: string | null = null,
+): Promise<{ token: string; cookie: string }> {
 	if (!cookieCanBeIssuedForRequest(request)) {
 		throw new Error(insecureCookieConfigurationMessage());
 	}
@@ -100,6 +106,7 @@ export async function createAdminSession(request: Request, username: string, use
 		created_at: now,
 		expires_at: now + config.admin.sessionTtlSeconds * 1_000,
 		last_seen_at: now,
+		sso_sid: ssoSid,
 	};
 	await repository.insertAdmin(session);
 	return {

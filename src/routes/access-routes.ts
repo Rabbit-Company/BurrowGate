@@ -17,7 +17,7 @@ import {
 	recordAccessTotpFailure,
 	setPendingAccessTotpSecret,
 } from "../services/access-list-service.ts";
-import { beginAccessSsoLogin, completeAccessSsoLogin, siteSsoLoginInfo } from "../services/access-sso-service.ts";
+import { beginAccessSsoLogin, completeAccessSsoLogin, handleAccessBackchannelLogout, siteSsoLoginInfo } from "../services/access-sso-service.ts";
 import { createFlow } from "../services/challenge-service.ts";
 import { recordEvent } from "../services/event-service.ts";
 import { findAccessSession, userAgentHash } from "../services/session-service.ts";
@@ -64,8 +64,14 @@ async function resolvePendingAccessTotp(ctx: any, mode: "totp-enroll" | "totp-ve
 	return { site, session, user, tentativeSecret: entry.tentativeSecret };
 }
 
-async function issueAccessSession(ctx: any, site: SiteRecord, session: AccessSessionRecord, user: AccessUserRecord): Promise<string[]> {
-	await repository.authenticateSession(session.id, site.id, user.id, Date.now());
+async function issueAccessSession(
+	ctx: any,
+	site: SiteRecord,
+	session: AccessSessionRecord,
+	user: AccessUserRecord,
+	ssoSid: string | null = null,
+): Promise<string[]> {
+	await repository.authenticateSession(session.id, site.id, user.id, Date.now(), ssoSid);
 	const settings = await accessSettingsForSite(site.id);
 	return settings.send_username_to_upstream === 1 ? await accessIdentitySetCookies(ctx.req, site, session, user.username) : clearAccessIdentityCookies(ctx.req);
 }
@@ -199,8 +205,8 @@ export function registerAccessRoutes(app: Web<any>): void {
 		const session = await findAccessSession(ctx.req, site, ip);
 		if (!session) return Response.redirect(new URL(loginPath("/"), ctx.req.url).href, 302);
 		try {
-			const { user, returnPath } = await completeAccessSsoLogin(site.id, code, state);
-			const cookies = await issueAccessSession(ctx, site, session, user);
+			const { user, returnPath, sid } = await completeAccessSsoLogin(site.id, code, state);
+			const cookies = await issueAccessSession(ctx, site, session, user, sid);
 			await recordEvent({
 				siteId: site.id,
 				sessionId: session.id,
@@ -215,6 +221,20 @@ export function registerAccessRoutes(app: Web<any>): void {
 			return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
 		} catch (error) {
 			return htmlResponse(accessLoginPage(site, "/", error instanceof Error ? error.message : "Single sign-on failed.", await siteSsoLoginInfo(site.id)), 400);
+		}
+	});
+
+	app.post("/_burrowgate/access/sso/backchannel-logout", async (ctx) => {
+		const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
+		if (!site) return jsonResponse({ error: "invalid_request", error_description: "No BurrowGate site is configured for this host." }, 421);
+		try {
+			const form = await ctx.req.formData();
+			const logoutToken = String(form.get("logout_token") ?? "");
+			if (!logoutToken) return jsonResponse({ error: "invalid_request", error_description: "logout_token is required" }, 400);
+			await handleAccessBackchannelLogout(site.id, logoutToken);
+			return new Response(null, { status: 200 });
+		} catch (error) {
+			return jsonResponse({ error: "invalid_request", error_description: error instanceof Error ? error.message : "Unable to process logout token" }, 400);
 		}
 	});
 

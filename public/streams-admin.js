@@ -571,6 +571,7 @@ async function loadAdminSso() {
 		byId("adminSsoButtonLabel").value = settings.buttonLabel || "Single sign-on";
 		byId("adminSsoSecretStatus").textContent = settings.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured.";
 		byId("adminSsoRedirectUri").textContent = `${location.origin}/_burrowgate/admin/sso/callback`;
+		byId("adminSsoBackchannelUri").textContent = `${location.origin}/_burrowgate/admin/sso/backchannel-logout`;
 	} catch (error) {
 		showToast(error.message, "bad");
 	}

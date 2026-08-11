@@ -8,6 +8,7 @@ import {
 	exchangeAuthorizationCode,
 	generatePkce,
 	invalidateOidcDiscoveryCache,
+	verifyBackchannelLogoutToken,
 	verifyIdToken,
 	type VerifiedOidcIdentity,
 } from "./oidc-service.ts";
@@ -191,6 +192,7 @@ async function resolveOrProvisionAccessUser(siteId: string, identity: VerifiedOi
 export interface AccessSsoLoginResult {
 	user: AccessUserRecord;
 	returnPath: string;
+	sid: string | null;
 }
 
 export async function completeAccessSsoLogin(siteId: string, code: string, state: string): Promise<AccessSsoLoginResult> {
@@ -214,5 +216,19 @@ export async function completeAccessSsoLogin(siteId: string, code: string, state
 	const identity = await verifyIdToken(document, tokens.id_token, settings.client_id, pending.nonce);
 	const user = await resolveOrProvisionAccessUser(siteId, identity);
 	if (user.enabled !== 1) throw new Error("This account is disabled");
-	return { user, returnPath: pending.returnPath };
+	return { user, returnPath: pending.returnPath, sid: identity.sid };
+}
+
+export async function handleAccessBackchannelLogout(siteId: string, logoutToken: string): Promise<void> {
+	const settings = await repository.ensureSiteSsoSettings(siteId);
+	if (settings.enabled !== 1 || !settings.issuer_url || !settings.client_id) throw new Error("Single sign-on is not configured for this site");
+	const document = await discoverOidcConfig(settings.issuer_url);
+	const { subject, sid } = await verifyBackchannelLogoutToken(document, logoutToken, settings.client_id);
+	const now = Date.now();
+	let revoked = 0;
+	if (sid) revoked = await repository.revokeAccessSessionsBySsoSid(siteId, sid, now);
+	if (revoked === 0 && subject) {
+		const user = await repository.accessUserBySsoSubject(subject);
+		if (user) await repository.revokeSessionsForAccessUser(user.id, now, siteId);
+	}
 }

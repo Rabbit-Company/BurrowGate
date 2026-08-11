@@ -8,6 +8,7 @@ import {
 	exchangeAuthorizationCode,
 	generatePkce,
 	invalidateOidcDiscoveryCache,
+	verifyBackchannelLogoutToken,
 	verifyIdToken,
 	type VerifiedOidcIdentity,
 } from "./oidc-service.ts";
@@ -182,6 +183,7 @@ async function resolveOrProvisionAdminUser(identity: VerifiedOidcIdentity): Prom
 export interface AdminSsoLoginResult {
 	user: AdminUserRecord;
 	provisioned: boolean;
+	sid: string | null;
 }
 
 export async function completeAdminSsoLogin(code: string, state: string): Promise<AdminSsoLoginResult> {
@@ -205,5 +207,18 @@ export async function completeAdminSsoLogin(code: string, state: string): Promis
 	const identity = await verifyIdToken(document, tokens.id_token, settings.client_id, pending.nonce);
 	const { user, provisioned } = await resolveOrProvisionAdminUser(identity);
 	if (user.enabled !== 1) throw new Error("This account is disabled");
-	return { user, provisioned };
+	return { user, provisioned, sid: identity.sid };
+}
+
+export async function handleAdminBackchannelLogout(logoutToken: string): Promise<void> {
+	const settings = await repository.ensureAdminSsoSettings();
+	if (settings.enabled !== 1 || !settings.issuer_url || !settings.client_id) throw new Error("Single sign-on is not configured");
+	const document = await discoverOidcConfig(settings.issuer_url);
+	const { subject, sid } = await verifyBackchannelLogoutToken(document, logoutToken, settings.client_id);
+	let revoked = 0;
+	if (sid) revoked = await repository.revokeAdminSessionsBySsoSid(sid);
+	if (revoked === 0 && subject) {
+		const user = await repository.adminUserBySsoSubject(subject);
+		if (user) await repository.revokeAdminSessionsForUser(user.id);
+	}
 }

@@ -467,11 +467,14 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
-		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at,origin_id)
-		VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null})`;
+		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at,origin_id,sso_sid)
+		VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null},${session.sso_sid ?? null})`;
 	},
-	async authenticateSession(id: string, siteId: string, userId: string, now: number): Promise<void> {
-		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
+	async authenticateSession(id: string, siteId: string, userId: string, now: number, ssoSid: string | null = null): Promise<void> {
+		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now}, sso_sid=${ssoSid} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
+	},
+	async revokeAccessSessionsBySsoSid(siteId: string, sid: string, now: number): Promise<number> {
+		return deletedRowCount(await db`UPDATE access_sessions SET revoked_at=${now} WHERE site_id=${siteId} AND sso_sid=${sid} AND revoked_at IS NULL`);
 	},
 	async activeAccessSessionForUser(siteId: string, userId: string, now: number): Promise<AccessSessionRecord | null> {
 		const rows =
@@ -2101,7 +2104,10 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAdmin(session: AdminSessionRecord): Promise<void> {
-		await db`INSERT INTO admin_sessions (id,token_hash,username,user_id,created_at,expires_at,last_seen_at) VALUES (${session.id},${session.token_hash},${session.username},${session.user_id},${session.created_at},${session.expires_at},${session.last_seen_at})`;
+		await db`INSERT INTO admin_sessions (id,token_hash,username,user_id,created_at,expires_at,last_seen_at,sso_sid) VALUES (${session.id},${session.token_hash},${session.username},${session.user_id},${session.created_at},${session.expires_at},${session.last_seen_at},${session.sso_sid ?? null})`;
+	},
+	async revokeAdminSessionsBySsoSid(sid: string): Promise<number> {
+		return deletedRowCount(await db`DELETE FROM admin_sessions WHERE sso_sid=${sid}`);
 	},
 	async touchAdmin(id: string, now: number): Promise<void> {
 		await db`UPDATE admin_sessions SET last_seen_at=${now} WHERE id=${id}`;
