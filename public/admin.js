@@ -228,6 +228,8 @@ let routePolicies = [];
 let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
 let countryRules = [];
 let editingRoutePolicyId = null;
+let routeIpRules = [];
+let routeCountryRules = [];
 let currentTls = null;
 let overviewRequestId = 0;
 let trafficRequestId = 0;
@@ -1360,6 +1362,7 @@ function setRouteEditorTab(name) {
 		tab.classList.toggle("active", selected);
 		tab.setAttribute("aria-selected", String(selected));
 	});
+	byId("routePolicyLayout").classList.toggle("network-tab-active", name === "network");
 }
 
 function applyWebSocketInputLimits() {
@@ -1866,7 +1869,7 @@ function renderRoutePolicies() {
     <div class="route-policy-main">
       <div class="site-list-title"><strong>${escapeHtml(policy.name)}</strong><span class="badge ${policy.enabled ? "ok" : "warn"}">${policy.enabled ? "enabled" : "disabled"}</span><span class="badge ${policy.accessMode === "block" ? "bad" : policy.accessMode === "challenge" ? "warn" : "info"}">${escapeHtml(routeAccessLabel(policy.accessMode))}</span></div>
       <div class="route-policy-pattern"><code>${escapeHtml(policy.pathPattern)}</code><span>${policy.methods.length ? escapeHtml(policy.methods.join(", ")) : "All methods"}</span><span>Priority ${formatNumber(policy.priority)}</span></div>
-      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>Protection: ${escapeHtml(policy.http?.protection?.mode ?? "inherit")}</span><span>Cache: ${escapeHtml(policy.http?.cache?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
+      <div class="site-list-meta"><span>WebSocket: ${escapeHtml(policy.websocket?.mode ?? "inherit")}</span><span>Protection: ${escapeHtml(policy.http?.protection?.mode ?? "inherit")}</span><span>Cache: ${escapeHtml(policy.http?.cache?.mode ?? "inherit")}</span><span>${escapeHtml(formatRateLimit(policy))}</span><span>${escapeHtml(policy.rateLimit?.keyMode ?? "ip")} | ${escapeHtml(policy.rateLimit?.scope ?? "policy")}</span>${(policy.defaultIpAction ?? "inherit") !== "inherit" || (policy.defaultCountryAction ?? "inherit") !== "inherit" ? "<span>Network: custom</span>" : ""}${policy.challengePolicy ? `<span>${formatNumber(policy.challengePolicy.length)} custom challenge step${policy.challengePolicy.length === 1 ? "" : "s"}</span>` : ""}</div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-route-edit="${escapeHtml(policy.id)}">Edit</button><button class="button danger compact" type="button" data-route-delete="${escapeHtml(policy.id)}">Delete</button></div>
   </div>`,
@@ -1895,6 +1898,22 @@ function resetRoutePolicyForm() {
 	byId("routePolicyAccessMode").value = "inherit";
 	byId("routePolicyEnabled").checked = true;
 	byId("routePolicyChallenge").value = "";
+	byId("routeDefaultIpAction").value = "inherit";
+	byId("routeDefaultCountryAction").value = "inherit";
+	routeIpRules = [];
+	routeCountryRules = [];
+	renderRouteIpRules();
+	renderRouteCountryRules();
+	byId("routeIpRuleNetworkCidr").value = "";
+	byId("routeIpRuleAction").value = "block";
+	byId("routeIpRuleExpiresAt").value = "";
+	byId("routeIpRuleReason").value = "";
+	byId("routeCountryRuleCountry").value = "";
+	byId("routeCountryRuleAction").value = "block";
+	byId("routeCountryRuleExpiresAt").value = "";
+	byId("routeCountryRuleReason").value = "";
+	byId("routeNetworkRulesSection").classList.add("hidden");
+	byId("routeNetworkRulesPlaceholder").classList.remove("hidden");
 	byId("routeWebSocketMode").value = "inherit";
 	byId("routeWebSocketConnectTimeout").value = "";
 	byId("routeWebSocketIdleTimeout").value = "";
@@ -1934,6 +1953,11 @@ function editRoutePolicy(id) {
 	byId("routePolicyAccessMode").value = policy.accessMode;
 	byId("routePolicyEnabled").checked = Boolean(policy.enabled);
 	byId("routePolicyChallenge").value = policy.challengePolicy ? JSON.stringify(policy.challengePolicy, null, 2) : "";
+	byId("routeDefaultIpAction").value = policy.defaultIpAction ?? "inherit";
+	byId("routeDefaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
+	byId("routeNetworkRulesSection").classList.remove("hidden");
+	byId("routeNetworkRulesPlaceholder").classList.add("hidden");
+	void loadRouteNetworkRules();
 	const websocket = policy.websocket ?? {};
 	byId("routeWebSocketMode").value = websocket.mode ?? "inherit";
 	byId("routeWebSocketConnectTimeout").value = websocket.connectTimeoutMs ?? "";
@@ -1976,6 +2000,64 @@ async function loadRoutePolicies() {
 		renderRoutePolicies();
 	} catch (error) {
 		byId("routePolicyList").innerHTML = `<div class="empty-state-inline error-text">${escapeHtml(error.message)}</div>`;
+	}
+}
+
+function renderRouteIpRules() {
+	const body = byId("routeIpRules");
+	if (routeIpRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="6" class="empty-cell">No IP rules configured for this route.</td></tr>';
+		return;
+	}
+	body.innerHTML = routeIpRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td class="ip-cell"><code>${escapeHtml(rule.network_cidr)}</code></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+      <td><button class="button danger compact" data-route-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
+function renderRouteCountryRules() {
+	const body = byId("routeCountryRules");
+	if (routeCountryRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="6" class="empty-cell">No country rules configured for this route.</td></tr>';
+		return;
+	}
+	body.innerHTML = routeCountryRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			const code = String(rule.country_code || "ZZ").toUpperCase();
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td>${countryBadge(code)} <span>${escapeHtml(countryDisplayName(code))}</span></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+      <td><button class="button danger compact" data-route-country-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
+async function loadRouteNetworkRules() {
+	if (!editingRoutePolicyId) return;
+	const requestedId = editingRoutePolicyId;
+	try {
+		const response = await api(`/route-policies/${encodeURIComponent(requestedId)}/network-rules`);
+		if (editingRoutePolicyId !== requestedId) return;
+		routeIpRules = response.ipRules ?? [];
+		routeCountryRules = response.countryRules ?? [];
+		renderRouteIpRules();
+		renderRouteCountryRules();
+	} catch (error) {
+		showToast(error.message, "bad");
 	}
 }
 
@@ -2229,6 +2311,8 @@ async function saveRoutePolicy(event) {
 		accessMode: byId("routePolicyAccessMode").value,
 		enabled: byId("routePolicyEnabled").checked,
 		challengePolicy,
+		defaultIpAction: byId("routeDefaultIpAction").value,
+		defaultCountryAction: byId("routeDefaultCountryAction").value,
 		rateLimitEnabled: byId("routeRateEnabled").checked,
 		rateLimitAlgorithm: byId("routeRateAlgorithm").value,
 		rateLimitMax: Number(byId("routeRateMax").value),
@@ -2907,6 +2991,7 @@ function populateCountrySelects() {
 		["bandwidthCountry", "All countries"],
 		["sessionCountry", "All countries"],
 		["countryRuleCountry", "Select country"],
+		["routeCountryRuleCountry", "Select country"],
 	];
 	for (const [id, emptyLabel] of configurations) {
 		const select = byId(id);
@@ -3940,6 +4025,41 @@ async function handleBodyClick(event) {
 			ruleButton.disabled = false;
 			showToast(error.message, "bad");
 		}
+		return;
+	}
+
+	const routeRuleButton = event.target.closest("button[data-route-rule-id]");
+	if (routeRuleButton && editingRoutePolicyId) {
+		if (!confirm("Delete this route IP rule?")) return;
+		routeRuleButton.disabled = true;
+		try {
+			await api(`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/rules/${encodeURIComponent(routeRuleButton.dataset.routeRuleId)}`, {
+				method: "DELETE",
+			});
+			showToast("Route IP rule deleted.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			routeRuleButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const routeCountryRuleButton = event.target.closest("button[data-route-country-rule-id]");
+	if (routeCountryRuleButton && editingRoutePolicyId) {
+		if (!confirm("Delete this route country rule?")) return;
+		routeCountryRuleButton.disabled = true;
+		try {
+			await api(
+				`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/country-rules/${encodeURIComponent(routeCountryRuleButton.dataset.routeCountryRuleId)}`,
+				{ method: "DELETE" },
+			);
+			showToast("Route country rule deleted.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			routeCountryRuleButton.disabled = false;
+			showToast(error.message, "bad");
+		}
 	}
 }
 
@@ -4276,6 +4396,70 @@ function bindActions() {
 	byId("logout").addEventListener("click", async () => {
 		await api("/logout", { method: "POST" }, false);
 		location.href = "/_burrowgate/admin/login";
+	});
+	byId("addRouteIpRule").addEventListener("click", async (event) => {
+		if (!editingRoutePolicyId) return;
+		const submit = event.currentTarget;
+		if (!byId("routeIpRuleNetworkCidr").value.trim()) {
+			showToast("Enter an IP address or CIDR.", "bad");
+			return;
+		}
+		submit.disabled = true;
+		const expiration = byId("routeIpRuleExpiresAt").value.trim();
+		const data = {
+			networkCidr: byId("routeIpRuleNetworkCidr").value,
+			action: byId("routeIpRuleAction").value,
+			reason: byId("routeIpRuleReason").value,
+			expiresAt: expiration ? new Date(expiration).getTime() : null,
+		};
+		try {
+			await api(`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/rules`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(data),
+			});
+			byId("routeIpRuleNetworkCidr").value = "";
+			byId("routeIpRuleReason").value = "";
+			byId("routeIpRuleExpiresAt").value = "";
+			showToast("Route IP rule added.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			submit.disabled = false;
+		}
+	});
+	byId("addRouteCountryRule").addEventListener("click", async (event) => {
+		if (!editingRoutePolicyId) return;
+		const submit = event.currentTarget;
+		if (!byId("routeCountryRuleCountry").value) {
+			showToast("Select a country.", "bad");
+			return;
+		}
+		submit.disabled = true;
+		const expiration = byId("routeCountryRuleExpiresAt").value.trim();
+		const data = {
+			countryCode: byId("routeCountryRuleCountry").value,
+			action: byId("routeCountryRuleAction").value,
+			reason: byId("routeCountryRuleReason").value,
+			expiresAt: expiration ? new Date(expiration).getTime() : null,
+		};
+		try {
+			await api(`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/country-rules`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(data),
+			});
+			byId("routeCountryRuleCountry").value = "";
+			byId("routeCountryRuleReason").value = "";
+			byId("routeCountryRuleExpiresAt").value = "";
+			showToast("Route country rule added.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			submit.disabled = false;
+		}
 	});
 	byId("ruleForm").addEventListener("submit", async (event) => {
 		event.preventDefault();

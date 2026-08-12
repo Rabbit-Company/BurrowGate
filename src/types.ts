@@ -208,6 +208,8 @@ export interface RoutePolicyRecord {
 	rate_limit_scope: RateLimitScope;
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
+	default_ip_action?: DefaultNetworkAction;
+	default_country_action?: DefaultNetworkAction;
 	priority: number;
 	enabled: number;
 	created_at: number;
@@ -392,6 +394,26 @@ export interface IpRuleRecord {
 export interface CountryRuleRecord {
 	id: string;
 	site_id: string;
+	country_code: string;
+	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface RouteIpRuleRecord {
+	id: string;
+	route_policy_id: string;
+	network_cidr: string;
+	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface RouteCountryRuleRecord {
+	id: string;
+	route_policy_id: string;
 	country_code: string;
 	action: IpRuleAction;
 	reason: string;

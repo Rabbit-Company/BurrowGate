@@ -13,7 +13,8 @@ import { registerAccessRoutes } from "./routes/access-routes.ts";
 import { createFlow } from "./services/challenge-service.ts";
 import { recordEvent, refererFields } from "./services/event-service.ts";
 import { resolveRequestId, siteErrorResponse } from "./services/error-response-service.ts";
-import { banIpForProtectionMatch, evaluateIp, formatBanExpiry } from "./services/ip-rule-service.ts";
+import { banIpForProtectionMatch, formatBanExpiry } from "./services/ip-rule-service.ts";
+import { resolveNetworkDecision } from "./services/route-ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
 import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
@@ -210,12 +211,12 @@ async function gateway(ctx: any): Promise<Response> {
 		);
 	}
 
-	const ipRule = await evaluateIp(site, ip);
+	const route = await resolveRoutePolicy(site, request.method, url.pathname);
+	const ipRule = await resolveNetworkDecision(site, route.policy, ip);
 	eventBase.countryCode = ipRule.countryCode;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
-		const expiresAt = ipRule.ipRule?.expires_at ?? ipRule.countryRule?.expires_at ?? null;
-		const retryAfterSeconds = expiresAt ? Math.max(1, Math.ceil((expiresAt - Date.now()) / 1_000)) : null;
+		const retryAfterSeconds = ipRule.expiresAt ? Math.max(1, Math.ceil((ipRule.expiresAt - Date.now()) / 1_000)) : null;
 		const baseReason = ipRule.reason || "This request was blocked by network policy.";
 		return siteErrorResponse(
 			site,
@@ -225,14 +226,14 @@ async function gateway(ctx: any): Promise<Response> {
 				code: "network_blocked",
 				error: "Access blocked by BurrowGate",
 				clientIp: ip,
-				reason: expiresAt ? `${baseReason} This IP address will be automatically unblocked at ${formatBanExpiry(expiresAt)}.` : baseReason,
+				routePolicy: route.policy?.name,
+				reason: ipRule.expiresAt ? `${baseReason} This IP address will be automatically unblocked at ${formatBanExpiry(ipRule.expiresAt)}.` : baseReason,
 				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
 			},
 			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
 		);
 	}
 
-	const route = await resolveRoutePolicy(site, request.method, url.pathname);
 	if (route.accessMode === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "route-blocked", latencyMs: Math.round(performance.now() - started) });
 		return siteErrorResponse(site, request, {

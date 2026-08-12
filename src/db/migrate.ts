@@ -160,6 +160,25 @@ CREATE TABLE IF NOT EXISTS country_rules (
   expires_at BIGINT NULL,
   UNIQUE(site_id, country_code)
 );
+CREATE TABLE IF NOT EXISTS route_ip_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  route_policy_id VARCHAR(64) NOT NULL,
+  network_cidr VARCHAR(160) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS route_country_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  route_policy_id VARCHAR(64) NOT NULL,
+  country_code VARCHAR(2) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(route_policy_id, country_code)
+);
 CREATE TABLE IF NOT EXISTS stream_ip_rules (
   id VARCHAR(64) PRIMARY KEY,
   stream_id VARCHAR(64) NOT NULL,
@@ -525,6 +544,11 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_rule_id ON ip_rules (site_id, rule_id)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_created ON country_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_action ON country_rules (site_id, action, country_code)",
+	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_created ON route_ip_rules (route_policy_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_action_created ON route_ip_rules (route_policy_id, action, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_expiry ON route_ip_rules (route_policy_id, expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_route_country_rules_route_created ON route_country_rules (route_policy_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_route_country_rules_route_action ON route_country_rules (route_policy_id, action, country_code)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_created ON stream_ip_rules (stream_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_action_created ON stream_ip_rules (stream_id, action, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_expiry ON stream_ip_rules (stream_id, expires_at)",
@@ -622,6 +646,8 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN http_policy_json TEXT NULL",
+		"ALTER TABLE route_policies ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE route_policies ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 	]) {
 		try {
 			await db.unsafe(statement);

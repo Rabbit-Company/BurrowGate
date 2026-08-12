@@ -11,6 +11,7 @@ import {
 } from "../config.ts";
 import { repository, type SortDirection, type TabMetricsScope } from "../db/repository.ts";
 import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
+import { addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } from "../services/route-ip-rule-service.ts";
 import {
 	authenticateAdminPassword,
 	beginPendingLogin,
@@ -838,6 +839,148 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const message = error instanceof Error ? error.message : "Unable to delete route policy";
 			return jsonResponse({ error: message }, message === "Route policy not found" ? 404 : 400);
 		}
+	});
+
+	app.get("/_burrowgate/api/admin/route-policies/:id/network-rules", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		return jsonResponse({
+			ipRules: await repository.routeIpRules(routePolicy.id),
+			countryRules: await repository.routeCountryRules(routePolicy.id),
+			geoip: geoIpStatus(),
+		});
+	});
+
+	app.post("/_burrowgate/api/admin/route-policies/:id/rules", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		const body = (await ctx.req.json()) as { networkCidr?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.networkCidr || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid rule" }, 400);
+		}
+		const parsedExpiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (parsedExpiresAt !== null && (!Number.isFinite(parsedExpiresAt) || parsedExpiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addRouteIpRule(routePolicy.id, body.networkCidr, body.action!, body.reason ?? "", parsedExpiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "route_ip_rule.create",
+				resourceType: "route_ip_rule",
+				resourceId: rule.id,
+				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on route policy ${routePolicy.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
+		}
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/route-policies/:id/rules/:ruleId", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		await repository.deleteRouteIpRuleForRoute(ctx.params.ruleId, routePolicy.id);
+		invalidateRouteNetworkPolicy(routePolicy.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "route_ip_rule.delete",
+			resourceType: "route_ip_rule",
+			resourceId: ctx.params.ruleId,
+			summary: `Deleted an IP rule on route policy ${routePolicy.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ deleted: true });
+	});
+
+	app.post("/_burrowgate/api/admin/route-policies/:id/country-rules", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		const body = (await ctx.req.json()) as { countryCode?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.countryCode || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid country rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addRouteCountryRule(routePolicy.id, body.countryCode, body.action!, body.reason ?? "", expiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "route_country_rule.create",
+				resourceType: "route_country_rule",
+				resourceId: rule.id,
+				summary: `Added country rule (${rule.action}) for ${rule.country_code} on route policy ${routePolicy.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
+		}
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/route-policies/:id/country-rules/:ruleId", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		await repository.deleteRouteCountryRuleForRoute(ctx.params.ruleId, routePolicy.id);
+		invalidateRouteNetworkPolicy(routePolicy.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "route_country_rule.delete",
+			resourceType: "route_country_rule",
+			resourceId: ctx.params.ruleId,
+			summary: `Deleted a country rule on route policy ${routePolicy.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ deleted: true });
 	});
 
 	app.get("/_burrowgate/api/admin/cache", async (ctx) => {

@@ -43,14 +43,16 @@ export function invalidateNetworkPolicy(siteId: string): void {
 }
 
 export type NetworkDecisionSource = "ip-rule" | "country-rule" | "country-default" | "ip-default" | "route";
+export type NetworkDecisionScope = "site" | "route";
 
 export interface NetworkDecision {
 	action: IpRuleAction | null;
 	source: NetworkDecisionSource;
-	ipRule: IpRuleRecord | null;
-	countryRule: CountryRuleRecord | null;
+	scope: NetworkDecisionScope;
+	expiresAt: number | null;
 	countryCode: string | null;
 	reason: string | null;
+	routePolicyId: string | null;
 }
 
 function active<T extends { expires_at: number | null }>(record: T, now: number): boolean {
@@ -70,10 +72,11 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 		return {
 			action: ipRule.action,
 			source: "ip-rule",
-			ipRule,
-			countryRule: null,
+			scope: "site",
+			expiresAt: ipRule.expires_at,
 			countryCode: null,
 			reason: ipRule.reason || `Matched IP rule ${ipRule.network_cidr}`,
+			routePolicyId: null,
 		};
 	}
 
@@ -85,10 +88,11 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 			return {
 				action: countryRule.action,
 				source: "country-rule",
-				ipRule: null,
-				countryRule,
+				scope: "site",
+				expiresAt: countryRule.expires_at,
 				countryCode,
 				reason: countryRule.reason || `Matched country rule ${countryCode}`,
+				routePolicyId: null,
 			};
 		}
 
@@ -97,10 +101,11 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 			return {
 				action: countryDefault,
 				source: "country-default",
-				ipRule: null,
-				countryRule: null,
+				scope: "site",
+				expiresAt: null,
 				countryCode,
 				reason: `Default country action for ${countryCode}`,
+				routePolicyId: null,
 			};
 		}
 	}
@@ -110,20 +115,22 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 		return {
 			action: ipDefault,
 			source: "ip-default",
-			ipRule: null,
-			countryRule: null,
+			scope: "site",
+			expiresAt: null,
 			countryCode,
 			reason: "Default IP action",
+			routePolicyId: null,
 		};
 	}
 
 	return {
 		action: null,
 		source: "route",
-		ipRule: null,
-		countryRule: null,
+		scope: "site",
+		expiresAt: null,
 		countryCode,
 		reason: null,
+		routePolicyId: null,
 	};
 }
 

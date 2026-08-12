@@ -267,9 +267,9 @@ export function adminPage(): string {
 </section>
 
 <section id="panel-routes" class="tab-panel hidden">
-  <div class="route-policy-layout">
+  <div id="routePolicyLayout" class="route-policy-layout">
     <article class="card route-policy-list-card">
-      <div class="pad section-heading"><div><h2>Route policies</h2><p class="muted">The highest-priority matching policy controls access, transport, headers, and limits. IP blocks still apply globally.</p></div><div class="row"><button id="refreshRoutePolicies" class="button secondary" type="button">Refresh</button><button id="newRoutePolicy" class="button" type="button">Create</button></div></div>
+      <div class="pad section-heading"><div><h2>Route policies</h2><p class="muted">The highest-priority matching policy controls access, transport, headers, and limits. A route's network rules take precedence over the site's for matching requests.</p></div><div class="row"><button id="refreshRoutePolicies" class="button secondary" type="button">Refresh</button><button id="newRoutePolicy" class="button" type="button">Create</button></div></div>
       <div id="routePolicyList" class="route-policy-list"><div class="empty-state-inline">Open the tab to load route policies.</div></div>
     </article>
     <article class="card route-policy-editor-card">
@@ -277,6 +277,7 @@ export function adminPage(): string {
         <div class="section-heading policy-editor-heading"><div><h2 id="routePolicyFormTitle">Create route policy</h2><p id="routePolicyFormSubtitle" class="muted">Configure route-specific verification and API limits.</p></div><button id="cancelRoutePolicyEdit" class="button secondary compact hidden" type="button">Cancel edit</button></div>
         <nav class="site-editor-tabs" aria-label="Route policy settings" role="tablist">
           <button class="site-editor-tab active" role="tab" type="button" data-route-editor-tab="general" aria-selected="true">General</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="network" aria-selected="false">Network</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="websocket" aria-selected="false">WebSocket</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="protection" aria-selected="false">Protection</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="http" aria-selected="false">HTTP</button>
@@ -297,6 +298,22 @@ export function adminPage(): string {
             <label class="check-row"><input id="routePolicyEnabled" type="checkbox" checked><span><strong>Policy enabled</strong><small class="muted">Disabled policies remain stored but do not match requests.</small></span></label>
             <div id="routeChallengeSettings">
               <label><span>Challenge policy override</span><textarea id="routePolicyChallenge" class="input code-input" rows="8" spellcheck="false" placeholder="Leave blank to inherit the site's challenge chain"></textarea><small id="routeChallengeHelp" class="muted">Only used when this route requires a challenge. A blank value inherits the site policy.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="network">
+            <div class="section-heading error-response-heading"><div><h3>IP and country policy</h3><p class="muted">Rules here apply only to requests matching this route, and take precedence over the site's network rules.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Default IP action</span><select id="routeDefaultIpAction" class="select"><option value="inherit">Inherit site policy</option><option value="allow">Allow and bypass verification</option><option value="block">Block all IPs</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no IP or country rule below matches.</small></label>
+              <label><span>Default country action</span><select id="routeDefaultCountryAction" class="select"><option value="inherit">Use route IP default</option><option value="allow">Allow and bypass verification</option><option value="block">Block all countries</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no country rule below matches and no IP rule matched either.</small></label>
+            </div>
+            <p id="routeNetworkRulesPlaceholder" class="muted">Save this route policy before adding IP or country rules.</p>
+            <div id="routeNetworkRulesSection" class="hidden">
+              <div class="section-heading error-response-heading"><div><h3>IP rules</h3></div></div>
+              <div id="routeIpRuleForm" class="rule-form"><label><span>IP address or CIDR</span><input id="routeIpRuleNetworkCidr" class="input" placeholder="203.0.113.4 or 203.0.113.0/24"></label><label><span>Action</span><select id="routeIpRuleAction" class="select"><option value="block">Block</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input id="routeIpRuleExpiresAt" class="input" type="datetime-local"></label><label class="reason-field"><span>Reason</span><input id="routeIpRuleReason" class="input" placeholder="Optional reason"></label><button id="addRouteIpRule" class="button align-end" type="button">Add rule</button></div>
+              <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Network</th><th>Action</th><th>Reason</th><th>Expires</th><th></th></tr></thead><tbody id="routeIpRules"><tr><td colspan="6" class="empty-cell">No IP rules configured for this route.</td></tr></tbody></table></div>
+              <div class="section-heading error-response-heading"><div><h3>Country rules</h3></div></div>
+              <div id="routeCountryRuleForm" class="country-rule-form"><label><span>Country</span><select id="routeCountryRuleCountry" class="select country-select"><option value="">Select country</option></select></label><label><span>Action</span><select id="routeCountryRuleAction" class="select"><option value="block">Block</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input id="routeCountryRuleExpiresAt" class="input" type="datetime-local"></label><label class="reason-field"><span>Reason</span><input id="routeCountryRuleReason" class="input" placeholder="Optional reason"></label><button id="addRouteCountryRule" class="button align-end" type="button">Add rule</button></div>
+              <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Country</th><th>Action</th><th>Reason</th><th>Expires</th><th></th></tr></thead><tbody id="routeCountryRules"><tr><td colspan="6" class="empty-cell">No country rules configured for this route.</td></tr></tbody></table></div>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="websocket">

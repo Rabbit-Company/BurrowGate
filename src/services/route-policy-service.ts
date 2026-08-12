@@ -1,6 +1,7 @@
 import { repository } from "../db/repository.ts";
 import type {
 	ChallengePolicyStep,
+	DefaultNetworkAction,
 	RateLimitAlgorithm,
 	RateLimitKeyMode,
 	RateLimitScope,
@@ -10,7 +11,8 @@ import type {
 	SiteRecord,
 } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
-import { parseChallengePolicy } from "./site-service.ts";
+import { parseChallengePolicy, parseDefaultNetworkAction } from "./site-service.ts";
+import { invalidateRouteNetworkPolicy } from "./route-ip-rule-service.ts";
 import {
 	resolveWebSocketPolicy,
 	routeWebSocketPolicyView,
@@ -45,6 +47,8 @@ export interface RoutePolicyInput {
 	enabled?: unknown;
 	websocket?: unknown;
 	http?: unknown;
+	defaultIpAction?: unknown;
+	defaultCountryAction?: unknown;
 }
 
 export interface RoutePolicyView {
@@ -69,6 +73,8 @@ export interface RoutePolicyView {
 	};
 	websocket: RouteWebSocketPolicyView;
 	http: RouteHttpPolicyView;
+	defaultIpAction: DefaultNetworkAction;
+	defaultCountryAction: DefaultNetworkAction;
 	priority: number;
 	enabled: boolean;
 	createdAt: number;
@@ -206,6 +212,8 @@ export function routePolicyView(policy: RoutePolicyRecord): RoutePolicyView {
 		},
 		websocket: routeWebSocketPolicyView(policy),
 		http: routeHttpPolicyView(policy),
+		defaultIpAction: policy.default_ip_action ?? "inherit",
+		defaultCountryAction: policy.default_country_action ?? "inherit",
 		priority: Number(policy.priority),
 		enabled: policy.enabled === 1,
 		createdAt: Number(policy.created_at),
@@ -252,6 +260,8 @@ function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePo
 		rate_limit_scope: scope(input.rateLimitScope, existing?.rate_limit_scope ?? "policy"),
 		websocket_policy_json: serializeRouteWebSocketPolicy(input.websocket, existing?.websocket_policy_json),
 		http_policy_json: serializeRouteHttpPolicy(input.http, existing?.http_policy_json),
+		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing?.default_ip_action ?? "inherit"),
+		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing?.default_country_action ?? "inherit"),
 		priority: integerValue(input.priority, "Priority", existing?.priority ?? 0, -100_000, 100_000),
 		enabled: booleanValue(input.enabled, existing?.enabled === 1) ? 1 : 0,
 		created_at: existing?.created_at ?? now,
@@ -283,6 +293,7 @@ export async function deleteRoutePolicy(siteId: string, id: string): Promise<voi
 	await repository.deleteRoutePolicy(id, siteId);
 	staticAssetCache.purge({ siteId, routePolicyId: id });
 	invalidateRoutePolicyCache(siteId);
+	invalidateRouteNetworkPolicy(id);
 }
 
 function escapeRegex(value: string): string {

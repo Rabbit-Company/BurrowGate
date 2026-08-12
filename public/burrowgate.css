@@ -1481,6 +1481,12 @@ form.grid label {
 	position: sticky;
 	top: 18px;
 }
+.route-policy-layout.network-tab-active {
+	grid-template-columns: 1fr;
+}
+.route-policy-layout.network-tab-active .route-policy-editor-card {
+	position: static;
+}
 .access-user-fields {
 	display: grid;
 	gap: 12px;

@@ -22,6 +22,8 @@ import type {
 	IpRuleRecord,
 	RequestEventRecord,
 	RoutePolicyRecord,
+	RouteIpRuleRecord,
+	RouteCountryRuleRecord,
 	SiteRecord,
 	SiteAccessSettingsRecord,
 	SiteSsoSettingsRecord,
@@ -349,10 +351,16 @@ export const repository = {
 		const flowIds = flowRows.map((row) => row.id);
 		const stepRows = flowIds.length ? ((await db`SELECT id FROM challenge_steps WHERE flow_id IN ${db(flowIds)}`) as Array<{ id: string }>) : [];
 		const stepIds = stepRows.map((row) => row.id);
+		const routePolicyRows = (await db`SELECT id FROM route_policies WHERE site_id=${siteId}`) as Array<{ id: string }>;
+		const routePolicyIds = routePolicyRows.map((row) => row.id);
 		await db.begin(async (transaction) => {
 			if (stepIds.length > 0) await transaction`DELETE FROM challenge_consumptions WHERE step_id IN ${transaction(stepIds)}`;
 			if (flowIds.length > 0) await transaction`DELETE FROM challenge_steps WHERE flow_id IN ${transaction(flowIds)}`;
 			await transaction`DELETE FROM challenge_flows WHERE site_id=${siteId}`;
+			if (routePolicyIds.length > 0) {
+				await transaction`DELETE FROM route_ip_rules WHERE route_policy_id IN ${transaction(routePolicyIds)}`;
+				await transaction`DELETE FROM route_country_rules WHERE route_policy_id IN ${transaction(routePolicyIds)}`;
+			}
 			await transaction`DELETE FROM route_policies WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM access_sessions WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_access_users WHERE site_id=${siteId}`;
@@ -479,14 +487,18 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
-		await db`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,priority,enabled,created_at,updated_at)
-			VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
+		await db`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,default_ip_action,default_country_action,priority,enabled,created_at,updated_at)
+			VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.default_ip_action ?? "inherit"},${policy.default_country_action ?? "inherit"},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
 	},
 	async updateRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
-		await db`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
+		await db`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, default_ip_action=${policy.default_ip_action ?? "inherit"}, default_country_action=${policy.default_country_action ?? "inherit"}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
 	},
 	async deleteRoutePolicy(id: string, siteId: string): Promise<void> {
-		await db`DELETE FROM route_policies WHERE id=${id} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM route_ip_rules WHERE route_policy_id=${id}`;
+			await transaction`DELETE FROM route_country_rules WHERE route_policy_id=${id}`;
+			await transaction`DELETE FROM route_policies WHERE id=${id} AND site_id=${siteId}`;
+		});
 	},
 	async sessionByHash(siteId: string, hash: string): Promise<AccessSessionRecord | null> {
 		const rows = (await db`SELECT * FROM access_sessions WHERE site_id=${siteId} AND token_hash=${hash} LIMIT 1`) as AccessSessionRecord[];
@@ -730,6 +742,29 @@ export const repository = {
 	},
 	async deleteCountryRuleForSite(id: string, siteId: string): Promise<void> {
 		await db`DELETE FROM country_rules WHERE id=${id} AND site_id=${siteId}`;
+	},
+	async routeIpRules(routePolicyId: string): Promise<RouteIpRuleRecord[]> {
+		return (await db`SELECT * FROM route_ip_rules WHERE route_policy_id=${routePolicyId} ORDER BY created_at DESC`) as RouteIpRuleRecord[];
+	},
+	async insertRouteIpRule(rule: RouteIpRuleRecord): Promise<void> {
+		await db`INSERT INTO route_ip_rules (id,route_policy_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteRouteIpRuleForRoute(id: string, routePolicyId: string): Promise<void> {
+		await db`DELETE FROM route_ip_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+	},
+	async routeCountryRules(routePolicyId: string): Promise<RouteCountryRuleRecord[]> {
+		return (await db`SELECT * FROM route_country_rules WHERE route_policy_id=${routePolicyId} ORDER BY country_code ASC`) as RouteCountryRuleRecord[];
+	},
+	async routeCountryRuleByCode(routePolicyId: string, countryCode: string): Promise<RouteCountryRuleRecord | null> {
+		const rows =
+			(await db`SELECT * FROM route_country_rules WHERE route_policy_id=${routePolicyId} AND country_code=${countryCode} LIMIT 1`) as RouteCountryRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertRouteCountryRule(rule: RouteCountryRuleRecord): Promise<void> {
+		await db`INSERT INTO route_country_rules (id,route_policy_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteRouteCountryRuleForRoute(id: string, routePolicyId: string): Promise<void> {
+		await db`DELETE FROM route_country_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
 	},
 	async updateSiteNetworkDefaults(siteId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
