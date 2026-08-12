@@ -21,7 +21,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - SHA-256 browser proof of work
 - Opaque and revocable visitor sessions
 - IPv4, IPv6, CIDR, and country pass, bypass, block, and challenge rules
-- Site-wide default IP and country actions for allowlists and blocklists
+- Site-wide and per-route default IP and country actions for allowlists and blocklists, with route rules taking precedence over the site's
 - Signed origin verification headers
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
@@ -285,15 +285,15 @@ See [`docs/BANDWIDTH.md`](docs/BANDWIDTH.md).
 
 ## Network Policies
 
-Each site can define a default IP action, a default country action, explicit IP or CIDR rules, and explicit country rules. This supports blocklists, deny-by-default allowlists, and trusted clients that bypass browser verification.
+Each site, and each route policy, can define a default IP action, a default country action, explicit IP or CIDR rules, and explicit country rules. This supports blocklists, deny-by-default allowlists, and trusted clients that bypass browser verification - either site-wide or scoped to a single route, such as allowing one trusted IP on an API endpoint while blocking everyone else.
 
-Policy precedence is:
+A route's network policy is checked first and takes precedence over the site's for requests matching that route; a route with nothing configured falls back to the site's policy:
 
 1. Longest matching IP or CIDR rule
 2. Explicit country rule
 3. Default country action
 4. Default IP action
-5. Route policy
+5. Route policy access mode
 
 Country policy fails open when the GeoIP database is unavailable. IP rules and the default IP action continue to apply.
 

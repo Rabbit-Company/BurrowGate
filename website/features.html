@@ -119,6 +119,7 @@
 							<ul>
 								<li>IPv4, IPv6, CIDR, and country pass, bypass, block, and challenge rules</li>
 								<li>Site-wide default IP and country actions for allow and blocklists</li>
+								<li>Per-route IP and country rules that override the site's for one path, like allowing a single trusted IP on an API endpoint</li>
 								<li>Per-route access modes: inherit, challenge, bypass, or block</li>
 								<li>Access lists with global users, Argon2id password hashing, and rate-limited logins</li>
 								<li>TOTP two-factor enrollment and OIDC SSO with back-channel logout</li>
@@ -272,41 +273,50 @@
 							<div class="step">
 								<span class="step-num">1</span>
 								<div>
-									<h3>Longest matching IP or CIDR rule</h3>
-									<p>The most specific network match always wins first.</p>
+									<h3>The matching route's own rules</h3>
+									<p>A route policy's IP/CIDR rules, country rules, and default actions are checked first, if it has any configured.</p>
 								</div>
 							</div>
 							<div class="step">
 								<span class="step-num">2</span>
+								<div>
+									<h3>Longest matching IP or CIDR rule</h3>
+									<p>The site's most specific network match, once the route has nothing to decide.</p>
+								</div>
+							</div>
+							<div class="step">
+								<span class="step-num">3</span>
 								<div>
 									<h3>Explicit country rule</h3>
 									<p>A configured rule for the request's GeoIP country.</p>
 								</div>
 							</div>
 							<div class="step">
-								<span class="step-num">3</span>
+								<span class="step-num">4</span>
 								<div>
 									<h3>Default country action</h3>
 									<p>The site's fallback action when no explicit country rule matches.</p>
 								</div>
 							</div>
 							<div class="step">
-								<span class="step-num">4</span>
+								<span class="step-num">5</span>
 								<div>
 									<h3>Default IP action</h3>
 									<p>The site's fallback action for unmatched IP addresses.</p>
 								</div>
 							</div>
 							<div class="step">
-								<span class="step-num">5</span>
+								<span class="step-num">6</span>
 								<div>
 									<h3>Route policy</h3>
-									<p>Path and method-based overrides apply last, on top of network policy.</p>
+									<p>Path and method-based access mode applies last, on top of network policy.</p>
 								</div>
 							</div>
 						</div>
 						<p class="muted mt-24 text-sm">
-							Country policy fails open when the GeoIP database is unavailable - IP rules and the default IP action keep applying. Full precedence rules live in
+							A route's rules can also loosen a site-wide block for that one path, such as letting a monitoring service through to a health check even though
+							its IP is blocked everywhere else. Country policy fails open when the GeoIP database is unavailable - IP rules and the default IP action keep
+							applying. Full precedence rules live in
 							<a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_POLICIES.md" target="_blank" rel="noopener" class="link-accent"
 								>docs/NETWORK_POLICIES.md</a
 							>.

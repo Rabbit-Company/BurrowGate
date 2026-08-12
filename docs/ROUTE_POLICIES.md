@@ -42,12 +42,13 @@ Queries are not part of route matching.
 
 Network policy is evaluated before route access:
 
-- A matching IP, CIDR, or country `block` rejects the request.
-- A route `block` remains blocked regardless of an `allow` network rule.
+- A route can define its own default IP/country actions and explicit IP or country rules in its **Network** tab. These take precedence over the site's network policy for requests matching that route, falling back to the site's policy when the route has nothing configured.
+- A matching IP, CIDR, or country `block` (from the route, or from the site when the route has no matching rule) rejects the request.
+- A route `block` access mode remains blocked regardless of an `allow` network rule.
 - A network `challenge` forces a challenge on challenge or bypass routes.
 - A network `allow` bypasses browser verification, but does not bypass route rate limiting.
 
-See [`NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for defaults, precedence, and whitelist examples.
+See [`NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for defaults, precedence, per-route rules, and whitelist examples.
 
 ## JSON API example
 
