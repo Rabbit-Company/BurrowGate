@@ -25,6 +25,8 @@ let rangeTo = 0;
 let geoMapGeometry = null;
 let geoStatus = null;
 let geoData = { active: [], events: [], bandwidth: [] };
+let geoZoom = null;
+const GEO_ZOOM_MAX_SCALE = 8;
 let activeConnections = [];
 let latestStreamMetrics = null;
 let streamTrafficChart = null;
@@ -1126,6 +1128,119 @@ function hideGeoTooltip() {
 	byId("geoTooltip").classList.add("hidden");
 }
 
+function parseGeoViewBox(svg) {
+	const [x, y, width, height] = (svg.getAttribute("viewBox") ?? "0 0 1010 666").split(/\s+/).map(Number);
+	return { x, y, width, height };
+}
+
+function clampGeoZoom() {
+	const { base, current } = geoZoom;
+	current.width = Math.min(base.width, Math.max(base.width / GEO_ZOOM_MAX_SCALE, current.width));
+	current.height = current.width * (base.height / base.width);
+	current.x = Math.min(base.x + base.width - current.width, Math.max(base.x, current.x));
+	current.y = Math.min(base.y + base.height - current.height, Math.max(base.y, current.y));
+}
+
+function applyGeoZoom() {
+	const { base, current } = geoZoom;
+	byId("geoMap").setAttribute("viewBox", `${current.x} ${current.y} ${current.width} ${current.height}`);
+	const zoomed = current.width < base.width - 0.5;
+	byId("geoMapWrap").classList.toggle("geo-zoomed", zoomed);
+	byId("geoZoomOut").disabled = !zoomed;
+	byId("geoZoomReset").disabled = !zoomed;
+	byId("geoZoomIn").disabled = current.width <= base.width / GEO_ZOOM_MAX_SCALE + 0.5;
+}
+
+function zoomGeoMapAt(clientX, clientY, factor) {
+	const svg = byId("geoMap");
+	const rect = svg.getBoundingClientRect();
+	if (!rect.width || !rect.height) return;
+	const { current } = geoZoom;
+	const pointX = current.x + ((clientX - rect.left) / rect.width) * current.width;
+	const pointY = current.y + ((clientY - rect.top) / rect.height) * current.height;
+	const newWidth = current.width * factor;
+	const scaleChange = newWidth / current.width;
+	current.width = newWidth;
+	current.height = newWidth * (geoZoom.base.height / geoZoom.base.width);
+	current.x = pointX - (pointX - current.x) * scaleChange;
+	current.y = pointY - (pointY - current.y) * scaleChange;
+	clampGeoZoom();
+	applyGeoZoom();
+}
+
+function panGeoMap(deltaClientX, deltaClientY) {
+	const svg = byId("geoMap");
+	const rect = svg.getBoundingClientRect();
+	if (!rect.width || !rect.height) return;
+	const { current } = geoZoom;
+	current.x -= (deltaClientX / rect.width) * current.width;
+	current.y -= (deltaClientY / rect.height) * current.height;
+	clampGeoZoom();
+	applyGeoZoom();
+}
+
+function resetGeoZoom() {
+	geoZoom.current = { ...geoZoom.base };
+	applyGeoZoom();
+}
+
+function setupGeoMapZoom(svg) {
+	geoZoom = { base: parseGeoViewBox(svg), current: parseGeoViewBox(svg) };
+	applyGeoZoom();
+
+	const wrap = byId("geoMapWrap");
+	wrap.addEventListener(
+		"wheel",
+		(event) => {
+			event.preventDefault();
+			zoomGeoMapAt(event.clientX, event.clientY, event.deltaY < 0 ? 0.85 : 1 / 0.85);
+		},
+		{ passive: false },
+	);
+
+	let dragPointerId = null;
+	let lastX = 0;
+	let lastY = 0;
+	svg.addEventListener("pointerdown", (event) => {
+		if (event.button !== 0) return;
+		dragPointerId = event.pointerId;
+		lastX = event.clientX;
+		lastY = event.clientY;
+		svg.setPointerCapture(dragPointerId);
+	});
+	svg.addEventListener("pointermove", (event) => {
+		if (event.pointerId !== dragPointerId) return;
+		const deltaX = event.clientX - lastX;
+		const deltaY = event.clientY - lastY;
+		if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+		hideGeoTooltip();
+		panGeoMap(deltaX, deltaY);
+		lastX = event.clientX;
+		lastY = event.clientY;
+	});
+	const endGeoDrag = (event) => {
+		if (event.pointerId !== dragPointerId) return;
+		if (svg.hasPointerCapture(dragPointerId)) svg.releasePointerCapture(dragPointerId);
+		dragPointerId = null;
+	};
+	svg.addEventListener("pointerup", endGeoDrag);
+	svg.addEventListener("pointercancel", endGeoDrag);
+	svg.addEventListener("dblclick", (event) => {
+		event.preventDefault();
+		zoomGeoMapAt(event.clientX, event.clientY, event.shiftKey ? 2 : 0.5);
+	});
+
+	byId("geoZoomIn").addEventListener("click", () => {
+		const rect = svg.getBoundingClientRect();
+		zoomGeoMapAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 0.7);
+	});
+	byId("geoZoomOut").addEventListener("click", () => {
+		const rect = svg.getBoundingClientRect();
+		zoomGeoMapAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 0.7);
+	});
+	byId("geoZoomReset").addEventListener("click", resetGeoZoom);
+}
+
 function renderGeoMap() {
 	if (!geoMapGeometry) return;
 	const mode = byId("geoMetricMode").value;
@@ -1219,6 +1334,7 @@ async function loadGeoMapGeometry() {
 	svg.replaceChildren(fragment);
 	geoMapGeometry = { paths };
 	populateCountrySelects();
+	setupGeoMapZoom(svg);
 }
 
 function updatePagination(prefix, result, load) {

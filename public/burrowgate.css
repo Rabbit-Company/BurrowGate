@@ -1535,10 +1535,33 @@ form.grid label {
 	stroke-width: 0.45;
 	vector-effect: non-scaling-stroke;
 	cursor: pointer;
+	outline: none;
 	transition:
 		fill 120ms ease,
 		opacity 120ms ease,
 		stroke 120ms ease;
+}
+.geo-map-wrap.geo-zoomed .geo-map {
+	cursor: grab;
+}
+.geo-map-wrap.geo-zoomed .geo-map:active {
+	cursor: grabbing;
+}
+.geo-zoom-controls {
+	position: absolute;
+	z-index: 3;
+	top: 10px;
+	right: 10px;
+	display: grid;
+	gap: 6px;
+}
+.geo-zoom-controls .button.icon-button {
+	width: 30px;
+	height: 30px;
+}
+.geo-zoom-controls .tabler-icon {
+	width: 16px;
+	height: 16px;
 }
 .geo-country:hover,
 .geo-country:focus-visible {

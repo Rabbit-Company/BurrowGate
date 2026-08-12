@@ -93,8 +93,13 @@ export function adminPage(): string {
     <div><h2>Geographic distribution</h2><p id="geoSubtitle" class="muted">Requests by country for the selected range</p></div>
   </div>
   <div class="geo-layout">
-    <div class="geo-map-wrap">
+    <div id="geoMapWrap" class="geo-map-wrap">
       <svg id="geoMap" class="geo-map" role="img" aria-label="World map showing requests by country"></svg>
+      <div class="geo-zoom-controls">
+        <button id="geoZoomIn" class="button secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">${tablerIcon("zoom-in")}</button>
+        <button id="geoZoomOut" class="button secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out" disabled>${tablerIcon("zoom-out")}</button>
+        <button id="geoZoomReset" class="button secondary icon-button" type="button" aria-label="Reset zoom" title="Reset zoom" disabled>${tablerIcon("refresh")}</button>
+      </div>
       <div id="geoTooltip" class="geo-tooltip hidden" role="status"></div>
       <div id="geoMapStatus" class="geo-map-status muted">Loading GeoIP data...</div>
     </div>
