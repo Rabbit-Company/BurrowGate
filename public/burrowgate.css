@@ -758,9 +758,6 @@ form.grid label {
 .auth-title {
 	margin: 30px 0 20px;
 }
-.auth-error {
-	margin-bottom: 18px;
-}
 .totp-qr {
 	display: flex;
 	justify-content: center;

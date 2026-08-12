@@ -22,6 +22,11 @@ export function tablerIcon(name: "refresh" | "logout" | "users" | "history" | "u
 	return `<svg class="tabler-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
 }
 
+export function authErrorToast(error: string): string {
+	if (!error) return "";
+	return `<div class="toast bad" role="status" id="authErrorToast">${escapeHtml(error)}</div><script>setTimeout(function(){var t=document.getElementById("authErrorToast");if(t)t.remove();},5000);</script>`;
+}
+
 export function page(title: string, body: string, script = ""): string {
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>${escapeHtml(title)} | BurrowGate</title><link rel="icon" type="image/svg+xml" href="/_burrowgate/static/favicon.svg"><link rel="stylesheet" href="/_burrowgate/static/burrowgate.css"></head><body>${body}${script ? `<script>${script}</script>` : ""}</body></html>`;
 }

@@ -3,7 +3,7 @@ import { repository } from "../src/db/repository.ts";
 import {
 	createAccessUser,
 	generateAccessUserApiToken,
-	resetAccessUserTotp,
+	resetAccessUserTwoFactor,
 	revokeAccessUserApiToken,
 	setAccessUserTotpRequired,
 } from "../src/services/access-list-service.ts";
@@ -37,11 +37,11 @@ describe("access-list user mutations are scoped to the requesting site", () => {
 	});
 
 	test("resetting 2FA for a user on an unrelated site is rejected", async () => {
-		await expect(resetAccessUserTotp(siteA.id, userId)).rejects.toThrow("Access user not found");
+		await expect(resetAccessUserTwoFactor(siteA.id, userId)).rejects.toThrow("Access user not found");
 	});
 
 	test("resetting 2FA for a user on their assigned site succeeds", async () => {
-		const view = await resetAccessUserTotp(siteB.id, userId);
+		const view = await resetAccessUserTwoFactor(siteB.id, userId);
 		expect(view.totpEnrolled).toBe(false);
 	});
 

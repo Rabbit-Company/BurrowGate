@@ -22,6 +22,7 @@ export interface AccessUserView {
 	siteIds: string[];
 	totpRequired: boolean;
 	totpEnrolled: boolean;
+	webauthnCredentialCount: number;
 	apiTokenEnabled: boolean;
 	apiTokenCreatedAt: number | null;
 }
@@ -140,7 +141,7 @@ function passwordValue(value: unknown, required: boolean): string | null {
 	return password;
 }
 
-function userView(user: AccessUserRecord & { site_count?: number | string }, siteIds: string[] = []): AccessUserView {
+function userView(user: AccessUserRecord & { site_count?: number | string }, siteIds: string[] = [], webauthnCredentialCount = 0): AccessUserView {
 	return {
 		id: user.id,
 		username: user.username,
@@ -151,6 +152,7 @@ function userView(user: AccessUserRecord & { site_count?: number | string }, sit
 		siteIds,
 		totpRequired: user.totp_required === 1,
 		totpEnrolled: user.totp_secret_encrypted !== null,
+		webauthnCredentialCount,
 		apiTokenEnabled: user.api_token_hash !== null,
 		apiTokenCreatedAt: user.api_token_created_at !== null ? Number(user.api_token_created_at) : null,
 	};
@@ -167,11 +169,15 @@ export async function accessListView(siteId: string): Promise<AccessListView> {
 		repository.availableAccessUsers(siteId),
 	]);
 	const siteIds = new Map<string, string[]>();
-	for (const user of [...users, ...available]) siteIds.set(user.id, await repository.accessSiteIdsForUser(user.id));
+	const webauthnCounts = new Map<string, number>();
+	for (const user of [...users, ...available]) {
+		siteIds.set(user.id, await repository.accessSiteIdsForUser(user.id));
+		webauthnCounts.set(user.id, (await repository.accessWebauthnCredentialsForUserAndSite(user.id, siteId)).length);
+	}
 	return {
 		settings: { enabled: settings.enabled === 1, sendUsernameToUpstream: settings.send_username_to_upstream === 1 },
-		users: users.map((user) => userView(user, siteIds.get(user.id))),
-		availableUsers: available.map((user) => userView(user, siteIds.get(user.id))),
+		users: users.map((user) => userView(user, siteIds.get(user.id), webauthnCounts.get(user.id))),
+		availableUsers: available.map((user) => userView(user, siteIds.get(user.id), webauthnCounts.get(user.id))),
 	};
 }
 
@@ -273,7 +279,10 @@ export async function removeAccessUser(siteId: string, userId: string): Promise<
 	}
 	await repository.unassignAccessUser(siteId, userId);
 	await repository.revokeSessionsForAccessUser(userId, Date.now(), siteId);
-	if ((await repository.accessSiteIdsForUser(userId)).length === 0) await repository.deleteAccessUser(userId);
+	if ((await repository.accessSiteIdsForUser(userId)).length === 0) {
+		await repository.deleteAllAccessWebauthnCredentialsForUser(userId);
+		await repository.deleteAccessUser(userId);
+	}
 }
 
 function failureKeys(siteId: string, ip: string, username: string): string[] {
@@ -349,10 +358,14 @@ export function invalidateAccessSite(siteId: string): void {
 	loginFailures.clearPrefix(`site:${siteId}:`);
 }
 
-async function userViewById(userId: string): Promise<AccessUserView> {
+async function userViewById(userId: string, siteId: string): Promise<AccessUserView> {
 	const user = await repository.accessUserById(userId);
 	if (!user) throw new Error("Access user not found");
-	return userView({ ...user, site_count: (await repository.accessSiteIdsForUser(userId)).length });
+	return userView(
+		{ ...user, site_count: (await repository.accessSiteIdsForUser(userId)).length },
+		undefined,
+		(await repository.accessWebauthnCredentialsForUserAndSite(userId, siteId)).length,
+	);
 }
 
 export async function setAccessUserTotpRequired(siteId: string, userId: string, required: boolean): Promise<AccessUserView> {
@@ -360,15 +373,16 @@ export async function setAccessUserTotpRequired(siteId: string, userId: string, 
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, totp_required: required ? 1 : 0, updated_at: Date.now() });
 	await repository.revokeSessionsForAccessUser(userId, Date.now());
-	return userViewById(userId);
+	return userViewById(userId, siteId);
 }
 
-export async function resetAccessUserTotp(siteId: string, userId: string): Promise<AccessUserView> {
+export async function resetAccessUserTwoFactor(siteId: string, userId: string): Promise<AccessUserView> {
 	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, totp_secret_encrypted: null, totp_enrolled_at: null, updated_at: Date.now() });
+	await repository.deleteAccessWebauthnCredentialsForUserAndSite(userId, siteId);
 	await repository.revokeSessionsForAccessUser(userId, Date.now());
-	return userViewById(userId);
+	return userViewById(userId, siteId);
 }
 
 export async function generateAccessUserApiToken(siteId: string, userId: string): Promise<{ view: AccessUserView; token: string }> {
@@ -381,14 +395,14 @@ export async function generateAccessUserApiToken(siteId: string, userId: string)
 		api_token_created_at: Date.now(),
 		updated_at: Date.now(),
 	});
-	return { view: await userViewById(userId), token };
+	return { view: await userViewById(userId, siteId), token };
 }
 
 export async function revokeAccessUserApiToken(siteId: string, userId: string): Promise<AccessUserView> {
 	const existing = await repository.accessUserForSite(siteId, userId);
 	if (!existing) throw new Error("Access user not found");
 	await repository.updateAccessUser({ ...existing, api_token_hash: null, api_token_created_at: null, updated_at: Date.now() });
-	return userViewById(userId);
+	return userViewById(userId, siteId);
 }
 
 export async function accessUserByApiToken(token: string): Promise<AccessUserRecord | null> {
@@ -436,54 +450,71 @@ export async function resolveApiTokenAccess(
 	return { session: record, user };
 }
 
-export interface PendingAccessTotp {
+export type PendingAccessTwoFactorMode = "enroll" | "verify";
+
+export interface PendingAccessTwoFactor {
 	userId: string;
-	mode: "totp-enroll" | "totp-verify";
+	siteId: string;
+	mode: PendingAccessTwoFactorMode;
 	tentativeSecret: string | null;
+	webauthnChallenge: string | null;
 	expiresAt: number;
 }
 
 const PENDING_ACCESS_TOTP_TTL_MS = 5 * 60_000;
-const pendingAccessTotps = new Map<string, PendingAccessTotp>();
-const accessTotpFailures = new LoginFailureTracker(config.accessLoginMaxFailureKeys);
+const pendingAccessTwoFactors = new Map<string, PendingAccessTwoFactor>();
+const accessTwoFactorFailures = new LoginFailureTracker(config.accessLoginMaxFailureKeys);
 
-function sweepPendingAccessTotps(now: number): void {
-	for (const [key, entry] of pendingAccessTotps) if (entry.expiresAt <= now) pendingAccessTotps.delete(key);
+function sweepPendingAccessTwoFactors(now: number): void {
+	for (const [key, entry] of pendingAccessTwoFactors) if (entry.expiresAt <= now) pendingAccessTwoFactors.delete(key);
 }
 
-export function beginAccessTotpChallenge(sessionId: string, user: AccessUserRecord): "totp-enroll" | "totp-verify" {
+export async function beginAccessTwoFactorChallenge(sessionId: string, siteId: string, user: AccessUserRecord): Promise<PendingAccessTwoFactorMode> {
 	const now = Date.now();
-	sweepPendingAccessTotps(now);
-	const mode = user.totp_secret_encrypted ? "totp-verify" : "totp-enroll";
-	pendingAccessTotps.set(sessionId, { userId: user.id, mode, tentativeSecret: null, expiresAt: now + PENDING_ACCESS_TOTP_TTL_MS });
+	sweepPendingAccessTwoFactors(now);
+	const hasWebauthn = (await repository.accessWebauthnCredentialsForUserAndSite(user.id, siteId)).length > 0;
+	const mode: PendingAccessTwoFactorMode = user.totp_secret_encrypted || hasWebauthn ? "verify" : "enroll";
+	pendingAccessTwoFactors.set(sessionId, {
+		userId: user.id,
+		siteId,
+		mode,
+		tentativeSecret: null,
+		webauthnChallenge: null,
+		expiresAt: now + PENDING_ACCESS_TOTP_TTL_MS,
+	});
 	return mode;
 }
 
-export function pendingAccessTotp(sessionId: string, mode: "totp-enroll" | "totp-verify"): PendingAccessTotp | null {
-	const entry = pendingAccessTotps.get(sessionId);
+export function pendingAccessTwoFactor(sessionId: string, mode: PendingAccessTwoFactorMode): PendingAccessTwoFactor | null {
+	const entry = pendingAccessTwoFactors.get(sessionId);
 	if (!entry || entry.expiresAt <= Date.now() || entry.mode !== mode) return null;
 	return entry;
 }
 
 export function setPendingAccessTotpSecret(sessionId: string, secret: string): void {
-	const entry = pendingAccessTotps.get(sessionId);
+	const entry = pendingAccessTwoFactors.get(sessionId);
 	if (entry) entry.tentativeSecret = secret;
 }
 
-export function consumePendingAccessTotp(sessionId: string): void {
-	pendingAccessTotps.delete(sessionId);
+export function setPendingAccessWebauthnChallenge(sessionId: string, challenge: string): void {
+	const entry = pendingAccessTwoFactors.get(sessionId);
+	if (entry) entry.webauthnChallenge = challenge;
 }
 
-export function accessTotpRetryAfterSeconds(sessionId: string): number {
-	return accessTotpFailures.status([`totp:${sessionId}`], Date.now());
+export function consumePendingAccessTwoFactor(sessionId: string): void {
+	pendingAccessTwoFactors.delete(sessionId);
 }
 
-export function recordAccessTotpFailure(sessionId: string): void {
-	accessTotpFailures.record([`totp:${sessionId}`], Date.now());
+export function accessTwoFactorRetryAfterSeconds(sessionId: string): number {
+	return accessTwoFactorFailures.status([`totp:${sessionId}`], Date.now());
 }
 
-export function clearAccessTotpFailures(sessionId: string): void {
-	accessTotpFailures.clear([`totp:${sessionId}`]);
+export function recordAccessTwoFactorFailure(sessionId: string): void {
+	accessTwoFactorFailures.record([`totp:${sessionId}`], Date.now());
+}
+
+export function clearAccessTwoFactorFailures(sessionId: string): void {
+	accessTwoFactorFailures.clear([`totp:${sessionId}`]);
 }
 
 export async function decryptAccessTotpSecret(user: AccessUserRecord): Promise<string | null> {

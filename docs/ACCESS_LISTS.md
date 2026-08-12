@@ -80,6 +80,10 @@ identity-cookie-v1\n
 
 The origin can obtain the session ID from `X-BurrowGate-Session-Id`. Frontend JavaScript cannot independently verify an HMAC because it does not have the origin signing secret, so it should treat the username as display data rather than an authorization decision. Server-side code must verify the signature before trusting the cookie.
 
+## Two-factor authentication
+
+Enabling **Require 2FA** for a user forces enrollment in either a TOTP authenticator app or a WebAuthn security key on their next login. WebAuthn credentials are scoped per site, so a user assigned to multiple sites registers a key separately on each. See [TWO_FACTOR_AUTH.md](TWO_FACTOR_AUTH.md) for enrollment flow, per-site credential scoping, and reset behavior.
+
 ## Single sign-on
 
 Each site's access list can optionally accept sign-ins from an external OpenID Connect provider instead of, or alongside, local passwords. See [SSO.md](SSO.md) for setup and behavior details, including how it interacts with dashboard single sign-on.

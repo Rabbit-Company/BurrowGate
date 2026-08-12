@@ -20,7 +20,7 @@ SAML is not supported. Configure a generic OIDC application at the identity prov
 2. The login button starts an authorization-code flow with PKCE (S256), a random `state`, and a random `nonce`.
 3. On callback, BurrowGate exchanges the code for an ID token, verifies its signature against the provider's published JWKS, and checks the issuer, audience, and nonce.
 4. The verified `sub` (subject) claim is the durable identity key. On first login, BurrowGate looks for an existing local account with a matching email and links it; otherwise it provisions a new account using the ID token's `email` claim as the username.
-5. A normal BurrowGate session is issued exactly as it would be after a password + TOTP login. SSO only replaces the credential-verification step.
+5. A normal BurrowGate session is issued exactly as it would be after a password + two-factor login. SSO only replaces the credential-verification step.
 
 The provider must return an `email` claim; BurrowGate has no other stable identifier to name new accounts.
 
@@ -28,7 +28,7 @@ The provider must return an `email` claim; BurrowGate has no other stable identi
 
 - New dashboard accounts are created with the **Member** role and no site or stream permissions. An administrator must grant access from the Users panel before the account can see anything.
 - New access-list accounts are created and assigned to the site the user signed in through, the same as if an administrator had added them manually.
-- SSO-provisioned accounts skip local TOTP enrollment; the identity provider is treated as the second factor.
+- SSO-provisioned accounts skip local two-factor enrollment (TOTP or WebAuthn). The identity provider is treated as the second factor.
 - BurrowGate does not deprovision accounts automatically. Removing a user at the identity provider does not disable their BurrowGate account (disable it from the dashboard).
 
 ## Enforcement

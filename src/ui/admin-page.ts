@@ -1,4 +1,4 @@
-import { escapeHtml, page, tablerIcon } from "./layout.ts";
+import { authErrorToast, escapeHtml, page, tablerIcon } from "./layout.ts";
 
 export function loginPage(error = "", sso?: { enabled: boolean; enforceSso: boolean; buttonLabel: string }): string {
 	const passwordForm = `<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form>`;
@@ -11,21 +11,97 @@ export function loginPage(error = "", sso?: { enabled: boolean; enforceSso: bool
 				: passwordForm;
 	return page(
 		"Admin login",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}${body}</section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Dashboard login</h1>${authErrorToast(error)}${body}</section></main>`,
 	);
 }
 
-export function totpEnrollPage(uri: string, secret: string, qrSvgMarkup: string, error = ""): string {
+export function twoFactorEnrollPage(uri: string, secret: string, qrSvgMarkup: string, error = ""): string {
+	const webauthnSection = `<div id="webauthnStatus" class="muted" hidden></div><button class="button" type="button" id="webauthnRegisterButton">Register a security key</button><div class="auth-divider"><span>or use an authenticator app</span></div>`;
+	const totpSection = `<p class="muted">Scan this code with an authenticator app (Ente Auth, Aegis, Google Authenticator, ...), or enter the secret manually.</p><div class="totp-qr">${qrSvgMarkup}</div><p class="muted totp-secret">Secret: <code>${escapeHtml(secret)}</code></p><form method="post" action="/_burrowgate/admin/login/enroll" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify and continue</button></form><p class="muted totp-url"><a href="${escapeHtml(uri)}">Open in authenticator app</a></p>`;
+	const recoveryCodesSection = `<div id="webauthnRecoveryCodes" hidden><h2>Save your recovery codes</h2><p class="muted">Each code can be used once if you lose access to your second factor. Store them somewhere safe. They will not be shown again.</p><ul class="totp-recovery-codes" id="webauthnRecoveryCodesList"></ul><div class="recovery-continue"><a class="button" href="/_burrowgate/admin">Continue to dashboard</a></div></div>`;
+	const script = `<script type="module">
+import { isWebauthnSupported, registerCredential } from "/_burrowgate/static/webauthn-client.js";
+const button = document.getElementById("webauthnRegisterButton");
+const status = document.getElementById("webauthnStatus");
+if (!isWebauthnSupported()) button.disabled = true;
+button?.addEventListener("click", async () => {
+	button.disabled = true;
+	status.hidden = false;
+	status.textContent = "Waiting for your security key...";
+	try {
+		const optionsResponse = await fetch("/_burrowgate/admin/login/webauthn/register/options", { method: "POST" });
+		if (!optionsResponse.ok) throw new Error("Could not start registration");
+		const options = await optionsResponse.json();
+		const credential = await registerCredential(options);
+		const verifyResponse = await fetch("/_burrowgate/admin/login/webauthn/register/verify", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ response: credential }),
+		});
+		const result = await verifyResponse.json();
+		if (!verifyResponse.ok) throw new Error(result.error || "Registration failed");
+		document.querySelector(".auth-card").querySelectorAll(":scope > :not(#webauthnRecoveryCodes)").forEach((node) => node.remove());
+		const list = document.getElementById("webauthnRecoveryCodesList");
+		for (const code of result.recoveryCodes) {
+			const item = document.createElement("li");
+			const codeEl = document.createElement("code");
+			codeEl.textContent = code;
+			item.append(codeEl);
+			list.append(item);
+		}
+		document.getElementById("webauthnRecoveryCodes").hidden = false;
+	} catch (error) {
+		status.textContent = error instanceof Error ? error.message : "Registration failed";
+		button.disabled = false;
+	}
+});
+</script>`;
 	return page(
 		"Two-factor setup",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Set up two-factor authentication</h1><p class="muted">Scan this code with an authenticator app (Ente Auth, Aegis, Google Authenticator, ...), or enter the secret manually.</p>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<div class="totp-qr">${qrSvgMarkup}</div><p class="muted totp-secret">Secret: <code>${escapeHtml(secret)}</code></p><form method="post" action="/_burrowgate/admin/login/enroll" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify and continue</button></form><p class="muted totp-url"><a href="${escapeHtml(uri)}">Open in authenticator app</a></p></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Set up two-factor authentication</h1>${authErrorToast(error)}${webauthnSection}${totpSection}${recoveryCodesSection}</section>${script}</main>`,
 	);
 }
 
-export function totpVerifyPage(error = ""): string {
+export function twoFactorVerifyPage(methods: { hasWebauthn: boolean; hasTotp: boolean }, error = ""): string {
+	const webauthnSection = methods.hasWebauthn
+		? `<div id="webauthnStatus" class="muted" hidden></div><button class="button" type="button" id="webauthnAuthenticateButton">Use your security key</button>${methods.hasTotp ? `<div class="auth-divider"><span>or</span></div>` : ""}`
+		: "";
+	const totpSection = methods.hasTotp
+		? `<form method="post" action="/_burrowgate/admin/login/verify" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify</button></form>`
+		: "";
+	const script = methods.hasWebauthn
+		? `<script type="module">
+import { isWebauthnSupported, authenticateWithCredential } from "/_burrowgate/static/webauthn-client.js";
+const button = document.getElementById("webauthnAuthenticateButton");
+const status = document.getElementById("webauthnStatus");
+if (!isWebauthnSupported()) button.disabled = true;
+button?.addEventListener("click", async () => {
+	button.disabled = true;
+	status.hidden = false;
+	status.textContent = "Waiting for your security key...";
+	try {
+		const optionsResponse = await fetch("/_burrowgate/admin/login/webauthn/authenticate/options", { method: "POST" });
+		if (!optionsResponse.ok) throw new Error("Could not start verification");
+		const options = await optionsResponse.json();
+		const credential = await authenticateWithCredential(options);
+		const verifyResponse = await fetch("/_burrowgate/admin/login/webauthn/authenticate/verify", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ response: credential }),
+		});
+		const result = await verifyResponse.json();
+		if (!verifyResponse.ok) throw new Error(result.error || "Verification failed");
+		window.location.href = "/_burrowgate/admin";
+	} catch (error) {
+		status.textContent = error instanceof Error ? error.message : "Verification failed";
+		button.disabled = false;
+	}
+});
+</script>`
+		: "";
 	return page(
 		"Two-factor verification",
-		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Enter your verification code</h1>${error ? `<p class="badge bad auth-error">${escapeHtml(error)}</p>` : ""}<form method="post" action="/_burrowgate/admin/login/totp" class="grid"><label>6-digit code<input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus></label><button class="button" type="submit">Verify</button></form><details class="totp-recovery"><summary>Use a recovery code instead</summary><form method="post" action="/_burrowgate/admin/login/totp" class="grid"><label>Recovery code<input class="input" name="recoveryCode" autocomplete="off"></label><button class="button secondary" type="submit">Use recovery code</button></form></details></section></main>`,
+		`<main class="shell challenge"><section class="card pad auth-card"><div class="brand"><span class="mark"></span> BurrowGate</div><h1 class="auth-title">Enter your verification code</h1>${authErrorToast(error)}${webauthnSection}${totpSection}<details class="totp-recovery"><summary>Use a recovery code instead</summary><form method="post" action="/_burrowgate/admin/login/verify" class="grid"><label>Recovery code<input class="input" name="recoveryCode" autocomplete="off"></label><button class="button secondary" type="submit">Use recovery code</button></form></details></section>${script}</main>`,
 	);
 }
 
@@ -732,6 +808,9 @@ export function adminPage(): string {
       </article>
       <article class="card account-recovery-card">
         <div class="pad"><h2>Recovery codes</h2><p class="muted">Regenerating replaces all existing recovery codes and requires a current 6-digit code from your authenticator app.</p><form id="recoveryCodesForm" class="form-row"><label><span>6-digit code</span><input class="input" name="code" inputmode="numeric" maxlength="6" required></label><button class="button align-end" type="submit">Regenerate codes</button></form><ul id="newRecoveryCodes" class="totp-recovery-codes hidden"></ul></div>
+      </article>
+      <article class="card account-webauthn-card">
+        <div class="pad"><h2>Security keys</h2><p class="muted">Register a hardware security key (e.g. a YubiKey) as an alternative to authenticator-app codes.</p><ul id="webauthnCredentialList" class="settings-list"></ul><button id="webauthnRegisterButton" class="button secondary" type="button">Register a security key</button></div>
       </article>
     </div>
   </div>

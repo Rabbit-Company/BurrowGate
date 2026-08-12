@@ -36,6 +36,13 @@ export function toBase64Url(bytes: Uint8Array): string {
 	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
+export function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
+	const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+	const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+	const binary = atob(padded);
+	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
 export async function timingSafeEqualText(left: string, right: string): Promise<boolean> {
 	const leftDigest = await sha256Bytes(left);
 	const rightDigest = await sha256Bytes(right);

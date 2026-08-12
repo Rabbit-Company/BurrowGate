@@ -109,6 +109,24 @@ CREATE TABLE IF NOT EXISTS site_access_users (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (site_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS access_webauthn_credentials (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  site_id VARCHAR(64) NOT NULL,
+  rp_id VARCHAR(255) NOT NULL,
+  credential_id TEXT NOT NULL,
+  credential_id_hash VARCHAR(64) NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  sign_count BIGINT NOT NULL DEFAULT 0,
+  transports_json TEXT NULL,
+  aaguid VARCHAR(64) NULL,
+  device_type VARCHAR(16) NULL,
+  backed_up INTEGER NOT NULL DEFAULT 0,
+  nickname VARCHAR(255) NULL,
+  created_at BIGINT NOT NULL,
+  last_used_at BIGINT NULL,
+  updated_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS challenge_flows (
   id VARCHAR(64) PRIMARY KEY,
   site_id VARCHAR(64) NOT NULL,
@@ -262,6 +280,23 @@ CREATE TABLE IF NOT EXISTS admin_recovery_codes (
   code_hash VARCHAR(64) NOT NULL,
   created_at BIGINT NOT NULL,
   used_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_webauthn_credentials (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  rp_id VARCHAR(255) NOT NULL,
+  credential_id TEXT NOT NULL,
+  credential_id_hash VARCHAR(64) NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  sign_count BIGINT NOT NULL DEFAULT 0,
+  transports_json TEXT NULL,
+  aaguid VARCHAR(64) NULL,
+  device_type VARCHAR(16) NULL,
+  backed_up INTEGER NOT NULL DEFAULT 0,
+  nickname VARCHAR(255) NULL,
+  created_at BIGINT NOT NULL,
+  last_used_at BIGINT NULL,
+  updated_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admin_user_site_permissions (
   user_id VARCHAR(64) NOT NULL,
@@ -590,6 +625,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_access_users_sso_subject ON access_users (sso_subject)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_sso_sid ON admin_sessions (sso_sid)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_sso_sid ON access_sessions (site_id, sso_sid)",
+	"CREATE INDEX IF NOT EXISTS idx_admin_webauthn_user ON admin_webauthn_credentials (user_id)",
+	"CREATE INDEX IF NOT EXISTS idx_access_webauthn_user_site ON access_webauthn_credentials (user_id, site_id)",
+	"CREATE INDEX IF NOT EXISTS idx_access_webauthn_site ON access_webauthn_credentials (site_id)",
 ];
 
 function isMySql(): boolean {

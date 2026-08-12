@@ -1,3 +1,5 @@
+import { isWebauthnSupported, registerCredential } from "/_burrowgate/static/webauthn-client.js";
+
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
 const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
@@ -2096,22 +2098,27 @@ function renderAccessList() {
 	}
 	container.innerHTML = accessList.users
 		.map((user) => {
+			const twoFactorEnrolled = user.totpEnrolled || user.webauthnCredentialCount > 0;
 			const totpBadge = !user.totpRequired
 				? '<span class="badge">2FA off</span>'
-				: user.totpEnrolled
+				: twoFactorEnrolled
 					? '<span class="badge ok">2FA enrolled</span>'
 					: '<span class="badge warn">2FA pending</span>';
+			const webauthnBadge =
+				user.webauthnCredentialCount > 0
+					? `<span class="badge info">${formatNumber(user.webauthnCredentialCount)} security key${user.webauthnCredentialCount === 1 ? "" : "s"} (this site)</span>`
+					: "";
 			const tokenBadge = user.apiTokenEnabled ? '<span class="badge ok">API token active</span>' : "";
 			return `<div class="route-policy-item ${user.enabled ? "" : "disabled"}" data-access-user-row="${escapeHtml(user.id)}">
     <div class="route-policy-main access-user-fields">
-      <div class="site-list-title"><strong>${escapeHtml(user.username)}</strong><span class="badge ${user.enabled ? "ok" : "warn"}">${user.enabled ? "enabled" : "disabled"}</span>${user.siteCount > 1 ? `<span class="badge info">${formatNumber(user.siteCount)} sites</span>` : ""}${totpBadge}${tokenBadge}</div>
+      <div class="site-list-title"><strong>${escapeHtml(user.username)}</strong><span class="badge ${user.enabled ? "ok" : "warn"}">${user.enabled ? "enabled" : "disabled"}</span>${user.siteCount > 1 ? `<span class="badge info">${formatNumber(user.siteCount)} sites</span>` : ""}${totpBadge}${webauthnBadge}${tokenBadge}</div>
       <div class="site-form-grid"><label><span>Username</span><input class="input" data-access-username value="${escapeHtml(user.username)}" maxlength="255"></label><label><span>New password</span><input class="input" data-access-password type="password" autocomplete="new-password" minlength="8" maxlength="1024" placeholder="Leave blank to keep current"></label></div>
       <label class="check-row"><input data-access-enabled type="checkbox"${user.enabled ? " checked" : ""}><span><strong>User enabled</strong><small class="muted">Changes to this shared identity apply on every assigned site.</small></span></label>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-access-save="${escapeHtml(user.id)}">Save</button><button class="button danger compact" type="button" data-access-remove="${escapeHtml(user.id)}">Remove</button></div>
     <div class="site-list-actions security-actions">
       <button class="button secondary compact" type="button" data-access-totp-toggle="${escapeHtml(user.id)}" data-totp-required="${user.totpRequired}">${user.totpRequired ? "Don't require 2FA" : "Require 2FA"}</button>
-      ${user.totpEnrolled ? `<button class="button secondary compact" type="button" data-access-totp-reset="${escapeHtml(user.id)}">Reset 2FA</button>` : ""}
+      ${twoFactorEnrolled ? `<button class="button secondary compact" type="button" data-access-totp-reset="${escapeHtml(user.id)}">Reset 2FA</button>` : ""}
       <button class="button secondary compact" type="button" data-access-token-generate="${escapeHtml(user.id)}">${user.apiTokenEnabled ? "Regenerate API token" : "Generate API token"}</button>
       ${user.apiTokenEnabled ? `<button class="button danger compact" type="button" data-access-token-revoke="${escapeHtml(user.id)}">Revoke API token</button>` : ""}
     </div>
@@ -3525,7 +3532,7 @@ function renderUsers() {
 			(user) => `<tr>
         <td>${escapeHtml(user.username)}</td>
         <td><span class="badge ${user.role === "administrator" ? "info" : ""}">${user.role === "administrator" ? "Administrator" : "Member"}</span></td>
-        <td>${user.totpEnrolled ? '<span class="badge ok">Enrolled</span>' : '<span class="badge warn">Pending</span>'}</td>
+        <td>${user.totpEnrolled || user.webauthnCredentialCount > 0 ? '<span class="badge ok">Enrolled</span>' : '<span class="badge warn">Pending</span>'}</td>
         <td>${user.enabled ? '<span class="badge ok">Enabled</span>' : '<span class="badge bad">Disabled</span>'}</td>
         <td>${escapeHtml(userPermissionsSummary(user))}</td>
         <td class="row-actions">
@@ -3625,7 +3632,53 @@ async function saveUserPermissions() {
 async function loadAccount() {
 	const me = currentAdmin ?? (await loadCurrentAdmin());
 	byId("accountSummary").textContent =
-		`Signed in as ${me.username} (${me.role === "administrator" ? "Administrator" : "Member"}). Two-factor authentication: ${me.totpEnrolled ? "enrolled" : "not enrolled"}.`;
+		`Signed in as ${me.username} (${me.role === "administrator" ? "Administrator" : "Member"}). Two-factor authentication: ${me.totpEnrolled || me.webauthnCredentialCount > 0 ? "enrolled" : "not enrolled"}.`;
+	await loadWebauthnCredentials();
+	byId("webauthnRegisterButton").disabled = !isWebauthnSupported();
+}
+
+async function loadWebauthnCredentials() {
+	const list = byId("webauthnCredentialList");
+	try {
+		const credentials = await api("/me/webauthn", {}, false);
+		list.innerHTML =
+			credentials
+				.map(
+					(credential) => `<li class="site-list-item">
+      <div class="site-list-title"><strong>${escapeHtml(credential.nickname || "Security key")}</strong></div>
+      <div class="site-list-meta"><span>Registered ${new Date(credential.createdAt).toLocaleString()}</span>${credential.lastUsedAt ? `<span>Last used ${new Date(credential.lastUsedAt).toLocaleString()}</span>` : ""}</div>
+      <div class="site-list-actions"><button class="button danger compact" type="button" data-webauthn-remove="${escapeHtml(credential.id)}">Remove</button></div>
+    </li>`,
+				)
+				.join("") || '<li class="empty-state-inline">No security keys registered.</li>';
+	} catch (error) {
+		list.innerHTML = `<li class="empty-state-inline error-text">${escapeHtml(error.message)}</li>`;
+	}
+}
+
+async function registerWebauthnCredential() {
+	const button = byId("webauthnRegisterButton");
+	button.disabled = true;
+	try {
+		const options = await api("/me/webauthn/register/options", { method: "POST" }, false);
+		const credential = await registerCredential(options);
+		const nickname = prompt("Name this security key (optional):", "") ?? "";
+		await api(
+			"/me/webauthn/register/verify",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ response: credential, nickname, challengeToken: options.challengeToken }),
+			},
+			false,
+		);
+		showToast("Security key registered.");
+		await loadWebauthnCredentials();
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = !isWebauthnSupported();
+	}
 }
 
 async function changePassword(event) {
@@ -3782,6 +3835,20 @@ async function handleBodyClick(event) {
 			await loadUsers();
 		} catch (error) {
 			userDeleteButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+	const webauthnRemoveButton = event.target.closest("button[data-webauthn-remove]");
+	if (webauthnRemoveButton) {
+		if (!confirm("Remove this security key?")) return;
+		webauthnRemoveButton.disabled = true;
+		try {
+			await api(`/me/webauthn/${encodeURIComponent(webauthnRemoveButton.dataset.webauthnRemove)}`, { method: "DELETE" }, false);
+			showToast("Security key removed.");
+			await loadWebauthnCredentials();
+		} catch (error) {
+			webauthnRemoveButton.disabled = false;
 			showToast(error.message, "bad");
 		}
 		return;
@@ -4127,6 +4194,7 @@ function bindActions() {
 	byId("saveUserPermissions").addEventListener("click", () => void saveUserPermissions());
 	byId("passwordForm").addEventListener("submit", changePassword);
 	byId("recoveryCodesForm").addEventListener("submit", regenerateRecoveryCodes);
+	byId("webauthnRegisterButton").addEventListener("click", registerWebauthnCredential);
 	byId("refreshAuditLog").addEventListener("click", () => void loadAuditLog());
 	byId("purgeAuditLog").addEventListener("click", () => void purgeAuditLog());
 	byId("auditSearch").addEventListener(

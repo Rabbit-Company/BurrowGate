@@ -4,18 +4,20 @@ import { repository } from "../db/repository.ts";
 import {
 	accessIdentitySetCookies,
 	accessSettingsForSite,
-	accessTotpRetryAfterSeconds,
+	accessTwoFactorRetryAfterSeconds,
 	authenticateAccessUser,
 	authenticatedAccessUser,
-	beginAccessTotpChallenge,
+	beginAccessTwoFactorChallenge,
 	clearAccessIdentityCookies,
-	clearAccessTotpFailures,
+	clearAccessTwoFactorFailures,
 	completeAccessTotpEnrollment,
-	consumePendingAccessTotp,
+	consumePendingAccessTwoFactor,
 	decryptAccessTotpSecret,
-	pendingAccessTotp,
-	recordAccessTotpFailure,
+	pendingAccessTwoFactor,
+	recordAccessTwoFactorFailure,
 	setPendingAccessTotpSecret,
+	setPendingAccessWebauthnChallenge,
+	type PendingAccessTwoFactorMode,
 } from "../services/access-list-service.ts";
 import { beginAccessSsoLogin, completeAccessSsoLogin, handleAccessBackchannelLogout, siteSsoLoginInfo } from "../services/access-sso-service.ts";
 import { createFlow } from "../services/challenge-service.ts";
@@ -24,11 +26,18 @@ import { findAccessSession, userAgentHash } from "../services/session-service.ts
 import { resolveSiteForHost } from "../services/site-service.ts";
 import { enrollmentUri, generateSecret, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
 import type { AccessSessionRecord, AccessUserRecord, SiteRecord } from "../types.ts";
-import { accessLoginPage, accessTotpEnrollPage, accessTotpVerifyPage } from "../ui/access-login-page.ts";
+import { accessLoginPage, accessTwoFactorEnrollPage, accessTwoFactorVerifyPage } from "../ui/access-login-page.ts";
+import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { appendSetCookies, htmlResponse, jsonResponse, normalizeHost, requestHost, safeReturnPath, sameOriginRequest } from "../utils/http.ts";
+import { buildAuthenticationOptions, buildRegistrationOptions, verifyAuthentication, verifyRegistration } from "../services/webauthn-service.ts";
 
 function loginPath(returnPath: string): string {
 	return `/_burrowgate/access/login?return=${encodeURIComponent(returnPath)}`;
+}
+
+function webauthnRelyingParty(request: Request): { rpID: string; origin: string } {
+	const url = new URL(request.url);
+	return { rpID: url.hostname, origin: url.origin };
 }
 
 async function context(ctx: any): Promise<{
@@ -44,24 +53,25 @@ async function context(ctx: any): Promise<{
 	};
 }
 
-interface ResolvedPendingTotp {
+interface ResolvedPendingTwoFactor {
 	site: SiteRecord;
 	session: AccessSessionRecord;
 	user: AccessUserRecord;
 	tentativeSecret: string | null;
+	webauthnChallenge: string | null;
 }
 
-async function resolvePendingAccessTotp(ctx: any, mode: "totp-enroll" | "totp-verify"): Promise<ResolvedPendingTotp | null> {
+async function resolvePendingAccessTwoFactor(ctx: any, mode: PendingAccessTwoFactorMode): Promise<ResolvedPendingTwoFactor | null> {
 	const site = ctx.state?.site ?? (await resolveSiteForHost(normalizeHost(requestHost(ctx.req))));
 	if (!site) return null;
 	const ip = getClientIp(ctx) ?? "unknown";
 	const session = await findAccessSession(ctx.req, site, ip);
 	if (!session) return null;
-	const entry = pendingAccessTotp(session.id, mode);
+	const entry = pendingAccessTwoFactor(session.id, mode);
 	if (!entry) return null;
 	const user = await repository.accessUserForSite(site.id, entry.userId);
 	if (!user) return null;
-	return { site, session, user, tentativeSecret: entry.tentativeSecret };
+	return { site, session, user, tentativeSecret: entry.tentativeSecret, webauthnChallenge: entry.webauthnChallenge };
 }
 
 async function issueAccessSession(
@@ -140,7 +150,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 			);
 		}
 		if (result.user.totp_required === 1) {
-			const mode = beginAccessTotpChallenge(session.id, result.user);
+			const mode = await beginAccessTwoFactorChallenge(session.id, site.id, result.user);
 			await recordEvent({
 				siteId: site.id,
 				sessionId: session.id,
@@ -151,7 +161,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 				decision: "access-login-required",
 				latencyMs: Math.round(performance.now() - started),
 			});
-			const target = mode === "totp-enroll" ? "/_burrowgate/access/login/enroll" : "/_burrowgate/access/login/totp";
+			const target = mode === "enroll" ? "/_burrowgate/access/login/enroll" : "/_burrowgate/access/login/verify";
 			return Response.redirect(new URL(`${target}?return=${encodeURIComponent(returnPath)}`, ctx.req.url).href, 302);
 		}
 		const cookies = await issueAccessSession(ctx, site, session, result.user);
@@ -240,7 +250,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 
 	app.get("/_burrowgate/access/login/enroll", async (ctx) => {
 		const returnPath = safeReturnPath(new URL(ctx.req.url).searchParams.get("return"));
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "enroll");
 		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
 		const { site, session, user } = resolved;
 		let secret = resolved.tentativeSecret;
@@ -249,23 +259,23 @@ export function registerAccessRoutes(app: Web<any>): void {
 			setPendingAccessTotpSecret(session.id, secret);
 		}
 		const uri = enrollmentUri(user.username, secret, `BurrowGate (${site.name})`);
-		return htmlResponse(accessTotpEnrollPage(site, uri, secret, await qrSvg(uri), returnPath));
+		return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret, await qrSvg(uri), returnPath));
 	});
 
 	app.post("/_burrowgate/access/login/enroll", async (ctx) => {
 		const form = await ctx.req.formData();
 		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
 		if (!sameOriginRequest(ctx.req)) return htmlResponse("Request validation failed.", 403);
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "enroll");
 		if (!resolved?.tentativeSecret) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
 		const { site, session, user, tentativeSecret: secret } = resolved;
 		const code = String(form.get("code") ?? "");
 		if (!secret || !(await verifyTotpCode(secret, code))) {
 			const uri = enrollmentUri(user.username, secret ?? "", `BurrowGate (${site.name})`);
-			return htmlResponse(accessTotpEnrollPage(site, uri, secret ?? "", await qrSvg(uri), returnPath, "Invalid code, try again"), 401);
+			return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret ?? "", await qrSvg(uri), returnPath, "Invalid code, try again"), 401);
 		}
 		await completeAccessTotpEnrollment(user.id, secret);
-		consumePendingAccessTotp(session.id);
+		consumePendingAccessTwoFactor(session.id);
 		const cookies = await issueAccessSession(ctx, site, session, user);
 		await recordEvent({
 			siteId: site.id,
@@ -281,43 +291,193 @@ export function registerAccessRoutes(app: Web<any>): void {
 		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
 	});
 
-	app.get("/_burrowgate/access/login/totp", async (ctx) => {
+	app.get("/_burrowgate/access/login/verify", async (ctx) => {
 		const returnPath = safeReturnPath(new URL(ctx.req.url).searchParams.get("return"));
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "verify");
 		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
-		return htmlResponse(accessTotpVerifyPage(resolved.site, returnPath));
+		const hasWebauthn = (await repository.accessWebauthnCredentialsForUserAndSite(resolved.user.id, resolved.site.id)).length > 0;
+		return htmlResponse(accessTwoFactorVerifyPage(resolved.site, returnPath, { hasWebauthn, hasTotp: resolved.user.totp_secret_encrypted !== null }));
 	});
 
-	app.post("/_burrowgate/access/login/totp", async (ctx) => {
+	app.post("/_burrowgate/access/login/verify", async (ctx) => {
 		const form = await ctx.req.formData();
 		const returnPath = safeReturnPath(String(form.get("return") ?? "/"));
 		if (!sameOriginRequest(ctx.req)) return htmlResponse("Request validation failed.", 403);
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "verify");
 		if (!resolved) return Response.redirect(new URL(loginPath(returnPath), ctx.req.url).href, 302);
 		const { site, session, user } = resolved;
-		const retryAfterSeconds = accessTotpRetryAfterSeconds(session.id);
-		if (retryAfterSeconds > 0) return htmlResponse(accessTotpVerifyPage(site, returnPath, "Too many failed attempts. Try again later."), 429);
-		const secret = await decryptAccessTotpSecret(user);
+		const hasWebauthn = (await repository.accessWebauthnCredentialsForUserAndSite(user.id, site.id)).length > 0;
+		const methods = { hasWebauthn, hasTotp: user.totp_secret_encrypted !== null };
+		const retryAfterSeconds = accessTwoFactorRetryAfterSeconds(session.id);
+		if (retryAfterSeconds > 0) return htmlResponse(accessTwoFactorVerifyPage(site, returnPath, methods, "Too many failed attempts. Try again later."), 429);
+		const secret = user.totp_secret_encrypted ? await decryptAccessTotpSecret(user) : null;
 		const code = String(form.get("code") ?? "");
 		if (!secret || !(await verifyTotpCode(secret, code))) {
-			recordAccessTotpFailure(session.id);
-			return htmlResponse(accessTotpVerifyPage(site, returnPath, "Invalid code"), 401);
+			recordAccessTwoFactorFailure(session.id);
+			return htmlResponse(accessTwoFactorVerifyPage(site, returnPath, methods, "Invalid code"), 401);
 		}
-		clearAccessTotpFailures(session.id);
-		consumePendingAccessTotp(session.id);
+		clearAccessTwoFactorFailures(session.id);
+		consumePendingAccessTwoFactor(session.id);
 		const cookies = await issueAccessSession(ctx, site, session, user);
 		await recordEvent({
 			siteId: site.id,
 			sessionId: session.id,
 			ip: getClientIp(ctx) ?? "unknown",
 			method: "POST",
-			path: "/_burrowgate/access/login/totp",
+			path: "/_burrowgate/access/login/verify",
 			status: 302,
 			decision: "access-authenticated",
 			accessUsername: user.username,
 			latencyMs: 0,
 		});
 		return appendSetCookies(Response.redirect(new URL(returnPath, ctx.req.url).href, 302), cookies);
+	});
+
+	app.post("/_burrowgate/api/access/login/webauthn/register/options", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "enroll");
+		if (!resolved) return jsonResponse({ error: "No pending enrollment" }, 428);
+		const { site, session, user } = resolved;
+		const { rpID } = webauthnRelyingParty(ctx.req);
+		const existing = await repository.accessWebauthnCredentialsForUserAndSite(user.id, site.id);
+		const options = await buildRegistrationOptions({
+			rpID,
+			userId: user.id,
+			username: user.username,
+			excludeCredentials: existing.map((credential) => ({
+				credentialId: credential.credential_id,
+				transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+			})),
+		});
+		setPendingAccessWebauthnChallenge(session.id, options.challenge);
+		return jsonResponse(options);
+	});
+
+	app.post("/_burrowgate/api/access/login/webauthn/register/verify", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "enroll");
+		if (!resolved?.webauthnChallenge) return jsonResponse({ error: "No pending enrollment" }, 428);
+		const { site, session, user, webauthnChallenge } = resolved;
+		let body: { response?: unknown };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const { rpID, origin } = webauthnRelyingParty(ctx.req);
+		let verified;
+		try {
+			verified = await verifyRegistration({ response: body.response as any, expectedChallenge: webauthnChallenge, expectedOrigin: origin, expectedRPID: rpID });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Security key registration failed" }, 400);
+		}
+		const now = Date.now();
+		await repository.insertAccessWebauthnCredential({
+			id: randomId("wak"),
+			user_id: user.id,
+			site_id: site.id,
+			rp_id: rpID,
+			credential_id: verified.credentialId,
+			credential_id_hash: verified.credentialIdHash,
+			public_key: verified.publicKey,
+			sign_count: verified.signCount,
+			transports_json: JSON.stringify(verified.transports),
+			aaguid: verified.aaguid,
+			device_type: verified.deviceType,
+			backed_up: verified.backedUp ? 1 : 0,
+			nickname: null,
+			created_at: now,
+			last_used_at: null,
+			updated_at: now,
+		});
+		consumePendingAccessTwoFactor(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/api/access/login/webauthn/register/verify",
+			status: 200,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
+		return appendSetCookies(jsonResponse({ authenticated: true, username: user.username }), cookies);
+	});
+
+	app.post("/_burrowgate/api/access/login/webauthn/authenticate/options", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "verify");
+		if (!resolved) return jsonResponse({ error: "No pending verification" }, 428);
+		const { site, session, user } = resolved;
+		const { rpID } = webauthnRelyingParty(ctx.req);
+		const credentials = await repository.accessWebauthnCredentialsForUserAndSite(user.id, site.id);
+		if (credentials.length === 0) return jsonResponse({ error: "No security key registered" }, 400);
+		const options = await buildAuthenticationOptions({
+			rpID,
+			allowCredentials: credentials.map((credential) => ({
+				credentialId: credential.credential_id,
+				transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+			})),
+		});
+		setPendingAccessWebauthnChallenge(session.id, options.challenge);
+		return jsonResponse(options);
+	});
+
+	app.post("/_burrowgate/api/access/login/webauthn/authenticate/verify", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "verify");
+		if (!resolved?.webauthnChallenge) return jsonResponse({ error: "No pending verification" }, 428);
+		const { site, session, user, webauthnChallenge } = resolved;
+		const retryAfterSeconds = accessTwoFactorRetryAfterSeconds(session.id);
+		if (retryAfterSeconds > 0) return jsonResponse({ error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
+		let body: { response?: { id?: unknown } };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const credentialIdHash = await sha256Hex(String(body.response?.id ?? ""));
+		const credential = await repository.accessWebauthnCredentialByHashForSite(credentialIdHash, site.id);
+		if (!credential || credential.user_id !== user.id) {
+			recordAccessTwoFactorFailure(session.id);
+			return jsonResponse({ error: "Unknown security key" }, 401);
+		}
+		const { rpID, origin } = webauthnRelyingParty(ctx.req);
+		try {
+			const result = await verifyAuthentication({
+				response: body.response as any,
+				expectedChallenge: webauthnChallenge,
+				expectedOrigin: origin,
+				expectedRPID: rpID,
+				credential: {
+					credentialId: credential.credential_id,
+					publicKey: credential.public_key,
+					signCount: credential.sign_count,
+					transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+				},
+			});
+			await repository.touchAccessWebauthnCredential(credential.id, result.newCounter, Date.now());
+		} catch (error) {
+			recordAccessTwoFactorFailure(session.id);
+			return jsonResponse({ error: error instanceof Error ? error.message : "Security key verification failed" }, 401);
+		}
+		clearAccessTwoFactorFailures(session.id);
+		consumePendingAccessTwoFactor(session.id);
+		const cookies = await issueAccessSession(ctx, site, session, user);
+		await recordEvent({
+			siteId: site.id,
+			sessionId: session.id,
+			ip: getClientIp(ctx) ?? "unknown",
+			method: "POST",
+			path: "/_burrowgate/api/access/login/webauthn/authenticate/verify",
+			status: 200,
+			decision: "access-authenticated",
+			accessUsername: user.username,
+			latencyMs: 0,
+		});
+		return appendSetCookies(jsonResponse({ authenticated: true, username: user.username }), cookies);
 	});
 
 	app.post("/_burrowgate/api/access/login", async (ctx) => {
@@ -360,7 +520,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 			);
 		}
 		if (result.user.totp_required === 1) {
-			const mode = beginAccessTotpChallenge(session.id, result.user);
+			const mode = await beginAccessTwoFactorChallenge(session.id, site.id, result.user);
 			await recordEvent({
 				siteId: site.id,
 				sessionId: session.id,
@@ -371,7 +531,13 @@ export function registerAccessRoutes(app: Web<any>): void {
 				decision: "access-login-required",
 				latencyMs: Math.round(performance.now() - started),
 			});
-			return jsonResponse({ authenticated: false, totpRequired: true, mode });
+			const hasWebauthn = mode === "verify" && (await repository.accessWebauthnCredentialsForUserAndSite(result.user.id, site.id)).length > 0;
+			return jsonResponse({
+				authenticated: false,
+				totpRequired: true,
+				mode,
+				methods: { totp: mode === "verify" ? result.user.totp_secret_encrypted !== null : false, webauthn: hasWebauthn },
+			});
 		}
 		const cookies = await issueAccessSession(ctx, site, session, result.user);
 		await recordEvent({
@@ -391,7 +557,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 
 	app.post("/_burrowgate/api/access/login/enroll", async (ctx) => {
 		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-enroll");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "enroll");
 		if (!resolved) return jsonResponse({ authenticated: false, error: "No pending enrollment" }, 428);
 		const { site, session, user } = resolved;
 		let body: { code?: unknown };
@@ -408,11 +574,11 @@ export function registerAccessRoutes(app: Web<any>): void {
 		const code = String(body.code ?? "");
 		if (!code) {
 			const uri = enrollmentUri(user.username, secret, `BurrowGate (${site.name})`);
-			return jsonResponse({ authenticated: false, totpRequired: true, mode: "totp-enroll", secret, uri });
+			return jsonResponse({ authenticated: false, totpRequired: true, mode: "enroll", methods: { totp: true, webauthn: true }, secret, uri });
 		}
 		if (!(await verifyTotpCode(secret, code))) return jsonResponse({ authenticated: false, error: "Invalid code" }, 401);
 		await completeAccessTotpEnrollment(user.id, secret);
-		consumePendingAccessTotp(session.id);
+		consumePendingAccessTwoFactor(session.id);
 		const cookies = await issueAccessSession(ctx, site, session, user);
 		await recordEvent({
 			siteId: site.id,
@@ -431,10 +597,10 @@ export function registerAccessRoutes(app: Web<any>): void {
 
 	app.post("/_burrowgate/api/access/login/totp", async (ctx) => {
 		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
-		const resolved = await resolvePendingAccessTotp(ctx, "totp-verify");
+		const resolved = await resolvePendingAccessTwoFactor(ctx, "verify");
 		if (!resolved) return jsonResponse({ authenticated: false, error: "No pending verification" }, 428);
 		const { site, session, user } = resolved;
-		const retryAfterSeconds = accessTotpRetryAfterSeconds(session.id);
+		const retryAfterSeconds = accessTwoFactorRetryAfterSeconds(session.id);
 		if (retryAfterSeconds > 0)
 			return jsonResponse({ authenticated: false, error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
 		let body: { code?: unknown };
@@ -443,14 +609,14 @@ export function registerAccessRoutes(app: Web<any>): void {
 		} catch {
 			return jsonResponse({ error: "Invalid JSON" }, 400);
 		}
-		const secret = await decryptAccessTotpSecret(user);
+		const secret = user.totp_secret_encrypted ? await decryptAccessTotpSecret(user) : null;
 		const code = String(body.code ?? "");
 		if (!secret || !(await verifyTotpCode(secret, code))) {
-			recordAccessTotpFailure(session.id);
+			recordAccessTwoFactorFailure(session.id);
 			return jsonResponse({ authenticated: false, error: "Invalid code" }, 401);
 		}
-		clearAccessTotpFailures(session.id);
-		consumePendingAccessTotp(session.id);
+		clearAccessTwoFactorFailures(session.id);
+		consumePendingAccessTwoFactor(session.id);
 		const cookies = await issueAccessSession(ctx, site, session, user);
 		await recordEvent({
 			siteId: site.id,

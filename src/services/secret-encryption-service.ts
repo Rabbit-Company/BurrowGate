@@ -1,14 +1,7 @@
 import { config } from "../config.ts";
-import { sha256Bytes, toBase64Url } from "../utils/crypto.ts";
+import { fromBase64Url, sha256Bytes, toBase64Url } from "../utils/crypto.ts";
 
 let keyPromise: Promise<CryptoKey> | null = null;
-
-function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
-	const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
-	const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-	const binary = atob(padded);
-	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
 
 async function masterSecret(): Promise<string> {
 	const inline = config.masterKey;

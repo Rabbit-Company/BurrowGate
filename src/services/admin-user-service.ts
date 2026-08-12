@@ -8,6 +8,15 @@ import { readNonEmpty, writePrivateFile } from "./runtime-bootstrap-service.ts";
 import { decryptSecret } from "./secret-encryption-service.ts";
 import { generateRecoveryCodes, verifyCode as verifyTotpCode } from "./totp-service.ts";
 
+export interface AdminWebauthnCredentialView {
+	id: string;
+	nickname: string | null;
+	createdAt: number;
+	lastUsedAt: number | null;
+	deviceType: string | null;
+	backedUp: boolean;
+}
+
 export interface AdminUserInput {
 	username?: unknown;
 	password?: unknown;
@@ -23,6 +32,7 @@ export interface AdminUserView {
 	role: AdminRole;
 	enabled: boolean;
 	totpEnrolled: boolean;
+	webauthnCredentialCount: number;
 	createdAt: number;
 	updatedAt: number;
 	sitePermissions: Array<{ siteId: string; level: Exclude<AdminAccessLevel, "none"> }>;
@@ -83,9 +93,10 @@ function permissionListValue(value: unknown, key: "siteId" | "streamId"): Array<
 }
 
 async function userView(user: AdminUserRecord): Promise<AdminUserView> {
-	const [sitePermissions, streamPermissions] = await Promise.all([
+	const [sitePermissions, streamPermissions, webauthnCredentials] = await Promise.all([
 		repository.adminSitePermissionsForUser(user.id),
 		repository.adminStreamPermissionsForUser(user.id),
+		repository.adminWebauthnCredentialsForUser(user.id),
 	]);
 	return {
 		id: user.id,
@@ -93,6 +104,7 @@ async function userView(user: AdminUserRecord): Promise<AdminUserView> {
 		role: user.role,
 		enabled: user.enabled === 1,
 		totpEnrolled: user.totp_secret_encrypted !== null,
+		webauthnCredentialCount: webauthnCredentials.length,
 		createdAt: Number(user.created_at),
 		updatedAt: Number(user.updated_at),
 		sitePermissions: sitePermissions.map((permission) => ({ siteId: permission.site_id, level: permission.level })),
@@ -206,12 +218,39 @@ export async function resetAdminUserPassword(userId: string, password: unknown):
 	await repository.revokeAdminSessionsForUser(userId);
 }
 
-export async function resetAdminUserTotp(userId: string): Promise<void> {
+export async function resetAdminUserTwoFactor(userId: string): Promise<void> {
 	const existing = await repository.adminUserById(userId);
 	if (!existing) throw new Error("Admin user not found");
 	await repository.updateAdminUser({ ...existing, totp_secret_encrypted: null, totp_enrolled_at: null, must_enroll_totp: 1, updated_at: Date.now() });
 	await repository.replaceAdminRecoveryCodes(userId, []);
+	await repository.deleteAllAdminWebauthnCredentialsForUser(userId);
 	await repository.revokeAdminSessionsForUser(userId);
+}
+
+export async function listOwnWebauthnCredentials(userId: string): Promise<AdminWebauthnCredentialView[]> {
+	const credentials = await repository.adminWebauthnCredentialsForUser(userId);
+	return credentials.map((credential) => ({
+		id: credential.id,
+		nickname: credential.nickname,
+		createdAt: Number(credential.created_at),
+		lastUsedAt: credential.last_used_at !== null ? Number(credential.last_used_at) : null,
+		deviceType: credential.device_type,
+		backedUp: credential.backed_up === 1,
+	}));
+}
+
+export async function renameOwnWebauthnCredential(userId: string, credentialId: string, nickname: unknown): Promise<void> {
+	const existing = await repository.adminWebauthnCredentialById(credentialId, userId);
+	if (!existing) throw new Error("Security key not found");
+	const trimmed = String(nickname ?? "").trim();
+	if (trimmed.length > 255) throw new Error("Nickname must be at most 255 characters");
+	await repository.renameAdminWebauthnCredential(credentialId, userId, trimmed || null, Date.now());
+}
+
+export async function removeOwnWebauthnCredential(userId: string, credentialId: string): Promise<void> {
+	const existing = await repository.adminWebauthnCredentialById(credentialId, userId);
+	if (!existing) throw new Error("Security key not found");
+	await repository.deleteAdminWebauthnCredential(credentialId, userId);
 }
 
 export async function changeOwnPassword(userId: string, currentPassword: unknown, newPassword: unknown): Promise<void> {

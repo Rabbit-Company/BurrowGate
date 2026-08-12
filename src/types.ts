@@ -281,6 +281,25 @@ export interface SiteAccessUserRecord {
 	created_at: number;
 }
 
+export interface AccessWebauthnCredentialRecord {
+	id: string;
+	user_id: string;
+	site_id: string;
+	rp_id: string;
+	credential_id: string;
+	credential_id_hash: string;
+	public_key: string;
+	sign_count: number;
+	transports_json: string | null;
+	aaguid: string | null;
+	device_type: WebauthnDeviceType | null;
+	backed_up: number;
+	nickname: string | null;
+	created_at: number;
+	last_used_at: number | null;
+	updated_at: number;
+}
+
 export type BandwidthProtocol = "http" | "websocket";
 export type StreamProtocol = "tcp" | "udp";
 export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error" | "blocked" | "throttled" | "monitored";
@@ -519,6 +538,26 @@ export interface AdminRecoveryCodeRecord {
 	code_hash: string;
 	created_at: number;
 	used_at: number | null;
+}
+
+export type WebauthnDeviceType = "singleDevice" | "multiDevice";
+
+export interface AdminWebauthnCredentialRecord {
+	id: string;
+	user_id: string;
+	rp_id: string;
+	credential_id: string;
+	credential_id_hash: string;
+	public_key: string;
+	sign_count: number;
+	transports_json: string | null;
+	aaguid: string | null;
+	device_type: WebauthnDeviceType | null;
+	backed_up: number;
+	nickname: string | null;
+	created_at: number;
+	last_used_at: number | null;
+	updated_at: number;
 }
 
 export interface AdminUserSitePermissionRecord {

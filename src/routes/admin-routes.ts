@@ -15,17 +15,22 @@ import { addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } fro
 import {
 	authenticateAdminPassword,
 	beginPendingLogin,
+	beginSelfServiceWebauthnChallenge,
 	clearPendingLoginCookie,
-	clearTotpFailures,
+	clearTwoFactorFailures,
 	consumePendingLogin,
+	consumeSelfServiceWebauthnChallenge,
 	pendingLoginCookie,
-	recordTotpFailure,
+	recordTwoFactorFailure,
 	resolvePendingLogin,
 	setPendingLoginSecret,
-	totpAttemptRetryAfterSeconds,
+	setPendingLoginWebauthnChallenge,
+	twoFactorAttemptRetryAfterSeconds,
+	type PendingLoginMode,
 } from "../services/admin-auth-service.ts";
 import { decryptSecret, encryptSecret } from "../services/secret-encryption-service.ts";
 import { enrollmentUri, generateRecoveryCodes, generateSecret, normalizeRecoveryCode, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
+import { buildAuthenticationOptions, buildRegistrationOptions, verifyAuthentication, verifyRegistration } from "../services/webauthn-service.ts";
 import { adminSessionTokens, createAdminSession, getAdminSession } from "../services/session-service.ts";
 import { createSite, parseDefaultNetworkAction, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
 import {
@@ -55,7 +60,7 @@ import {
 	importAccessUsers,
 	invalidateAccessSite,
 	removeAccessUser,
-	resetAccessUserTotp,
+	resetAccessUserTwoFactor,
 	revokeAccessUserApiToken,
 	setAccessUserTotpRequired,
 	updateAccessSettings,
@@ -63,7 +68,7 @@ import {
 } from "../services/access-list-service.ts";
 import { siteSsoSettingsView, updateSiteSsoSettings } from "../services/access-sso-service.ts";
 import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts";
-import { adminPage, loginPage, totpEnrollPage, totpRecoveryCodesPage, totpVerifyPage } from "../ui/admin-page.ts";
+import { adminPage, loginPage, totpRecoveryCodesPage, twoFactorEnrollPage, twoFactorVerifyPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { appendSetCookies, htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
@@ -90,9 +95,12 @@ import {
 	createAdminUser,
 	deleteAdminUser,
 	listAdminUsers,
+	listOwnWebauthnCredentials,
 	regenerateOwnRecoveryCodes,
+	removeOwnWebauthnCredential,
+	renameOwnWebauthnCredential,
 	resetAdminUserPassword,
-	resetAdminUserTotp,
+	resetAdminUserTwoFactor,
 	updateAdminUser,
 } from "../services/admin-user-service.ts";
 import { pagedAdminAuditLog, purgeAdminAuditLog, recordAdminAudit } from "../services/admin-audit-service.ts";
@@ -116,6 +124,11 @@ function mutationGuard(request: Request): Response | null {
 		return jsonResponse({ error: "CSRF validation failed" }, 403);
 	}
 	return null;
+}
+
+function webauthnRelyingParty(request: Request): { rpID: string; origin: string } {
+	const url = new URL(request.url);
+	return { rpID: url.hostname, origin: url.origin };
 }
 
 function integerParam(url: URL, name: string, fallback: number, minimum: number, maximum: number): number {
@@ -261,9 +274,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {
 			return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
 		}
-		const mode = user.must_enroll_totp === 1 ? "totp-enroll" : "totp-verify";
+		const hasWebauthn = (await repository.adminWebauthnCredentialsForUser(user.id)).length > 0;
+		const mode: PendingLoginMode = user.totp_secret_encrypted !== null || hasWebauthn ? "verify" : "enroll";
 		const token = beginPendingLogin(mode, user.id);
-		const location = mode === "totp-enroll" ? "/_burrowgate/admin/login/enroll" : "/_burrowgate/admin/login/totp";
+		const location = mode === "enroll" ? "/_burrowgate/admin/login/enroll" : "/_burrowgate/admin/login/verify";
 		return new Response(null, { status: 302, headers: { location, "set-cookie": pendingLoginCookie(ctx.req, token) } });
 	});
 
@@ -308,7 +322,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 
 	app.get("/_burrowgate/admin/login/enroll", async (ctx) => {
 		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
-		const pending = resolvePendingLogin(ctx.req, "totp-enroll");
+		const pending = resolvePendingLogin(ctx.req, "enroll");
 		if (!pending) return Response.redirect(loginUrl, 302);
 		const user = await repository.adminUserById(pending.entry.userId);
 		if (!user) return Response.redirect(loginUrl, 302);
@@ -318,12 +332,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 			setPendingLoginSecret(pending.token, secret);
 		}
 		const uri = enrollmentUri(user.username, secret);
-		return htmlResponse(totpEnrollPage(uri, secret, await qrSvg(uri)));
+		return htmlResponse(twoFactorEnrollPage(uri, secret, await qrSvg(uri)));
 	});
 
 	app.post("/_burrowgate/admin/login/enroll", async (ctx) => {
 		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
-		const pending = resolvePendingLogin(ctx.req, "totp-enroll");
+		const pending = resolvePendingLogin(ctx.req, "enroll");
 		const secret = pending?.entry.tentativeSecret;
 		if (!pending || !secret) return Response.redirect(loginUrl, 302);
 		const user = await repository.adminUserById(pending.entry.userId);
@@ -332,7 +346,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const code = String(form.get("code") ?? "");
 		const uri = enrollmentUri(user.username, secret);
 		if (!(await verifyTotpCode(secret, code))) {
-			return htmlResponse(totpEnrollPage(uri, secret, await qrSvg(uri), "Invalid code, try again"), 401);
+			return htmlResponse(twoFactorEnrollPage(uri, secret, await qrSvg(uri), "Invalid code, try again"), 401);
 		}
 		const now = Date.now();
 		await repository.updateAdminUser({
@@ -355,20 +369,101 @@ export function registerAdminRoutes(app: Web<any>): void {
 		]);
 	});
 
-	app.get("/_burrowgate/admin/login/totp", async (ctx) => {
-		const pending = resolvePendingLogin(ctx.req, "totp-verify");
-		if (!pending) return Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url).href, 302);
-		return htmlResponse(totpVerifyPage());
+	app.post("/_burrowgate/admin/login/webauthn/register/options", async (ctx) => {
+		const pending = resolvePendingLogin(ctx.req, "enroll");
+		if (!pending) return jsonResponse({ error: "No pending enrollment" }, 428);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return jsonResponse({ error: "No pending enrollment" }, 428);
+		const { rpID } = webauthnRelyingParty(ctx.req);
+		const existing = await repository.adminWebauthnCredentialsForUser(user.id);
+		const options = await buildRegistrationOptions({
+			rpID,
+			userId: user.id,
+			username: user.username,
+			excludeCredentials: existing.map((credential) => ({
+				credentialId: credential.credential_id,
+				transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+			})),
+		});
+		setPendingLoginWebauthnChallenge(pending.token, options.challenge);
+		return jsonResponse(options);
 	});
 
-	app.post("/_burrowgate/admin/login/totp", async (ctx) => {
+	app.post("/_burrowgate/admin/login/webauthn/register/verify", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const pending = resolvePendingLogin(ctx.req, "enroll");
+		if (!pending?.entry.webauthnChallenge) return jsonResponse({ error: "No pending enrollment" }, 428);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return jsonResponse({ error: "No pending enrollment" }, 428);
+		let body: { response?: unknown };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const { rpID, origin } = webauthnRelyingParty(ctx.req);
+		let verified;
+		try {
+			verified = await verifyRegistration({
+				response: body.response as any,
+				expectedChallenge: pending.entry.webauthnChallenge,
+				expectedOrigin: origin,
+				expectedRPID: rpID,
+			});
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Security key registration failed" }, 400);
+		}
+		const now = Date.now();
+		await repository.insertAdminWebauthnCredential({
+			id: randomId("wak"),
+			user_id: user.id,
+			rp_id: rpID,
+			credential_id: verified.credentialId,
+			credential_id_hash: verified.credentialIdHash,
+			public_key: verified.publicKey,
+			sign_count: verified.signCount,
+			transports_json: JSON.stringify(verified.transports),
+			aaguid: verified.aaguid,
+			device_type: verified.deviceType,
+			backed_up: verified.backedUp ? 1 : 0,
+			nickname: null,
+			created_at: now,
+			last_used_at: null,
+			updated_at: now,
+		});
+		await repository.updateAdminUser({ ...user, must_enroll_totp: 0, updated_at: now });
+		const recoveryCodes = await generateRecoveryCodes();
+		await repository.replaceAdminRecoveryCodes(
+			user.id,
+			recoveryCodes.map((recoveryCode) => ({ id: randomId("rc"), user_id: user.id, code_hash: recoveryCode.hash, created_at: now, used_at: null })),
+		);
+		consumePendingLogin(pending.token);
+		const session = await createAdminSession(ctx.req, user.username, user.id);
+		return appendSetCookies(jsonResponse({ recoveryCodes: recoveryCodes.map((recoveryCode) => recoveryCode.plaintext) }), [
+			session.cookie,
+			clearPendingLoginCookie(ctx.req),
+		]);
+	});
+
+	app.get("/_burrowgate/admin/login/verify", async (ctx) => {
+		const pending = resolvePendingLogin(ctx.req, "verify");
+		if (!pending) return Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url).href, 302);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return Response.redirect(new URL("/_burrowgate/admin/login", ctx.req.url).href, 302);
+		const hasWebauthn = (await repository.adminWebauthnCredentialsForUser(user.id)).length > 0;
+		return htmlResponse(twoFactorVerifyPage({ hasWebauthn, hasTotp: user.totp_secret_encrypted !== null }));
+	});
+
+	app.post("/_burrowgate/admin/login/verify", async (ctx) => {
 		const loginUrl = new URL("/_burrowgate/admin/login", ctx.req.url).href;
-		const pending = resolvePendingLogin(ctx.req, "totp-verify");
+		const pending = resolvePendingLogin(ctx.req, "verify");
 		if (!pending) return Response.redirect(loginUrl, 302);
 		const user = await repository.adminUserById(pending.entry.userId);
-		if (!user || !user.totp_secret_encrypted) return Response.redirect(loginUrl, 302);
-		const retryAfterSeconds = totpAttemptRetryAfterSeconds(pending.token);
-		if (retryAfterSeconds > 0) return htmlResponse(totpVerifyPage("Too many failed attempts. Try again later."), 429);
+		if (!user) return Response.redirect(loginUrl, 302);
+		const hasWebauthn = (await repository.adminWebauthnCredentialsForUser(user.id)).length > 0;
+		const methods = { hasWebauthn, hasTotp: user.totp_secret_encrypted !== null };
+		const retryAfterSeconds = twoFactorAttemptRetryAfterSeconds(pending.token);
+		if (retryAfterSeconds > 0) return htmlResponse(twoFactorVerifyPage(methods, "Too many failed attempts. Try again later."), 429);
 		const form = await ctx.req.formData();
 		const code = String(form.get("code") ?? "").trim();
 		const recoveryCodeInput = form.get("recoveryCode");
@@ -376,20 +471,84 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (recoveryCodeInput) {
 			const hash = await sha256Hex(normalizeRecoveryCode(recoveryCodeInput));
 			valid = await repository.consumeAdminRecoveryCodeByHash(user.id, hash, Date.now());
-		} else if (code) {
+		} else if (code && user.totp_secret_encrypted) {
 			valid = await verifyTotpCode(await decryptSecret(user.totp_secret_encrypted), code);
 		}
 		if (!valid) {
-			recordTotpFailure(pending.token);
-			return htmlResponse(totpVerifyPage("Invalid code"), 401);
+			recordTwoFactorFailure(pending.token);
+			return htmlResponse(twoFactorVerifyPage(methods, "Invalid code"), 401);
 		}
-		clearTotpFailures(pending.token);
+		clearTwoFactorFailures(pending.token);
 		consumePendingLogin(pending.token);
 		const session = await createAdminSession(ctx.req, user.username, user.id);
 		return appendSetCookies(new Response(null, { status: 302, headers: { location: "/_burrowgate/admin" } }), [
 			session.cookie,
 			clearPendingLoginCookie(ctx.req),
 		]);
+	});
+
+	app.post("/_burrowgate/admin/login/webauthn/authenticate/options", async (ctx) => {
+		const pending = resolvePendingLogin(ctx.req, "verify");
+		if (!pending) return jsonResponse({ error: "No pending verification" }, 428);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return jsonResponse({ error: "No pending verification" }, 428);
+		const { rpID } = webauthnRelyingParty(ctx.req);
+		const credentials = await repository.adminWebauthnCredentialsForUser(user.id);
+		if (credentials.length === 0) return jsonResponse({ error: "No security key registered" }, 400);
+		const options = await buildAuthenticationOptions({
+			rpID,
+			allowCredentials: credentials.map((credential) => ({
+				credentialId: credential.credential_id,
+				transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+			})),
+		});
+		setPendingLoginWebauthnChallenge(pending.token, options.challenge);
+		return jsonResponse(options);
+	});
+
+	app.post("/_burrowgate/admin/login/webauthn/authenticate/verify", async (ctx) => {
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const pending = resolvePendingLogin(ctx.req, "verify");
+		if (!pending?.entry.webauthnChallenge) return jsonResponse({ error: "No pending verification" }, 428);
+		const user = await repository.adminUserById(pending.entry.userId);
+		if (!user) return jsonResponse({ error: "No pending verification" }, 428);
+		const retryAfterSeconds = twoFactorAttemptRetryAfterSeconds(pending.token);
+		if (retryAfterSeconds > 0) return jsonResponse({ error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
+		let body: { response?: { id?: unknown } };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const credentialIdHash = await sha256Hex(String(body.response?.id ?? ""));
+		const credential = await repository.adminWebauthnCredentialByHash(credentialIdHash);
+		if (!credential || credential.user_id !== user.id) {
+			recordTwoFactorFailure(pending.token);
+			return jsonResponse({ error: "Unknown security key" }, 401);
+		}
+		const { rpID, origin } = webauthnRelyingParty(ctx.req);
+		try {
+			const result = await verifyAuthentication({
+				response: body.response as any,
+				expectedChallenge: pending.entry.webauthnChallenge,
+				expectedOrigin: origin,
+				expectedRPID: rpID,
+				credential: {
+					credentialId: credential.credential_id,
+					publicKey: credential.public_key,
+					signCount: credential.sign_count,
+					transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+				},
+			});
+			await repository.touchAdminWebauthnCredential(credential.id, result.newCounter, Date.now());
+		} catch (error) {
+			recordTwoFactorFailure(pending.token);
+			return jsonResponse({ error: error instanceof Error ? error.message : "Security key verification failed" }, 401);
+		}
+		clearTwoFactorFailures(pending.token);
+		consumePendingLogin(pending.token);
+		const session = await createAdminSession(ctx.req, user.username, user.id);
+		return appendSetCookies(jsonResponse({ ok: true }), [session.cookie, clearPendingLoginCookie(ctx.req)]);
 	});
 
 	app.post("/_burrowgate/admin/sso/backchannel-logout", async (ctx) => {
@@ -420,6 +579,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 		"/_burrowgate/static/admin.js",
 		() =>
 			new Response(Bun.file("public/admin.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
+			}),
+	);
+
+	app.get(
+		"/_burrowgate/static/webauthn-client.js",
+		() =>
+			new Response(Bun.file("public/webauthn-client.js"), {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
 			}),
 	);
@@ -1236,7 +1403,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
 		try {
-			const updated = await resetAccessUserTotp(selection.site.id, ctx.params.id);
+			const updated = await resetAccessUserTwoFactor(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
 				actor: user,
 				action: "access_user.totp.reset",
@@ -2398,6 +2565,113 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 	});
 
+	app.get("/_burrowgate/api/admin/me/webauthn", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		return jsonResponse(await listOwnWebauthnCredentials(guarded.user.id));
+	});
+
+	app.post("/_burrowgate/api/admin/me/webauthn/register/options", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const { rpID } = webauthnRelyingParty(ctx.req);
+		const existing = await repository.adminWebauthnCredentialsForUser(user.id);
+		const options = await buildRegistrationOptions({
+			rpID,
+			userId: user.id,
+			username: user.username,
+			excludeCredentials: existing.map((credential) => ({
+				credentialId: credential.credential_id,
+				transports: credential.transports_json ? (JSON.parse(credential.transports_json) as string[]) : [],
+			})),
+		});
+		const challengeToken = beginSelfServiceWebauthnChallenge(user.id, options.challenge);
+		return jsonResponse({ ...options, challengeToken });
+	});
+
+	app.post("/_burrowgate/api/admin/me/webauthn/register/verify", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		let body: { response?: unknown; nickname?: unknown; challengeToken?: unknown };
+		try {
+			body = (await ctx.req.json()) as any;
+		} catch {
+			return jsonResponse({ error: "Invalid JSON" }, 400);
+		}
+		const challenge = consumeSelfServiceWebauthnChallenge(String(body.challengeToken ?? ""), user.id);
+		if (!challenge) return jsonResponse({ error: "Registration challenge expired, try again" }, 428);
+		const { rpID, origin } = webauthnRelyingParty(ctx.req);
+		let verified;
+		try {
+			verified = await verifyRegistration({ response: body.response as any, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpID });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Security key registration failed" }, 400);
+		}
+		const now = Date.now();
+		const nickname = String(body.nickname ?? "").trim();
+		await repository.insertAdminWebauthnCredential({
+			id: randomId("wak"),
+			user_id: user.id,
+			rp_id: rpID,
+			credential_id: verified.credentialId,
+			credential_id_hash: verified.credentialIdHash,
+			public_key: verified.publicKey,
+			sign_count: verified.signCount,
+			transports_json: JSON.stringify(verified.transports),
+			aaguid: verified.aaguid,
+			device_type: verified.deviceType,
+			backed_up: verified.backedUp ? 1 : 0,
+			nickname: nickname || null,
+			created_at: now,
+			last_used_at: null,
+			updated_at: now,
+		});
+		await recordAdminAudit({
+			actor: user,
+			action: "admin_user.webauthn_registered",
+			resourceType: "admin_user",
+			resourceId: user.id,
+			summary: `Registered a security key${nickname ? ` (${nickname})` : ""}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ ok: true });
+	});
+
+	app.post("/_burrowgate/api/admin/me/webauthn/:id/rename", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			const body = (await ctx.req.json()) as { nickname?: unknown };
+			await renameOwnWebauthnCredential(user.id, ctx.params.id, body.nickname);
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to rename security key" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/me/webauthn/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			await removeOwnWebauthnCredential(user.id, ctx.params.id);
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to remove security key" }, 400);
+		}
+	});
+
 	app.get("/_burrowgate/api/admin/sso", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
@@ -2559,7 +2833,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
 		try {
-			await resetAdminUserTotp(ctx.params.id);
+			await resetAdminUserTwoFactor(ctx.params.id);
 			const target = await repository.adminUserById(ctx.params.id);
 			await recordAdminAudit({
 				actor: user,

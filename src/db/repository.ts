@@ -14,6 +14,8 @@ import type {
 	AdminUserRecord,
 	AdminUserSitePermissionRecord,
 	AdminUserStreamPermissionRecord,
+	AdminWebauthnCredentialRecord,
+	AccessWebauthnCredentialRecord,
 	CertificateEventRecord,
 	CertificateRecord,
 	ChallengeFlowRecord,
@@ -606,6 +608,38 @@ export const repository = {
 	async accessSiteIdsForUser(userId: string): Promise<string[]> {
 		const rows = (await db`SELECT site_id FROM site_access_users WHERE user_id=${userId}`) as Array<{ site_id: string }>;
 		return rows.map((row) => row.site_id);
+	},
+	async accessWebauthnCredentialsForUserAndSite(userId: string, siteId: string): Promise<AccessWebauthnCredentialRecord[]> {
+		return (await db`SELECT * FROM access_webauthn_credentials WHERE user_id=${userId} AND site_id=${siteId} ORDER BY created_at ASC`) as AccessWebauthnCredentialRecord[];
+	},
+	async accessWebauthnCredentialByHashForSite(hash: string, siteId: string): Promise<AccessWebauthnCredentialRecord | null> {
+		const rows =
+			(await db`SELECT * FROM access_webauthn_credentials WHERE credential_id_hash=${hash} AND site_id=${siteId} LIMIT 1`) as AccessWebauthnCredentialRecord[];
+		return rows[0] ?? null;
+	},
+	async accessWebauthnCredentialById(id: string, userId: string, siteId: string): Promise<AccessWebauthnCredentialRecord | null> {
+		const rows =
+			(await db`SELECT * FROM access_webauthn_credentials WHERE id=${id} AND user_id=${userId} AND site_id=${siteId} LIMIT 1`) as AccessWebauthnCredentialRecord[];
+		return rows[0] ?? null;
+	},
+	async insertAccessWebauthnCredential(record: AccessWebauthnCredentialRecord): Promise<void> {
+		await db`INSERT INTO access_webauthn_credentials (id,user_id,site_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
+		VALUES (${record.id},${record.user_id},${record.site_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+	},
+	async touchAccessWebauthnCredential(id: string, signCount: number, now: number): Promise<void> {
+		await db`UPDATE access_webauthn_credentials SET sign_count=${signCount}, last_used_at=${now}, updated_at=${now} WHERE id=${id}`;
+	},
+	async renameAccessWebauthnCredential(id: string, userId: string, siteId: string, nickname: string | null, now: number): Promise<void> {
+		await db`UPDATE access_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+	},
+	async deleteAccessWebauthnCredential(id: string, userId: string, siteId: string): Promise<void> {
+		await db`DELETE FROM access_webauthn_credentials WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+	},
+	async deleteAccessWebauthnCredentialsForUserAndSite(userId: string, siteId: string): Promise<void> {
+		await db`DELETE FROM access_webauthn_credentials WHERE user_id=${userId} AND site_id=${siteId}`;
+	},
+	async deleteAllAccessWebauthnCredentialsForUser(userId: string): Promise<void> {
+		await db`DELETE FROM access_webauthn_credentials WHERE user_id=${userId}`;
 	},
 	async touchSession(id: string, ip: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET last_ip=${ip}, last_seen_at=${now}, request_count=request_count+1 WHERE id=${id}`;
@@ -2301,6 +2335,7 @@ export const repository = {
 			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId}`;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId}`;
 			await transaction`DELETE FROM admin_recovery_codes WHERE user_id=${userId}`;
+			await transaction`DELETE FROM admin_webauthn_credentials WHERE user_id=${userId}`;
 			await transaction`DELETE FROM admin_sessions WHERE user_id=${userId}`;
 			await transaction`DELETE FROM admin_users WHERE id=${userId}`;
 		});
@@ -2320,6 +2355,33 @@ export const repository = {
 	async consumeAdminRecoveryCodeByHash(userId: string, codeHash: string, now: number): Promise<boolean> {
 		const result = await db`UPDATE admin_recovery_codes SET used_at=${now} WHERE user_id=${userId} AND code_hash=${codeHash} AND used_at IS NULL`;
 		return deletedRowCount(result) > 0;
+	},
+	async adminWebauthnCredentialsForUser(userId: string): Promise<AdminWebauthnCredentialRecord[]> {
+		return (await db`SELECT * FROM admin_webauthn_credentials WHERE user_id=${userId} ORDER BY created_at ASC`) as AdminWebauthnCredentialRecord[];
+	},
+	async adminWebauthnCredentialByHash(hash: string): Promise<AdminWebauthnCredentialRecord | null> {
+		const rows = (await db`SELECT * FROM admin_webauthn_credentials WHERE credential_id_hash=${hash} LIMIT 1`) as AdminWebauthnCredentialRecord[];
+		return rows[0] ?? null;
+	},
+	async adminWebauthnCredentialById(id: string, userId: string): Promise<AdminWebauthnCredentialRecord | null> {
+		const rows = (await db`SELECT * FROM admin_webauthn_credentials WHERE id=${id} AND user_id=${userId} LIMIT 1`) as AdminWebauthnCredentialRecord[];
+		return rows[0] ?? null;
+	},
+	async insertAdminWebauthnCredential(record: AdminWebauthnCredentialRecord): Promise<void> {
+		await db`INSERT INTO admin_webauthn_credentials (id,user_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
+		VALUES (${record.id},${record.user_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+	},
+	async touchAdminWebauthnCredential(id: string, signCount: number, now: number): Promise<void> {
+		await db`UPDATE admin_webauthn_credentials SET sign_count=${signCount}, last_used_at=${now}, updated_at=${now} WHERE id=${id}`;
+	},
+	async renameAdminWebauthnCredential(id: string, userId: string, nickname: string | null, now: number): Promise<void> {
+		await db`UPDATE admin_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId}`;
+	},
+	async deleteAdminWebauthnCredential(id: string, userId: string): Promise<void> {
+		await db`DELETE FROM admin_webauthn_credentials WHERE id=${id} AND user_id=${userId}`;
+	},
+	async deleteAllAdminWebauthnCredentialsForUser(userId: string): Promise<void> {
+		await db`DELETE FROM admin_webauthn_credentials WHERE user_id=${userId}`;
 	},
 	async adminSitePermission(userId: string, siteId: string): Promise<AdminUserSitePermissionRecord | null> {
 		const rows = (await db`SELECT * FROM admin_user_site_permissions WHERE user_id=${userId} AND site_id=${siteId} LIMIT 1`) as AdminUserSitePermissionRecord[];
