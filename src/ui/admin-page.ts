@@ -91,7 +91,6 @@ export function adminPage(): string {
 <section class="card geo-card">
   <div class="pad row between responsive">
     <div><h2>Geographic distribution</h2><p id="geoSubtitle" class="muted">Requests by country for the selected range</p></div>
-    <select id="geoMetricMode" class="select select-small"><option value="requests">Requests</option><option value="sessions">Sessions</option><option value="bandwidth">Client bandwidth</option></select>
   </div>
   <div class="geo-layout">
     <div class="geo-map-wrap">
@@ -108,9 +107,9 @@ export function adminPage(): string {
   </div>
 </section>
 
-<section class="card pad">
+<section id="refererCard" class="card pad">
   <div class="row between responsive">
-    <div><h2>Top referrers</h2><p id="refererSubtitle" class="muted">External referring domains for the selected range</p></div>
+    <div><h2 id="refererTitle">Top referrers</h2><p id="refererSubtitle" class="muted">External referring domains for the selected range</p></div>
     <strong id="refererTotal">0</strong>
   </div>
   <div id="refererList" class="geo-country-list"><p class="muted">No external referrers in this range.</p></div>

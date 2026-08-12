@@ -295,6 +295,32 @@ function searchPattern(search: string | undefined): string | null {
 	return value ? `%${value}%` : null;
 }
 
+export type TabMetricsScope = "requests" | "blocked" | "protection" | "cache" | "access" | "routes" | "sites" | "bandwidth" | "sessions";
+
+function siteScopeFilter(siteScope: string | string[] | undefined) {
+	if (siteScope === undefined) return db``;
+	if (Array.isArray(siteScope)) return db`AND site_id IN ${db(siteScope)}`;
+	return db`AND site_id=${siteScope}`;
+}
+
+function tabScopeFilter(scope: Exclude<TabMetricsScope, "bandwidth" | "sessions">) {
+	switch (scope) {
+		case "blocked":
+			return db`AND decision IN ('blocked','route-blocked')`;
+		case "protection":
+			return db`AND protection_status IN ('monitored','blocked')`;
+		case "cache":
+			return db`AND cache_status='hit'`;
+		case "access":
+			return db`AND decision IN ('access-login-required','access-login-failed','access-login-rate-limited','access-authenticated')`;
+		case "routes":
+			return db`AND decision IN ('challenge-required','rate-limited','route-blocked')`;
+		case "requests":
+		case "sites":
+			return db``;
+	}
+}
+
 export const repository = {
 	async siteByHost(host: string): Promise<SiteRecord | null> {
 		const rows = (await db`SELECT * FROM sites WHERE public_host = ${host} AND enabled = 1 LIMIT 1`) as SiteRecord[];
@@ -1568,57 +1594,131 @@ export const repository = {
 			rangeDurationMs: Math.max(0, until - since),
 		};
 	},
-	async geoMetrics(
-		siteId: string | undefined,
+	async tabGeoMetrics(
+		siteScope: string | string[] | undefined,
 		since: number,
 		until: number,
-	): Promise<{
-		requests: Array<{ countryCode: string; count: number }>;
-		sessions: Array<{ countryCode: string; count: number }>;
-		bandwidth: Array<{ countryCode: string; count: number }>;
-	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
-		const minuteSince = Math.floor(since / 60_000) * 60_000;
-		const requestRows = (await db`
+		scope: TabMetricsScope,
+	): Promise<Array<{ countryCode: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		if (scope === "sessions") {
+			const rows = (await db`
+        SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
+        FROM access_sessions
+        WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+        GROUP BY COALESCE(country_code, 'ZZ')
+        ORDER BY count DESC
+      `) as Array<{ country_code: string; count: number | string }>;
+			return rows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) }));
+		}
+		if (scope === "bandwidth") {
+			const minuteSince = Math.floor(since / 60_000) * 60_000;
+			const rows = (await db`
+        SELECT COALESCE(country_code, 'ZZ') AS country_code,
+          COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS count
+        FROM bandwidth_minutes
+        WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
+        GROUP BY COALESCE(country_code, 'ZZ')
+        ORDER BY count DESC
+      `) as Array<{ country_code: string; count: number | string }>;
+			return rows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) }));
+		}
+		const scopeFilter = tabScopeFilter(scope);
+		const rows = (await db`
       SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
       GROUP BY COALESCE(country_code, 'ZZ')
       ORDER BY count DESC
     `) as Array<{ country_code: string; count: number | string }>;
-		const sessionRows = (await db`
-      SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
-      FROM access_sessions
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
-      GROUP BY COALESCE(country_code, 'ZZ')
-      ORDER BY count DESC
-    `) as Array<{ country_code: string; count: number | string }>;
-		const bandwidthRows = (await db`
-      SELECT COALESCE(country_code, 'ZZ') AS country_code,
-        COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS count
-      FROM bandwidth_minutes
-      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
-      GROUP BY COALESCE(country_code, 'ZZ')
-      ORDER BY count DESC
-    `) as Array<{ country_code: string; count: number | string }>;
-		return {
-			requests: requestRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
-			sessions: sessionRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
-			bandwidth: bandwidthRows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) })),
-		};
+		return rows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) }));
 	},
-	async refererMetrics(siteId: string | undefined, since: number, until: number): Promise<Array<{ refererHost: string; count: number }>> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+	async tabRefererMetrics(
+		siteScope: string | string[] | undefined,
+		since: number,
+		until: number,
+		scope: Exclude<TabMetricsScope, "access" | "bandwidth" | "sessions">,
+	): Promise<Array<{ refererHost: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		const scopeFilter = tabScopeFilter(scope);
 		const rows = (await db`
       SELECT referer_host, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
         AND referer_host IS NOT NULL AND referer_host != '(same site)'
       GROUP BY referer_host
       ORDER BY count DESC
       LIMIT 25
     `) as Array<{ referer_host: string; count: number | string }>;
 		return rows.map((row) => ({ refererHost: row.referer_host, count: toNumber(row.count) }));
+	},
+	async tabIpMetrics(
+		siteScope: string | string[] | undefined,
+		since: number,
+		until: number,
+		scope: "blocked" | "routes",
+	): Promise<Array<{ ip: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		const scopeFilter = tabScopeFilter(scope);
+		const rows = (await db`
+      SELECT ip, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
+      GROUP BY ip
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ ip: string; count: number | string }>;
+		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
+	},
+	async tabPathMetrics(
+		siteScope: string | string[] | undefined,
+		since: number,
+		until: number,
+		scope: "protection",
+	): Promise<Array<{ path: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		const scopeFilter = tabScopeFilter(scope);
+		const rows = (await db`
+      SELECT path, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
+      GROUP BY path
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ path: string; count: number | string }>;
+		return rows.map((row) => ({ path: row.path, count: toNumber(row.count) }));
+	},
+	async accessUsernameMetrics(siteScope: string | string[] | undefined, since: number, until: number): Promise<Array<{ username: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		const rows = (await db`
+      SELECT COALESCE(access_username, '(anonymous)') AS username, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+        AND decision IN ('access-login-required','access-login-failed','access-login-rate-limited','access-authenticated')
+      GROUP BY COALESCE(access_username, '(anonymous)')
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ username: string; count: number | string }>;
+		return rows.map((row) => ({ username: row.username, count: toNumber(row.count) }));
+	},
+	async sessionUsernameMetrics(siteScope: string | string[] | undefined, since: number, until: number): Promise<Array<{ username: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScope === undefined ? db`` : Array.isArray(siteScope) ? db`AND s.site_id IN ${db(siteScope)}` : db`AND s.site_id=${siteScope}`;
+		const rows = (await db`
+      SELECT COALESCE(u.username, '(anonymous)') AS username, COUNT(*) AS count
+      FROM access_sessions s
+      LEFT JOIN access_users u ON u.id = s.access_user_id
+      WHERE s.created_at >= ${since} AND s.created_at <= ${until} ${siteFilter}
+      GROUP BY COALESCE(u.username, '(anonymous)')
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ username: string; count: number | string }>;
+		return rows.map((row) => ({ username: row.username, count: toNumber(row.count) }));
 	},
 	async eventsMissingCountry(limit: number): Promise<Array<{ id: string; ip: string }>> {
 		if (limit <= 0) return [];

@@ -9,7 +9,7 @@ import {
 	insecureCookieConfigurationMessage,
 	secureCookieForRequest,
 } from "../config.ts";
-import { repository, type SortDirection } from "../db/repository.ts";
+import { repository, type SortDirection, type TabMetricsScope } from "../db/repository.ts";
 import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
 import {
 	authenticateAdminPassword,
@@ -157,6 +157,19 @@ const NO_ACCESS_SITE_ID = "__no-accessible-site__";
 function metricsScopeSiteId(selection: { site: SiteRecord | null }, user: AuthenticatedAdmin): string | undefined {
 	if (selection.site) return selection.site.id;
 	return isAdministrator(user) ? undefined : NO_ACCESS_SITE_ID;
+}
+
+const TAB_METRICS_SCOPES: TabMetricsScope[] = ["requests", "blocked", "protection", "cache", "access", "routes", "sites", "bandwidth", "sessions"];
+
+function tabMetricsScopeParam(url: URL): TabMetricsScope | null {
+	const value = stringParam(url, "scope");
+	return (TAB_METRICS_SCOPES as string[]).includes(value ?? "") ? (value as TabMetricsScope) : null;
+}
+
+async function tabScopeSiteIds(user: AuthenticatedAdmin): Promise<string[] | undefined> {
+	if (isAdministrator(user)) return undefined;
+	const sites = await sitesVisibleToUser(user);
+	return sites.map((site) => site.id);
 }
 
 const DEFAULT_DATE_RANGE_MS = 24 * 3_600_000;
@@ -1172,29 +1185,97 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 	});
 
-	app.get("/_burrowgate/api/admin/geo-metrics", async (ctx) => {
+	app.get("/_burrowgate/api/admin/geo-metrics-tab", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
 		const url = new URL(ctx.req.url);
+		const scope = tabMetricsScopeParam(url);
+		if (!scope) return jsonResponse({ error: "Invalid scope" }, 400);
+		const range = requestedDateRange(url);
+		if (scope === "bandwidth") await flushBandwidthMetrics();
+		if (scope === "sites") {
+			const items = await repository.tabGeoMetrics(await tabScopeSiteIds(user), range.since, range.until, scope);
+			return jsonResponse({ rangeFrom: range.since, rangeTo: range.until, rangeDurationMs: range.durationMs, status: geoIpStatus(), items });
+		}
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const range = requestedDateRange(url);
-		await flushBandwidthMetrics();
-		const metrics = await repository.geoMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		const items = await repository.tabGeoMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
 			rangeDurationMs: range.durationMs,
 			site: selection.site ? siteView(selection.site) : null,
 			status: geoIpStatus(),
-			requests: metrics.requests,
-			sessions: metrics.sessions,
-			bandwidth: metrics.bandwidth,
+			items,
 		});
 	});
 
-	app.get("/_burrowgate/api/admin/referer-metrics", async (ctx) => {
+	app.get("/_burrowgate/api/admin/referer-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const scope = tabMetricsScopeParam(url);
+		if (!scope || scope === "access" || scope === "bandwidth" || scope === "sessions") return jsonResponse({ error: "Invalid scope" }, 400);
+		const range = requestedDateRange(url);
+		if (scope === "sites") {
+			const referrers = await repository.tabRefererMetrics(await tabScopeSiteIds(user), range.since, range.until, scope);
+			return jsonResponse({ rangeFrom: range.since, rangeTo: range.until, rangeDurationMs: range.durationMs, referrers });
+		}
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const referrers = await repository.tabRefererMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			referrers,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/ip-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const scope = stringParam(url, "scope");
+		if (scope !== "blocked" && scope !== "routes") return jsonResponse({ error: "Invalid scope" }, 400);
+		const range = requestedDateRange(url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const ips = await repository.tabIpMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			ips,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/path-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const scope = stringParam(url, "scope");
+		if (scope !== "protection") return jsonResponse({ error: "Invalid scope" }, 400);
+		const range = requestedDateRange(url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const paths = await repository.tabPathMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			paths,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/access-username-metrics", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
@@ -1202,13 +1283,31 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
-		const referrers = await repository.refererMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		const usernames = await repository.accessUsernameMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
 			rangeDurationMs: range.durationMs,
 			site: selection.site ? siteView(selection.site) : null,
-			referrers,
+			usernames,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/session-username-metrics", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const range = requestedDateRange(url);
+		const usernames = await repository.sessionUsernameMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			usernames,
 		});
 	});
 

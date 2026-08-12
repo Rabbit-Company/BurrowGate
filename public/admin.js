@@ -146,7 +146,19 @@ let trafficChart = null;
 let latencyChart = null;
 let geoMapGeometry = null;
 let geoMetrics = null;
-let refererMetrics = null;
+let topListData = null;
+
+const GEO_TAB_CONFIG = {
+	traffic: { geoScope: "requests", label: "Requests", unit: "requests", topList: "referrers", refererScope: "requests" },
+	bandwidth: { geoScope: "bandwidth", label: "Client bandwidth", unit: "bytes", topList: "none" },
+	sessions: { geoScope: "sessions", label: "Sessions created", unit: "sessions", topList: "usernames", usernameSource: "sessions" },
+	rules: { geoScope: "blocked", label: "Blocked requests", unit: "blocked requests", topList: "ips", ipScope: "blocked" },
+	protection: { geoScope: "protection", label: "Matched requests", unit: "matched requests", topList: "paths", pathScope: "protection" },
+	cache: { geoScope: "cache", label: "Cache hits", unit: "cache hits", topList: "referrers", refererScope: "cache" },
+	access: { geoScope: "access", label: "Authentication events", unit: "auth events", topList: "usernames", usernameSource: "access" },
+	routes: { geoScope: "routes", label: "Route enforcement actions", unit: "enforcement actions", topList: "ips", ipScope: "routes" },
+	sites: { geoScope: "sites", label: "Requests (all sites)", unit: "requests", topList: "referrers", refererScope: "sites" },
+};
 let sites = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
@@ -217,6 +229,8 @@ let editingRoutePolicyId = null;
 let currentTls = null;
 let overviewRequestId = 0;
 let trafficRequestId = 0;
+let geoRequestId = 0;
+let topListRequestId = 0;
 let selectedRangeFrom = 0;
 let selectedRangeTo = 0;
 let dateRangeIsAutomatic = true;
@@ -1642,7 +1656,7 @@ function resetSiteScopedPages() {
 async function reloadSelectedSite() {
 	resetSiteScopedPages();
 	for (const name of ["bandwidth", "cache", "sessions", "rules", "routes", "access"]) loadedTabs.delete(name);
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics(), loadTraffic()];
+	const tasks = [loadOverview(), loadMetrics(), refreshGeoAndReferrers(), loadTraffic()];
 	if (activeTab === "cache") {
 		loadedTabs.add("cache");
 		tasks.push(loadCacheMetrics());
@@ -2924,16 +2938,19 @@ function hideGeoTooltip() {
 
 function renderGeoMap() {
 	if (!geoMapGeometry || !geoMetrics) return;
-	const mode = byId("geoMetricMode").value;
-	const items = geoMetrics[mode] ?? [];
+	const config = GEO_TAB_CONFIG[activeTab];
+	if (!config) return;
+	const items = geoMetrics.items ?? [];
+	const rangeDurationMs = geoMetrics.rangeDurationMs;
+	const status = geoMetrics.status;
+	const isBandwidth = config.unit === "bytes";
+	const unit = config.unit;
+	const metricTitle = config.label;
+	const formatValue = isBandwidth ? formatBytes : formatNumber;
 	const values = new Map(items.map((item) => [String(item.countryCode).toUpperCase(), Number(item.count)]));
 	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ" && item.countryCode !== "XX").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
-	const rangeLabel = rangeDurationLabel(geoMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
-	const isBandwidth = mode === "bandwidth";
-	const unit = isBandwidth ? "bytes" : mode === "sessions" ? "sessions" : "requests";
-	const metricTitle = isBandwidth ? "Client bandwidth" : mode === "sessions" ? "Sessions created" : "Requests";
-	const formatValue = isBandwidth ? formatBytes : formatNumber;
+	const rangeLabel = rangeDurationLabel(rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
 	byId("geoSubtitle").textContent = `${metricTitle} by country (${rangeLabel})`;
 	byId("geoTotal").textContent = isBandwidth ? formatBytes(total) : `${formatNumber(total)} ${unit}`;
 
@@ -2963,7 +2980,6 @@ function renderGeoMap() {
 					})
 					.join("");
 
-	const status = geoMetrics.status;
 	if (!status?.enabled) {
 		byId("geoMapStatus").textContent = "GeoIP is disabled.";
 		byId("geoMapStatus").classList.remove("hidden");
@@ -3020,30 +3036,90 @@ async function loadGeoMapGeometry() {
 }
 
 async function loadGeoMetrics() {
+	const requestId = ++geoRequestId;
+	const config = GEO_TAB_CONFIG[activeTab];
+	if (!config) return;
 	await loadGeoMapGeometry();
-	geoMetrics = await api(`/geo-metrics?${queryString(rangeQuery())}`);
+	const result = await api(`/geo-metrics-tab?scope=${config.geoScope}&${queryString(rangeQuery())}`);
+	if (requestId !== geoRequestId) return;
+	geoMetrics = result;
 	renderGeoMap();
 }
 
-async function loadRefererMetrics() {
-	refererMetrics = await api(`/referer-metrics?${queryString(rangeQuery())}`);
+const TOP_LIST_KIND = {
+	referrers: {
+		endpoint: (config) => `referer-metrics-tab?scope=${config.refererScope}`,
+		title: "Top referrers",
+		field: "referrers",
+		itemKey: "refererHost",
+		subtitle: (rangeLabel) => `External referring domains for the selected range (${rangeLabel})`,
+		empty: "No external referrers in this range.",
+		totalUnit: "requests",
+	},
+	usernames: {
+		endpoint: (config) => (config.usernameSource === "sessions" ? "session-username-metrics" : "access-username-metrics"),
+		title: "Top usernames",
+		field: "usernames",
+		itemKey: "username",
+		subtitle: (rangeLabel) => `Most active usernames in the selected range (${rangeLabel})`,
+		empty: "No activity in this range.",
+		totalUnit: "events",
+	},
+	ips: {
+		endpoint: (config) => `ip-metrics-tab?scope=${config.ipScope}`,
+		title: "Top offending IPs",
+		field: "ips",
+		itemKey: "ip",
+		subtitle: (rangeLabel) => `Source IPs generating the most activity in the selected range (${rangeLabel})`,
+		empty: "No matching activity in this range.",
+		totalUnit: "requests",
+	},
+	paths: {
+		endpoint: (config) => `path-metrics-tab?scope=${config.pathScope}`,
+		title: "Top targeted paths",
+		field: "paths",
+		itemKey: "path",
+		subtitle: (rangeLabel) => `Paths generating the most activity in the selected range (${rangeLabel})`,
+		empty: "No matching activity in this range.",
+		totalUnit: "requests",
+	},
+};
+
+async function loadTopList() {
+	const requestId = ++topListRequestId;
+	const config = GEO_TAB_CONFIG[activeTab];
+	byId("refererCard").classList.toggle("hidden", !config || config.topList === "none");
+	if (!config || config.topList === "none") return;
+	const kind = TOP_LIST_KIND[config.topList];
+	const endpoint = kind.endpoint(config);
+	const result = await api(`/${endpoint}${endpoint.includes("?") ? "&" : "?"}${queryString(rangeQuery())}`);
+	if (requestId !== topListRequestId) return;
+	topListData = result;
 	renderRefererList();
 }
 
+async function refreshGeoAndReferrers() {
+	await Promise.all([loadGeoMetrics(), loadTopList()]);
+}
+
 function renderRefererList() {
-	if (!refererMetrics) return;
-	const items = refererMetrics.referrers ?? [];
+	const config = GEO_TAB_CONFIG[activeTab];
+	if (!config || config.topList === "none" || !topListData) return;
+	const kind = TOP_LIST_KIND[config.topList];
+	const items = topListData[kind.field] ?? [];
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
-	const rangeLabel = rangeDurationLabel(refererMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
-	byId("refererSubtitle").textContent = `External referring domains for the selected range (${rangeLabel})`;
-	byId("refererTotal").textContent = `${formatNumber(total)} requests`;
+	const rangeLabel = rangeDurationLabel(topListData.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
+	byId("refererTitle").textContent = kind.title;
+	byId("refererSubtitle").textContent = kind.subtitle(rangeLabel);
+	byId("refererTotal").textContent = `${formatNumber(total)} ${kind.totalUnit}`;
 	byId("refererList").innerHTML =
 		items.length === 0
-			? '<p class="muted">No external referrers in this range.</p>'
+			? `<p class="muted">${kind.empty}</p>`
 			: items
 					.map((item) => {
+						const label = String(item[kind.itemKey] ?? "");
 						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
-						return `<div class="geo-country-row"><div class="row between"><span>${escapeHtml(item.refererHost)}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
 					})
 					.join("");
 }
@@ -3055,7 +3131,7 @@ async function applyDateRangeValues(from, to, updateLabel = "Dashboard updated")
 	tableState.traffic.page = 1;
 	tableState.bandwidth.page = 1;
 	tableState.sessions.page = 1;
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()];
+	const tasks = [loadOverview(), loadMetrics(), refreshGeoAndReferrers()];
 	if (loadedTabs.has("traffic")) tasks.push(loadTraffic());
 	if (loadedTabs.has("bandwidth")) tasks.push(loadBandwidth());
 	if (loadedTabs.has("sessions")) tasks.push(loadSessions());
@@ -3077,7 +3153,7 @@ async function runWithButton(button, task) {
 }
 
 async function refreshDashboard() {
-	const tasks = [loadOverview(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()];
+	const tasks = [loadOverview(), loadMetrics(), refreshGeoAndReferrers()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
 	if (activeTab === "bandwidth") tasks.push(loadBandwidth());
 	if (activeTab === "cache") tasks.push(loadCacheMetrics());
@@ -3095,11 +3171,7 @@ function setActiveTab(name) {
 	document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
 	document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
 	byId(`panel-${name}`).classList.remove("hidden");
-	const geoMode = { traffic: "requests", bandwidth: "bandwidth", sessions: "sessions" }[name];
-	if (geoMode) {
-		byId("geoMetricMode").value = geoMode;
-		renderGeoMap();
-	}
+	void refreshGeoAndReferrers();
 	void loadMetrics();
 	if (name === "cache") void loadCacheMetrics();
 	if (loadedTabs.has(name)) return;
@@ -4012,7 +4084,7 @@ function bindActions() {
 		"click",
 		(event) =>
 			void runWithButton(event.currentTarget, async () => {
-				await Promise.all([loadBandwidth(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()]);
+				await Promise.all([loadBandwidth(), loadMetrics(), refreshGeoAndReferrers()]);
 				markUpdated("Bandwidth updated");
 			}),
 	);
@@ -4085,7 +4157,6 @@ function bindActions() {
 			if (event.key === "Enter") byId("applyDateRange").click();
 		});
 	}
-	byId("geoMetricMode").addEventListener("change", renderGeoMap);
 	byId("logout").addEventListener("click", async () => {
 		await api("/logout", { method: "POST" }, false);
 		location.href = "/_burrowgate/admin/login";
@@ -4146,7 +4217,7 @@ async function start() {
 		await loadCurrentAdmin();
 		await loadSites();
 		await loadOverview();
-		await Promise.all([loadTraffic(), loadMetrics(), loadGeoMetrics(), loadRefererMetrics()]);
+		await Promise.all([loadTraffic(), loadMetrics(), refreshGeoAndReferrers()]);
 		markUpdated("Loaded");
 	} catch (error) {
 		showToast(error.message, "bad");
