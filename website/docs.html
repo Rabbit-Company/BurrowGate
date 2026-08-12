@@ -117,6 +117,57 @@ docker compose exec burrowgate cat /app/data/bootstrap-admin-password.txt
 				</div>
 			</section>
 
+			<!-- Upgrading -->
+			<section class="section-tight section-border-top">
+				<div class="shell">
+					<div class="card pad-lg">
+						<div class="row between wrap quick-install-head">
+							<div>
+								<h2 class="quick-install-title">Upgrading</h2>
+								<p class="muted quick-install-sub">The Compose file tracks the <code>latest</code> tag, so pulling always fetches the newest release.</p>
+							</div>
+							<a class="button secondary" href="https://github.com/Rabbit-Company/BurrowGate#upgrading" target="_blank" rel="noopener">
+								Full upgrade notes
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</a>
+						</div>
+						<div class="code-block">
+							<div class="code-block-head">
+								<span>terminal</span>
+								<button class="code-copy" data-copy-target="code-upgrade" type="button">
+									<svg
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<rect x="9" y="9" width="11" height="11" rx="2" />
+										<path d="M5 15V5a2 2 0 0 1 2-2h10" />
+									</svg>
+									Copy
+								</button>
+							</div>
+							<pre id="code-upgrade"><code><span class="tok-c"># pull the new image and recreate the container</span>
+docker compose pull
+docker compose down
+docker compose up -d</code></pre>
+						</div>
+						<p class="muted quick-install-sub">
+							Runtime data, certificates, and the encryption key live in <code>./data</code> and are preserved across upgrades. To upgrade deliberately instead
+							of always tracking <code>latest</code>, pin <code>image:</code> to an exact version such as <code>rabbitcompany/burrowgate:1.9.0</code> in your
+							<code>docker-compose.yml</code>. See the
+							<a href="https://github.com/Rabbit-Company/BurrowGate/releases" target="_blank" rel="noopener" class="link-accent">releases page</a>
+							for what changed before upgrading.
+						</p>
+					</div>
+				</div>
+			</section>
+
 			<!-- Doc index -->
 			<section class="section section-border-top">
 				<div class="shell">
@@ -313,7 +364,7 @@ docker compose exec burrowgate cat /app/data/bootstrap-admin-password.txt
 									<path d="M9 6l6 6-6 6" />
 								</svg>
 							</div>
-							<p>TCP/UDP proxying, TLS termination, and Compose port mapping.</p>
+							<p>TCP/UDP proxying, TLS termination, and host networking.</p>
 						</a>
 
 						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/BANDWIDTH.md" target="_blank" rel="noopener">

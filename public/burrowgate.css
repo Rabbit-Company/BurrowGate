@@ -174,13 +174,6 @@ button:disabled {
 .protocol-toggles {
 	gap: 1rem;
 }
-.compose-mapping {
-	padding: 0.8rem;
-	border: 1px solid #263247;
-	border-radius: 0.55rem;
-	background: #0b1220;
-	overflow: auto;
-}
 .country-code-input {
 	width: 5rem;
 }

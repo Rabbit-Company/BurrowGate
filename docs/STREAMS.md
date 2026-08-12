@@ -34,19 +34,7 @@ Payload totals are accumulated in memory and persisted in one-minute buckets by 
 
 ## Docker networking
 
-Docker cannot dynamically publish a new container port after the container has started. In bridge mode, add every stream protocol and port to Compose and recreate the container:
-
-```yaml
-services:
-  burrowgate:
-    ports:
-      - "80:80/tcp"
-      - "443:443/tcp"
-      - "25565:25565/tcp"
-      - "19132:19132/udp"
-```
-
-The stream editor generates the required Compose mapping. Linux deployments that require arbitrary dashboard-managed ports may instead use host networking and firewall the host appropriately.
+The default Compose file uses `network_mode: host`, so every port a stream binds on the host is immediately reachable with no Compose changes or container restart. Firewall the host to only expose the ports you intend to publish.
 
 ## Runtime limits
 

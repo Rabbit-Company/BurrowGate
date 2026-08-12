@@ -61,9 +61,7 @@ services:
     container_name: burrowgate
     restart: unless-stopped
     init: true
-    ports:
-      - "${BG_HTTP_PUBLIC_PORT:-80}:${BG_HTTP_PORT:-80}"
-      - "${BG_HTTPS_PUBLIC_PORT:-443}:${BG_HTTPS_PORT:-443}"
+    network_mode: host
     env_file:
       - path: .env
         required: false
@@ -127,10 +125,12 @@ Point `sonarr.example.com` to the VPS, open the site's TLS settings, and request
 
 The default Compose configuration is production ready:
 
-- host port 80 maps to BurrowGate port 80
-- host port 443 maps to BurrowGate port 443
+- `network_mode: host` runs BurrowGate directly on the host network, so it binds host ports 80 and 443 (or whatever `BG_HTTP_PORT`/`BG_HTTPS_PORT` are set to) with no Docker port mapping or NAT in between
+- origins running on the same host are reachable at `localhost`/`127.0.0.1` with no extra Docker networking configuration
 - runtime data is stored in the `./data` directory
 - only `NET_BIND_SERVICE` is added for low-port binding
+
+Host networking only works on Linux Docker hosts (the only supported deployment target) and gives the container full access to the host's network interfaces, so firewall the host as if BurrowGate's configured ports were running outside of Docker.
 
 An `.env` file is optional. Copy the example file only when overriding defaults:
 
@@ -139,6 +139,29 @@ cp .env.example .env
 nano .env
 docker compose up -d --build --force-recreate
 ```
+
+## Upgrading
+
+Pull the new image and recreate the container:
+
+```bash
+docker compose pull
+docker compose down
+docker compose up -d
+```
+
+The default Compose file tracks the `latest` tag, so `docker compose pull` always fetches the newest release. Runtime data, certificates, and the encryption key live in `./data` and are preserved across upgrades.
+
+To upgrade deliberately instead of always tracking `latest`, pin the image to a specific version or major line:
+
+```yaml
+services:
+  burrowgate:
+    image: rabbitcompany/burrowgate:1.9.0 # exact version
+    # image: rabbitcompany/burrowgate:1     # latest 1.x release
+```
+
+Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases) for what changed before upgrading, especially across major versions.
 
 ## Configuration
 
@@ -390,13 +413,7 @@ Open the **Streams** dashboard from the switcher at the top of the control panel
 
 The dashboard provides live TCP connections and UDP peers, connect/disconnect and error logs, client country, and payload totals grouped by IP, incoming port, and protocol. Because UDP has no transport connection lifecycle, BurrowGate opens a synthetic peer session on the first datagram and closes it after the configured inactivity timeout.
 
-Docker bridge networking must publish each configured port. A TCP and UDP stream on port 25565 requires both mappings:
-
-```yaml
-ports:
-  - "25565:25565/tcp"
-  - "25565:25565/udp"
-```
+With the default `network_mode: host` Compose configuration, every stream port you create from the dashboard is immediately reachable on the host with no Compose changes or container restart. Firewall the host to only expose the ports you intend to publish.
 
 Selecting a certificate terminates incoming TCP TLS and forwards decrypted bytes. Leaving the certificate empty performs raw TCP forwarding and therefore supports TLS passthrough. TLS/DTLS termination is not available for UDP.
 

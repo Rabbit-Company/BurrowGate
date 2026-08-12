@@ -643,13 +643,6 @@ function renderCertificateOptions() {
 	if (certificates.some((certificate) => certificate.id === selected)) select.value = selected;
 }
 
-function mappingFor(stream) {
-	const mappings = [];
-	if (stream.tcpEnabled) mappings.push(`      - "${stream.incomingPort}:${stream.incomingPort}/tcp"`);
-	if (stream.udpEnabled) mappings.push(`      - "${stream.incomingPort}:${stream.incomingPort}/udp"`);
-	return `services:\n  burrowgate:\n    ports:\n${mappings.join("\n")}`;
-}
-
 async function loadCurrentAdmin() {
 	currentAdmin = await api("/me");
 	applyCurrentAdminVisibility();
@@ -1623,11 +1616,6 @@ function updateProtocolControls() {
 	byId("saveStream").disabled = !valid;
 	byId("streamCertificate").disabled = !byId("streamTcp").checked;
 	if (!byId("streamTcp").checked) byId("streamCertificate").value = "";
-	const draft = { incomingPort: Number(byId("incomingPort").value), tcpEnabled: byId("streamTcp").checked, udpEnabled: byId("streamUdp").checked };
-	if (draft.incomingPort && valid) {
-		byId("composeMapping").textContent = mappingFor(draft);
-		byId("composeMapping").classList.remove("hidden");
-	} else byId("composeMapping").classList.add("hidden");
 	const rateEnabled = byId("streamRateLimitEnabled").checked;
 	byId("streamRateLimitSettings").classList.toggle("hidden", !rateEnabled);
 	const algorithm = byId("streamRateLimitAlgorithm").value;
