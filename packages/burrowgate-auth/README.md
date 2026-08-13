@@ -59,18 +59,43 @@ Caching creates a deliberate revocation window: a logout, disabled user, or admi
 
 ## Browser
 
-Mint a short-lived assertion from the authenticated frontend site, then attach it to the separate API request:
+Keep one `BrowserSessionAssertionClient` for the lifetime of the browser application. Configure the API URL once. Its `fetch()` method handles assertion creation, caching, refresh, and headers automatically:
 
 ```ts
-import { BURROWGATE_SESSION_ASSERTION_HEADER, createBrowserSessionAssertion } from "@rabbit-company/burrowgate-auth";
+import { BrowserSessionAssertionClient } from "@rabbit-company/burrowgate-auth";
 
-const assertion = await createBrowserSessionAssertion();
+export const auth = new BrowserSessionAssertionClient({
+	apiBaseUrl: "https://api.example.com",
+});
 
-await fetch("https://api.example.com/items", {
-	headers: {
-		[BURROWGATE_SESSION_ASSERTION_HEADER]: assertion.token,
-	},
+const response = await auth.fetch("/items");
+const items = await response.json();
+
+// Revokes the server session, stops refresh, and clears the local assertion.
+await auth.logout();
+```
+
+Relative request URLs resolve against `apiBaseUrl`. Existing request options and headers are preserved. To protect credentials from accidental disclosure, `fetch()` rejects absolute URLs on a different origin. The first API call waits for assertion initialization. Subsequent calls reuse the in-memory assertion immediately.
+
+By default, BurrowGate assertions last five minutes (`BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS=300`) or until the parent browser session expires, whichever happens first. The browser client refreshes 30 seconds early and retries a failed background refresh after five seconds. Configure those timings when needed:
+
+```ts
+const auth = new BrowserSessionAssertionClient({
+	apiBaseUrl: "https://api.example.com",
+	refreshAheadMs: 30_000,
+	retryDelayMs: 5_000,
+	onError: (error) => console.error("Assertion refresh failed", error),
 });
 ```
 
-The signed assertion is short-lived and is not the BurrowGate browser-session cookie. Introspection checks its parent session on every backend request, so logout and administrative revocation take effect immediately.
+Only the assertion is kept in memory (it is never written to browser storage). Call `logout()` to revoke the BurrowGate browser session, stop background refresh, and clear the assertion. Call `stop()` only when background refresh should stop without logging out.
+
+For low-level usage, `createBrowserSessionAssertion()`, `getToken()`, and the exported assertion header constant remain available, but normal browser integrations do not need them.
+
+The browser refresh interval and backend cache are independent:
+
+- Browser assertion lifetime: five minutes by default.
+- Browser background refresh: approximately 30 seconds before assertion expiry.
+- Backend successful-introspection cache: five seconds by default.
+
+Each real introspection checks the parent session. With the default backend cache, logout and administrative revocation can take up to five seconds to reach a given backend process.

@@ -1,5 +1,11 @@
+/**
+ * Default HTTP request header used to carry a short-lived BurrowGate session
+ * assertion from a browser to a separate backend.
+ */
 export declare const BURROWGATE_SESSION_ASSERTION_HEADER = "x-burrowgate-session-assertion";
+/** A runtime-neutral subset of `fetch` accepted by the SDK. */
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+/** Configuration for the server-side {@link BurrowGateClient}. */
 export interface BurrowGateClientOptions {
     /** Base URL of any HTTP(S) listener served by the BurrowGate instance. */
     baseUrl: string | URL;
@@ -11,66 +17,285 @@ export interface BurrowGateClientOptions {
     fetch?: FetchLike;
     /** Introspection request timeout. Defaults to 5 seconds. */
     timeoutMs?: number;
-    /** Maximum time to cache a successful introspection. Defaults to 5 seconds; use 0 to disable. */
+    /** Maximum time to cache a successful introspection. Defaults to 5 seconds (use 0 to disable). */
     cacheTtlMs?: number;
     /** Maximum number of active assertions retained in memory. Defaults to 10,000. */
     maxCacheEntries?: number;
 }
+/** A BurrowGate access-list identity that has been verified server-side. */
 export interface BurrowGateUser {
+    /** Stable BurrowGate access-list user ID. */
     id: string;
+    /** Normalized username, commonly the user's email address for SSO accounts. */
     username: string;
 }
+/** Active session identity returned by BurrowGate's introspection endpoint. */
 export interface BurrowGateSession {
+    /** Always `true` for an active introspection result. */
     active: true;
+    /** ID of the BurrowGate site that issued the assertion. */
     siteId: string;
+    /** Opaque BurrowGate session record ID. This is not the browser session secret. */
     sessionId: string;
+    /** Verified access-list user. */
     user: BurrowGateUser;
+    /** Unix timestamp in milliseconds at which the user authenticated. */
     authenticatedAt: number;
+    /** Unix timestamp in milliseconds at which the parent session expires. */
     expiresAt: number;
+    /** Unix timestamp in milliseconds at which the supplied assertion expires. */
     assertionExpiresAt: number;
 }
+/** Short-lived assertion minted for an authenticated browser session. */
 export interface BrowserSessionAssertion {
+    /** Signed assertion to send in {@link BURROWGATE_SESSION_ASSERTION_HEADER}. */
     token: string;
+    /** Unix timestamp in milliseconds at which this assertion expires. */
     expiresAt: number;
+    /** User associated with the authenticated browser session. */
     user: BurrowGateUser;
 }
-export declare class BurrowGateError extends Error {
-    readonly status?: number | undefined;
-    readonly originalError?: unknown;
-    constructor(message: string, status?: number | undefined, originalError?: unknown);
+/**
+ * Configuration for {@link BrowserSessionAssertionClient}, which keeps a
+ * browser assertion fresh in memory.
+ */
+export interface BrowserSessionAssertionClientOptions {
+    /** BurrowGate frontend-site origin. Defaults to the current browser origin. */
+    baseUrl?: string | URL;
+    /**
+     * Base URL for authenticated API requests. Defaults to `baseUrl`. Relative
+     * URLs passed to {@link BrowserSessionAssertionClient.fetch} resolve here.
+     */
+    apiBaseUrl?: string | URL;
+    /** Optional fetch implementation. Defaults to `globalThis.fetch`. */
+    fetch?: FetchLike;
+    /** How early to refresh before expiry. Defaults to 30 seconds. */
+    refreshAheadMs?: number;
+    /** Delay before retrying a failed background refresh. Defaults to 5 seconds. */
+    retryDelayMs?: number;
+    /** Start background refresh immediately. Defaults to `true`. */
+    autoStart?: boolean;
+    /** Optional callback invoked after a new assertion is stored. */
+    onUpdate?: (assertion: BrowserSessionAssertion) => void;
+    /** Optional callback invoked when a background refresh fails. */
+    onError?: (error: unknown) => void;
 }
+/** Base error thrown for BurrowGate transport, configuration, or response failures. */
+export declare class BurrowGateError extends Error {
+    /** HTTP status returned by BurrowGate, when available. */
+    readonly status?: number;
+    /** Original runtime error, when available. */
+    readonly originalError?: unknown;
+    /**
+     * Creates a BurrowGate SDK error.
+     *
+     * @param message Human-readable failure description.
+     * @param status HTTP status returned by BurrowGate, when available.
+     * @param originalError Original runtime error, when available.
+     */
+    constructor(message: string, status?: number, originalError?: unknown);
+}
+/** Error thrown by helpers that require an active authenticated session. */
 export declare class BurrowGateAuthenticationError extends BurrowGateError {
+    /** Creates an authentication error with HTTP status 401. */
     constructor(message?: string);
 }
+/**
+ * Reads a session assertion from a standard Web `Request`.
+ *
+ * @param request Incoming backend request.
+ * @param headerName Header to read (defaults to {@link BURROWGATE_SESSION_ASSERTION_HEADER}).
+ * @returns The trimmed assertion, or `null` when the header is absent or empty.
+ */
 export declare function sessionAssertionFromRequest(request: Request, headerName?: string): string | null;
+/**
+ * Reads a session assertion from Web headers, a `get(name)` compatible header
+ * collection, or a plain runtime header record.
+ *
+ * @param headers Incoming backend request headers.
+ * @param headerName Header to read (defaults to {@link BURROWGATE_SESSION_ASSERTION_HEADER}).
+ * @returns The trimmed assertion, or `null` when the header is absent or empty.
+ */
 export declare function sessionAssertionFromHeaders(headers: Headers | {
     get(name: string): string | null | undefined;
 } | Record<string, string | string[] | undefined>, headerName?: string): string | null;
+/**
+ * Server-side client that introspects browser assertions with BurrowGate and
+ * optionally caches successful results for a short, bounded period.
+ *
+ * Never construct this class in browser code because its verification token is
+ * a server-only secret. Use {@link BrowserSessionAssertionClient} in browsers.
+ */
 export declare class BurrowGateClient {
+    /** Normalized BurrowGate base URL. */
     readonly baseUrl: URL;
+    /** Frontend site ID whose assertions this client accepts. */
     readonly siteId: string;
+    /** Server-only credential used for introspection. */
     readonly verificationToken: string;
+    /** Maximum duration of one introspection request in milliseconds. */
     readonly timeoutMs: number;
+    /** Maximum successful-introspection cache duration in milliseconds. */
     readonly cacheTtlMs: number;
+    /** Maximum number of successful introspection results cached in memory. */
     readonly maxCacheEntries: number;
     private readonly fetchImplementation;
     private readonly cache;
     private readonly inFlight;
     private lastCachePruneAt;
+    /** Creates a server-side BurrowGate assertion introspection client. */
     constructor(options: BurrowGateClientOptions);
+    /**
+     * Verifies one assertion, using a fresh cached result when available.
+     *
+     * @returns An active session, or `null` for an invalid, expired, or revoked assertion.
+     * @throws {@link BurrowGateError} when introspection cannot be completed safely.
+     */
     introspect(sessionAssertion: string): Promise<BurrowGateSession | null>;
+    /** Performs one uncached request to BurrowGate's introspection endpoint. */
     private requestIntrospection;
+    /** Stores a successful result within both the configured TTL and assertion expiry. */
     private storeCachedSession;
-    /** Remove expired entries. Cached sessions are never returned after their expiry even before pruning. */
+    /**
+     * Removes expired cache entries.
+     *
+     * Cached sessions are never returned after expiry even if this method has not
+     * been called explicitly.
+     *
+     * @returns Number of entries removed.
+     */
     pruneCache(now?: number): number;
-    /** Invalidate one assertion, or every cached assertion when no value is supplied. */
+    /** Invalidates one assertion, or every cached assertion when no value is supplied. */
     clearCache(sessionAssertion?: string): void;
+    /** Number of currently live successful-introspection cache entries. */
     get cacheSize(): number;
+    /**
+     * Authenticates a standard Web request using its assertion header.
+     *
+     * @returns An active session, or `null` when no valid assertion is present.
+     */
     authenticate(request: Request, headerName?: string): Promise<BurrowGateSession | null>;
+    /**
+     * Authenticates request headers without requiring a Web `Request` object.
+     *
+     * @returns An active session, or `null` when no valid assertion is present.
+     */
     authenticateHeaders(headers: Headers | {
         get(name: string): string | null | undefined;
     } | Record<string, string | string[] | undefined>, headerName?: string): Promise<BurrowGateSession | null>;
+    /**
+     * Authenticates a Web request and throws when no active session is present.
+     *
+     * @throws {@link BurrowGateAuthenticationError} for a missing or inactive session.
+     */
     requireSession(request: Request, headerName?: string): Promise<BurrowGateSession>;
 }
+/**
+ * Mints a new short-lived assertion for the current authenticated browser
+ * session by calling `POST /_burrowgate/access/session-token`.
+ *
+ * The assertion lifetime is controlled by BurrowGate's
+ * `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` setting and is also capped by the
+ * remaining parent-session lifetime. The default is five minutes.
+ *
+ * @param baseUrl BurrowGate frontend-site origin (defaults to the browser origin).
+ * @param fetchImplementation Optional runtime fetch implementation.
+ * @throws {@link BurrowGateError} when the session is unauthenticated or the response is invalid.
+ */
 export declare function createBrowserSessionAssertion(baseUrl?: string | URL, fetchImplementation?: FetchLike): Promise<BrowserSessionAssertion>;
+/**
+ * Browser-side in-memory assertion manager.
+ *
+ * The client fetches an assertion when started, returns the current token
+ * synchronously while it is valid, and refreshes it in the background shortly
+ * before expiry. Assertions are intentionally not persisted to local storage,
+ * session storage, cookies, or IndexedDB.
+ *
+ * @example Configure once, then use the authenticated fetch and logout helpers.
+ * ```ts
+ * const auth = new BrowserSessionAssertionClient({
+ *   apiBaseUrl: "https://api.example.com",
+ * });
+ *
+ * const response = await auth.fetch("/items");
+ * await auth.logout();
+ * ```
+ */
+export declare class BrowserSessionAssertionClient {
+    /** Normalized BurrowGate frontend-site base URL. */
+    readonly baseUrl: URL;
+    /** Normalized base URL used by authenticated API requests. */
+    readonly apiBaseUrl: URL;
+    /** Number of milliseconds before expiry at which background refresh begins. */
+    readonly refreshAheadMs: number;
+    /** Number of milliseconds before a failed background refresh is retried. */
+    readonly retryDelayMs: number;
+    private readonly fetchImplementation;
+    private readonly onUpdate?;
+    private readonly onError?;
+    private assertion;
+    private refreshPromise;
+    private refreshTimer;
+    private running;
+    private generation;
+    /** Creates a browser assertion manager and starts it unless `autoStart` is false. */
+    constructor(options?: BrowserSessionAssertionClientOptions);
+    /**
+     * Current valid assertion, or `null` before the first successful fetch and
+     * after expiry. A defensive copy is returned.
+     */
+    get currentAssertion(): BrowserSessionAssertion | null;
+    /** Current valid assertion token, or `null` when no valid assertion is ready. */
+    get token(): string | null;
+    /** Whether background refresh is currently enabled. */
+    get isRunning(): boolean;
+    /**
+     * Starts background assertion maintenance.
+     *
+     * This method is idempotent. The first refresh happens asynchronously. Use
+     * {@link getAssertion} or {@link getToken} when the caller must wait for it.
+     */
+    start(): void;
+    /** Stops future background refreshes without deleting the current assertion. */
+    stop(): void;
+    /**
+     * Returns the current assertion immediately when valid, otherwise waits for
+     * one network refresh. Concurrent callers share the same refresh request.
+     */
+    getAssertion(): Promise<BrowserSessionAssertion>;
+    /** Returns the current token, waiting for a refresh only when necessary. */
+    getToken(): Promise<string>;
+    /**
+     * Sends an authenticated API request.
+     *
+     * Relative URLs resolve against `apiBaseUrl`. The assertion header is added
+     * automatically without removing existing headers. Requests to another
+     * origin are rejected to prevent accidentally disclosing an assertion.
+     *
+     * @param input API URL or Request. Relative strings are supported.
+     * @param init Standard fetch options.
+     */
+    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+    /**
+     * Revokes the current BurrowGate browser session and clears local state.
+     *
+     * Background refresh is stopped before the request. Local assertions remain
+     * cleared even if the network request fails, and the failure is reported as a
+     * {@link BurrowGateError}.
+     */
+    logout(): Promise<void>;
+    /**
+     * Forces a new assertion request and replaces the in-memory value.
+     * Concurrent refresh calls share one request.
+     */
+    refresh(): Promise<BrowserSessionAssertion>;
+    /** Clears the in-memory assertion. Background maintenance remains enabled. */
+    clear(): void;
+    /** Schedules the next refresh before the current assertion expires. */
+    private scheduleRefresh;
+    /** Schedules another background attempt after a refresh failure. */
+    private scheduleRetry;
+    /** Starts a background refresh and reports failures without rejecting globally. */
+    private runBackgroundRefresh;
+}
 //# sourceMappingURL=mod.d.ts.map
