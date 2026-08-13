@@ -271,6 +271,8 @@ export interface SiteAccessSettingsRecord {
 	site_id: string;
 	enabled: number;
 	send_username_to_upstream: number;
+	session_verification_token_hash: string | null;
+	session_verification_token_created_at: number | null;
 	created_at: number;
 	updated_at: number;
 }

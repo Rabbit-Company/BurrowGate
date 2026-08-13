@@ -244,7 +244,11 @@ let trafficHasMultipleOrigins = false;
 let trafficOrigins = [];
 let editingOriginId = null;
 let routePolicies = [];
-let accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
+let accessList = {
+	settings: { enabled: false, sendUsernameToUpstream: false, sessionVerificationTokenEnabled: false, sessionVerificationTokenCreatedAt: null },
+	users: [],
+	availableUsers: [],
+};
 let countryRules = [];
 let editingRoutePolicyId = null;
 let routeIpRules = [];
@@ -1765,7 +1769,11 @@ function resetSiteScopedPages() {
 	setTrafficOriginVisibility();
 	latestMetrics = null;
 	routePolicies = [];
-	accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
+	accessList = {
+		settings: { enabled: false, sendUsernameToUpstream: false, sessionVerificationTokenEnabled: false, sessionVerificationTokenCreatedAt: null },
+		users: [],
+		availableUsers: [],
+	};
 	countryRules = [];
 	resetRoutePolicyForm();
 }
@@ -2189,6 +2197,11 @@ function renderAccessImportUsers() {
 function renderAccessList() {
 	byId("accessEnabled").checked = Boolean(accessList.settings.enabled);
 	byId("accessSendUsername").checked = Boolean(accessList.settings.sendUsernameToUpstream);
+	const verificationTokenEnabled = Boolean(accessList.settings.sessionVerificationTokenEnabled);
+	byId("accessVerificationTokenStatus").textContent = verificationTokenEnabled ? "Verification token active" : "No verification token";
+	byId("accessVerificationTokenStatus").className = `badge ${verificationTokenEnabled ? "ok" : ""}`;
+	byId("generateAccessVerificationToken").textContent = verificationTokenEnabled ? "Regenerate token" : "Generate token";
+	byId("revokeAccessVerificationToken").classList.toggle("hidden", !verificationTokenEnabled);
 	const sourceIds = new Set(accessList.availableUsers.flatMap((user) => user.siteIds ?? []).filter((siteId) => siteId !== selectedSiteId));
 	const source = byId("accessImportSite");
 	const previousSource = source.value;
@@ -2257,7 +2270,16 @@ function renderAccessSso() {
 
 async function loadAccessList() {
 	if (!selectedSiteId) {
-		accessList = { settings: { enabled: false, sendUsernameToUpstream: false }, users: [], availableUsers: [] };
+		accessList = {
+			settings: {
+				enabled: false,
+				sendUsernameToUpstream: false,
+				sessionVerificationTokenEnabled: false,
+				sessionVerificationTokenCreatedAt: null,
+			},
+			users: [],
+			availableUsers: [],
+		};
 		accessSso = {
 			enabled: false,
 			enforceSso: false,
@@ -2289,6 +2311,21 @@ async function saveAccessSettings() {
 	});
 	renderAccessList();
 	showToast("Access authentication settings saved.");
+}
+
+async function generateAccessVerificationToken() {
+	const regenerate = Boolean(accessList.settings.sessionVerificationTokenEnabled);
+	if (regenerate && !confirm("Regenerate the session verification token? The previous backend token will stop working immediately.")) return;
+	const result = await api("/access-list/session-verification-token", { method: "POST" });
+	await loadAccessList();
+	window.prompt("Session verification token generated. Copy it now as it will not be shown again:", result.token);
+}
+
+async function revokeAccessVerificationToken() {
+	if (!confirm("Revoke the session verification token? Separate backends using it will stop accepting sessions immediately.")) return;
+	await api("/access-list/session-verification-token", { method: "DELETE" });
+	await loadAccessList();
+	showToast("Session verification token revoked.");
 }
 
 async function saveAccessSso() {
@@ -4376,6 +4413,28 @@ function bindActions() {
 				try {
 					await saveAccessSettings();
 					await loadMetrics();
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	byId("generateAccessVerificationToken").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					await generateAccessVerificationToken();
+				} catch (error) {
+					showToast(error.message, "bad");
+				}
+			}),
+	);
+	byId("revokeAccessVerificationToken").addEventListener(
+		"click",
+		(event) =>
+			void runWithButton(event.currentTarget, async () => {
+				try {
+					await revokeAccessVerificationToken();
 				} catch (error) {
 					showToast(error.message, "bad");
 				}

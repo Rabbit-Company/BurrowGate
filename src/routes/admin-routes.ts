@@ -56,12 +56,14 @@ import { requestTlsReload } from "../services/tls-listener-service.ts";
 import {
 	accessListView,
 	createAccessUser,
+	generateSessionVerificationToken,
 	generateAccessUserApiToken,
 	importAccessUsers,
 	invalidateAccessSite,
 	removeAccessUser,
 	resetAccessUserTwoFactor,
 	revokeAccessUserApiToken,
+	revokeSessionVerificationToken,
 	setAccessUserTotpRequired,
 	updateAccessSettings,
 	updateAccessUser,
@@ -1236,6 +1238,52 @@ export function registerAdminRoutes(app: Web<any>): void {
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update access-list settings" }, 400);
 		}
+	});
+
+	app.post("/_burrowgate/api/admin/access-list/session-verification-token", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Create a site before generating a verification token" }, 400);
+		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (denied) return denied;
+		const result = await generateSessionVerificationToken(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "access_list.session_verification_token.generate",
+			resourceType: "site",
+			resourceId: selection.site.id,
+			summary: `Generated a session verification token for ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse(result, 201);
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/access-list/session-verification-token", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (denied) return denied;
+		await revokeSessionVerificationToken(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "access_list.session_verification_token.revoke",
+			resourceType: "site",
+			resourceId: selection.site.id,
+			summary: `Revoked the session verification token for ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ ok: true });
 	});
 
 	app.get("/_burrowgate/api/admin/access-list/sso", async (ctx) => {

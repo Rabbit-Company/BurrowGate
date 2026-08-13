@@ -98,6 +98,7 @@ export const config = {
 		maxBytesCeiling: envNumber("BG_BODY_CAPTURE_MAX_BYTES_CEILING", 1 * 1_024 * 1_024, 1_024, 16 * 1_024 * 1_024),
 	},
 	accessLoginMaxFailureKeys: envNumber("BG_ACCESS_LOGIN_MAX_FAILURE_KEYS", 50_000, 100, 1_000_000),
+	accessSessionAssertionTtlSeconds: envNumber("BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS", 300, 30, 900),
 	streams: {
 		connectTimeoutSeconds: envNumber("BG_STREAM_CONNECT_TIMEOUT_SECONDS", 15, 1, 300),
 		idleTimeoutSeconds: envNumber("BG_STREAM_IDLE_TIMEOUT_SECONDS", 300, 10, 86_400),

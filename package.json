@@ -1,6 +1,6 @@
 {
 	"name": "burrowgate",
-	"version": "1.12.0",
+	"version": "1.13.0",
 	"private": true,
 	"type": "module",
 	"description": "Self-hosted reverse proxy with route policies, GeoIP, rate limiting, managed WAF, browser challenges, TLS termination, and traffic monitoring.",
@@ -10,7 +10,9 @@
 		"test": "bun test",
 		"typecheck": "bunx tsc --noEmit",
 		"origin": "bun examples/origin.ts",
-		"build:map": "bun scripts/build-map-assets.ts"
+		"example:cross-site-auth": "bun --env-file=examples/cross-site-auth/.env examples/cross-site-auth/start.ts",
+		"build:map": "bun scripts/build-map-assets.ts",
+		"build:auth-sdk": "bunx tsc -p packages/burrowgate-auth/tsconfig.json"
 	},
 	"dependencies": {
 		"@rabbit-company/openmetrics-client": "2.0.1",

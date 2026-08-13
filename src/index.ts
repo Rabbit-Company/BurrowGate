@@ -120,6 +120,7 @@ app.use(
 	}),
 );
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
+app.use("/_burrowgate/api/access/session/introspect", rateLimit({ windowMs: 60_000, max: 600, headers: true }));
 app.onError((error) => {
 	Logger.error("Error", error);
 	return jsonResponse({ error: "BurrowGate internal error" }, 500);

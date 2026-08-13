@@ -1,0 +1,9 @@
+{
+	"name": "@rabbit-company/burrowgate-auth",
+	"version": "1.0.0",
+	"license": "MIT",
+	"exports": "./src/mod.ts",
+	"publish": {
+		"include": ["src", "README.md"]
+	}
+}

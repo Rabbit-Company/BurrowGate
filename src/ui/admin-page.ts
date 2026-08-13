@@ -485,6 +485,9 @@ export function adminPage(): string {
           <label class="check-row"><input id="accessSendUsername" type="checkbox"><span><strong>Send authenticated username to upstream</strong><small class="muted">Adds signed identity headers and browser-readable <code>bg_authenticated_user</code> / <code>bg_identity_signature</code> cookies. Passwords are never forwarded.</small></span></label>
           <p class="notice muted">Application <code>Authorization</code> headers remain available to the origin. Use HTTPS whenever user authentication is enabled.</p>
           <p class="notice muted">A user's API token authenticates automated requests directly, bypassing the sign-in form, password, and two-factor code. Send it as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+		  <div class="section-heading"><div><h3>Cross-site session verification</h3><p class="muted">Let a separate backend introspect short-lived session assertions with a server-only token.</p></div></div>
+		  <div class="row"><span id="accessVerificationTokenStatus" class="badge">No verification token</span><button id="generateAccessVerificationToken" class="button secondary compact" type="button">Generate token</button><button id="revokeAccessVerificationToken" class="button danger compact hidden" type="button">Revoke token</button></div>
+		  <p class="notice muted">The token is shown once. Store it only on the backend and configure the SDK with this frontend site's ID.</p>
         </div>
       </article>
       <article class="card">

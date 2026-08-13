@@ -123,6 +123,8 @@ Origin URL: http://10.0.0.20:8989
 
 Point `sonarr.example.com` to the VPS, open the site's TLS settings, and request a Let's Encrypt certificate.
 
+For a runnable two-site authentication demonstration with a protected frontend, separate API, session assertions, backend introspection, caching, and logout, see [`examples/cross-site-auth`](examples/cross-site-auth/README.md).
+
 ## Docker Deployment
 
 The default Compose configuration is production ready:
@@ -191,6 +193,7 @@ Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases)
 | `BG_HTTP_CACHE_MAX_OBJECT_BYTES`          | `33554432`                           | Instance ceiling for one cacheable response body                                           |
 | `BG_BODY_CAPTURE_MAX_BYTES_CEILING`       | `1048576`                            | Instance ceiling for one captured request or response body                                 |
 | `BG_ACCESS_LOGIN_MAX_FAILURE_KEYS`        | `50000`                              | Maximum access-login failure keys retained in memory                                       |
+| `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` | `300`                                | Lifetime of short-lived assertions used for cross-site session introspection               |
 | `BG_MAINTENANCE_INTERVAL_SECONDS`         | `3600`                               | Interval between GeoIP and certificate housekeeping runs                                   |
 | `BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS` | `60`                                 | Interval between short incremental retention-cleanup runs                                  |
 | `BG_MAINTENANCE_CLEANUP_BATCH_SIZE`       | `250`                                | Maximum rows removed by one cleanup write                                                  |

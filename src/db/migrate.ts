@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS site_access_settings (
   site_id VARCHAR(64) PRIMARY KEY,
   enabled INTEGER NOT NULL DEFAULT 0,
   send_username_to_upstream INTEGER NOT NULL DEFAULT 0,
+  session_verification_token_hash VARCHAR(64) NULL,
+  session_verification_token_created_at BIGINT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -773,6 +775,19 @@ async function ensureAccessUserColumns(): Promise<void> {
 	}
 }
 
+async function ensureAccessSettingsColumns(): Promise<void> {
+	for (const statement of [
+		"ALTER TABLE site_access_settings ADD COLUMN session_verification_token_hash VARCHAR(64) NULL",
+		"ALTER TABLE site_access_settings ADD COLUMN session_verification_token_created_at BIGINT NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureSsoSessionColumns(): Promise<void> {
 	const statements = ["ALTER TABLE admin_sessions ADD COLUMN sso_sid VARCHAR(255) NULL", "ALTER TABLE access_sessions ADD COLUMN sso_sid VARCHAR(255) NULL"];
 	for (const statement of statements) {
@@ -898,6 +913,7 @@ export async function migrate(): Promise<void> {
 	await ensureStreamColumns();
 	await ensureGeoIpColumns();
 	await ensureAccessUserColumns();
+	await ensureAccessSettingsColumns();
 	await ensureAccessSessionColumns();
 	await ensureAdminUserSsoColumns();
 	await ensureAccessUserSsoColumns();

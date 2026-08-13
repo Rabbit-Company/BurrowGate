@@ -18,7 +18,7 @@ For `GET` and `HEAD`, unauthenticated browsers are redirected through the challe
 
 ## Shared users
 
-Creating a user creates one global identity and assigns it to the selected site. The **Add users from another site** control links an existing identity to another site; it does not copy a password hash.
+Creating a user creates one global identity and assigns it to the selected site. The **Add users from another site** control links an existing identity to another site (it does not copy a password hash).
 
 - Password and enabled-state changes apply to every assigned site.
 - Password changes and disabling a user revoke that user's current authenticated sessions.
@@ -79,6 +79,47 @@ identity-cookie-v1\n
 ```
 
 The origin can obtain the session ID from `X-BurrowGate-Session-Id`. Frontend JavaScript cannot independently verify an HMAC because it does not have the origin signing secret, so it should treat the username as display data rather than an authorization decision. Server-side code must verify the signature before trusting the cookie.
+
+## Logout
+
+An authenticated application can end the current BurrowGate browser session with a same-origin request:
+
+```http
+POST /_burrowgate/access/logout
+Origin: https://app.example.com
+```
+
+The endpoint is idempotent. It revokes the current server-side session and expires both the HTTP-only session cookie and the browser-readable identity cookies. It returns `{ "ok": true }`. With OIDC, this ends the local BurrowGate session (it does not perform browser-based identity-provider logout).
+
+## Separate frontend and API sites
+
+BurrowGate sessions and cookies are scoped to one site. To authenticate a browser that signed in on `app.example.com` to a separate `api.example.com` backend:
+
+1. Enable the Access List on the frontend site.
+2. Generate a **Cross-site session verification** token from that frontend site's Access List settings. Store it only on the backend.
+3. The authenticated browser sends `POST /_burrowgate/access/session-token` to the frontend site. BurrowGate returns a short-lived signed assertion and the current user.
+4. The browser sends that assertion to the API in `X-BurrowGate-Session-Assertion`.
+5. The backend uses `@rabbit-company/burrowgate-auth` to introspect the assertion against `POST /_burrowgate/api/access/session/introspect` with the frontend site ID and server-only verification token.
+
+The assertion is not the HTTP-only browser session token and does not expose it. It is HMAC-signed, expires after `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` (five minutes by default), and is limited by the parent session's expiry. Each BurrowGate introspection checks the parent session, site membership, user enabled state, expiry, and revocation. The SDK caches successful results for five seconds by default, so logout and administrative revocation can take up to that configured cache TTL to reach a backend process.
+
+```ts
+import { BurrowGateClient } from "@rabbit-company/burrowgate-auth";
+
+const auth = new BurrowGateClient({
+	baseUrl: "https://app.example.com",
+	siteId: "site_frontend",
+	verificationToken: process.env.BURROWGATE_SESSION_VERIFICATION_TOKEN!,
+	cacheTtlMs: 5_000,
+});
+
+const session = await auth.authenticate(request);
+if (!session) return new Response("Unauthorized", { status: 401 });
+```
+
+The API site's own Access List should remain disabled for this browser flow because it has a different site-scoped cookie. Keep the API origin private, use BurrowGate's normal signed origin headers to prevent proxy bypass, and let the backend SDK authenticate the frontend site's assertion. Configure CORS to allow only the frontend origin and include `X-BurrowGate-Session-Assertion`.
+
+The SDK live in [`packages/burrowgate-auth`](../packages/burrowgate-auth/README.md).
 
 ## Two-factor authentication
 

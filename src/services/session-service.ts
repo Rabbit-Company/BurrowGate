@@ -86,6 +86,17 @@ export async function createAccessSession(
 	};
 }
 
+export function clearAccessSessionCookies(request: Request): string[] {
+	return visitorCookieNames.map((name) =>
+		serializeCookie(name, "", {
+			secure: name.startsWith("__Host-") || secureCookieForRequest(request),
+			httpOnly: true,
+			sameSite: "Lax",
+			maxAge: 0,
+		}),
+	);
+}
+
 export async function createAdminSession(
 	request: Request,
 	username: string,

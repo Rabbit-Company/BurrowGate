@@ -506,6 +506,10 @@ export const repository = {
 		const rows = (await db`SELECT * FROM access_sessions WHERE site_id=${siteId} AND token_hash=${hash} LIMIT 1`) as AccessSessionRecord[];
 		return rows[0] ?? null;
 	},
+	async sessionById(siteId: string, id: string): Promise<AccessSessionRecord | null> {
+		const rows = (await db`SELECT * FROM access_sessions WHERE site_id=${siteId} AND id=${id} LIMIT 1`) as AccessSessionRecord[];
+		return rows[0] ?? null;
+	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
 		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,access_user_id,authenticated_at,origin_id,sso_sid)
 		VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null},${session.sso_sid ?? null})`;
@@ -539,18 +543,20 @@ export const repository = {
 			site_id: siteId,
 			enabled: 0,
 			send_username_to_upstream: 0,
+			session_verification_token_hash: null,
+			session_verification_token_created_at: null,
 			created_at: now,
 			updated_at: now,
 		};
 		try {
-			await db`INSERT INTO site_access_settings (site_id,enabled,send_username_to_upstream,created_at,updated_at) VALUES (${siteId},0,0,${now},${now})`;
+			await db`INSERT INTO site_access_settings (site_id,enabled,send_username_to_upstream,session_verification_token_hash,session_verification_token_created_at,created_at,updated_at) VALUES (${siteId},0,0,${null},${null},${now},${now})`;
 		} catch {
 			return (await this.accessSettings(siteId)) ?? settings;
 		}
 		return settings;
 	},
 	async updateAccessSettings(settings: SiteAccessSettingsRecord): Promise<void> {
-		await db`UPDATE site_access_settings SET enabled=${settings.enabled},send_username_to_upstream=${settings.send_username_to_upstream},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+		await db`UPDATE site_access_settings SET enabled=${settings.enabled},send_username_to_upstream=${settings.send_username_to_upstream},session_verification_token_hash=${settings.session_verification_token_hash},session_verification_token_created_at=${settings.session_verification_token_created_at},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
 	},
 	async accessUsersForSite(siteId: string): Promise<Array<AccessUserRecord & { site_count: number | string }>> {
 		return (await db`SELECT u.*, (SELECT COUNT(*) FROM site_access_users memberships WHERE memberships.user_id=u.id) AS site_count

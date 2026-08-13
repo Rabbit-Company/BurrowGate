@@ -1,6 +1,6 @@
 import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, AccessUserRecord, SiteAccessSettingsRecord, SiteRecord } from "../types.ts";
-import { hmacSha256Hex, randomId, randomToken, sha256Hex } from "../utils/crypto.ts";
+import { fromBase64Url, hmacSha256Hex, randomId, randomToken, sha256Hex, timingSafeEqualText, toBase64Url } from "../utils/crypto.ts";
 import { config, secureCookieForRequest } from "../config.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { decryptSecret, encryptSecret } from "./secret-encryption-service.ts";
@@ -31,6 +31,8 @@ export interface AccessListView {
 	settings: {
 		enabled: boolean;
 		sendUsernameToUpstream: boolean;
+		sessionVerificationTokenEnabled: boolean;
+		sessionVerificationTokenCreatedAt: number | null;
 	};
 	users: AccessUserView[];
 	availableUsers: AccessUserView[];
@@ -175,7 +177,13 @@ export async function accessListView(siteId: string): Promise<AccessListView> {
 		webauthnCounts.set(user.id, (await repository.accessWebauthnCredentialsForUserAndSite(user.id, siteId)).length);
 	}
 	return {
-		settings: { enabled: settings.enabled === 1, sendUsernameToUpstream: settings.send_username_to_upstream === 1 },
+		settings: {
+			enabled: settings.enabled === 1,
+			sendUsernameToUpstream: settings.send_username_to_upstream === 1,
+			sessionVerificationTokenEnabled: settings.session_verification_token_hash !== null,
+			sessionVerificationTokenCreatedAt:
+				settings.session_verification_token_created_at !== null ? Number(settings.session_verification_token_created_at) : null,
+		},
 		users: users.map((user) => userView(user, siteIds.get(user.id), webauthnCounts.get(user.id))),
 		availableUsers: available.map((user) => userView(user, siteIds.get(user.id), webauthnCounts.get(user.id))),
 	};
@@ -331,6 +339,153 @@ export async function accessIdentityCookieValues(
 ): Promise<{ username: string; signature: string }> {
 	const canonical = ["identity-cookie-v1", site.id, session.id, username].join("\n");
 	return { username, signature: await hmacSha256Hex(site.origin_signing_secret, canonical) };
+}
+
+interface AccessSessionAssertionPayload {
+	v: 1;
+	siteId: string;
+	sessionId: string;
+	userId: string;
+	iat: number;
+	exp: number;
+}
+
+export interface ActiveAccessSessionIdentity {
+	active: true;
+	siteId: string;
+	sessionId: string;
+	user: { id: string; username: string };
+	authenticatedAt: number;
+	expiresAt: number;
+	assertionExpiresAt: number;
+}
+
+const ACCESS_SESSION_ASSERTION_PREFIX = "bgsa_";
+const assertionDecoder = new TextDecoder();
+
+function assertionCanonical(encodedPayload: string): string {
+	return `access-session-assertion-v1\n${encodedPayload}`;
+}
+
+export async function issueAccessSessionAssertion(
+	site: SiteRecord,
+	session: AccessSessionRecord,
+	user: AccessUserRecord,
+	now = Date.now(),
+): Promise<{ token: string; expiresAt: number; user: { id: string; username: string } }> {
+	if (session.site_id !== site.id || session.access_user_id !== user.id || session.revoked_at !== null || session.expires_at <= now || user.enabled !== 1) {
+		throw new Error("An active authenticated session is required");
+	}
+	const issuedAt = Math.floor(now / 1_000);
+	const expiresAt = Math.min(Number(session.expires_at), now + config.accessSessionAssertionTtlSeconds * 1_000);
+	const payload: AccessSessionAssertionPayload = {
+		v: 1,
+		siteId: site.id,
+		sessionId: session.id,
+		userId: user.id,
+		iat: issuedAt,
+		exp: Math.ceil(expiresAt / 1_000),
+	};
+	const encodedPayload = toBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
+	const signature = await hmacSha256Hex(site.origin_signing_secret, assertionCanonical(encodedPayload));
+	return { token: `${ACCESS_SESSION_ASSERTION_PREFIX}${encodedPayload}.${signature}`, expiresAt, user: { id: user.id, username: user.username } };
+}
+
+async function parseAccessSessionAssertion(site: SiteRecord, token: string, now = Date.now()): Promise<AccessSessionAssertionPayload | null> {
+	const trimmed = token.trim();
+	if (!trimmed.startsWith(ACCESS_SESSION_ASSERTION_PREFIX) || trimmed.length > 8_192) return null;
+	const [encodedPayload, suppliedSignature, ...extra] = trimmed.slice(ACCESS_SESSION_ASSERTION_PREFIX.length).split(".");
+	if (!encodedPayload || !suppliedSignature || extra.length > 0 || !/^[a-f0-9]{64}$/iu.test(suppliedSignature)) return null;
+	const expectedSignature = await hmacSha256Hex(site.origin_signing_secret, assertionCanonical(encodedPayload));
+	if (!(await timingSafeEqualText(expectedSignature, suppliedSignature.toLowerCase()))) return null;
+	try {
+		const payload = JSON.parse(assertionDecoder.decode(fromBase64Url(encodedPayload))) as Partial<AccessSessionAssertionPayload>;
+		if (
+			payload.v !== 1 ||
+			payload.siteId !== site.id ||
+			typeof payload.sessionId !== "string" ||
+			!payload.sessionId ||
+			typeof payload.userId !== "string" ||
+			!payload.userId ||
+			!Number.isInteger(payload.iat) ||
+			!Number.isInteger(payload.exp)
+		) {
+			return null;
+		}
+		const issuedAt = payload.iat;
+		const expiresAt = payload.exp;
+		if (typeof issuedAt !== "number" || typeof expiresAt !== "number") return null;
+		const nowSeconds = Math.floor(now / 1_000);
+		if (issuedAt > nowSeconds + 30 || expiresAt <= nowSeconds || expiresAt <= issuedAt) return null;
+		return payload as AccessSessionAssertionPayload;
+	} catch {
+		return null;
+	}
+}
+
+export async function introspectAccessSessionAssertion(siteId: string, token: string, now = Date.now()): Promise<ActiveAccessSessionIdentity | null> {
+	const site = await repository.siteById(siteId);
+	if (!site || site.enabled !== 1) return null;
+	const settings = await repository.ensureAccessSettings(site.id);
+	if (settings.enabled !== 1) return null;
+	const payload = await parseAccessSessionAssertion(site, token, now);
+	if (!payload) return null;
+	const session = await repository.sessionById(site.id, payload.sessionId);
+	if (
+		!session ||
+		session.revoked_at !== null ||
+		Number(session.expires_at) <= now ||
+		session.access_user_id !== payload.userId ||
+		session.authenticated_at === null
+	) {
+		return null;
+	}
+	const user = await repository.accessUserForSite(site.id, payload.userId);
+	if (!user || user.enabled !== 1) return null;
+	return {
+		active: true,
+		siteId: site.id,
+		sessionId: session.id,
+		user: { id: user.id, username: user.username },
+		authenticatedAt: Number(session.authenticated_at),
+		expiresAt: Number(session.expires_at),
+		assertionExpiresAt: payload.exp * 1_000,
+	};
+}
+
+export async function generateSessionVerificationToken(siteId: string): Promise<{ token: string; createdAt: number }> {
+	const existing = await repository.ensureAccessSettings(siteId);
+	const token = `bgsv_${randomToken(32)}`;
+	const createdAt = Date.now();
+	const updated: SiteAccessSettingsRecord = {
+		...existing,
+		session_verification_token_hash: await sha256Hex(token),
+		session_verification_token_created_at: createdAt,
+		updated_at: createdAt,
+	};
+	await repository.updateAccessSettings(updated);
+	settingsCache.set(siteId, { settings: updated, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+	return { token, createdAt };
+}
+
+export async function revokeSessionVerificationToken(siteId: string): Promise<void> {
+	const existing = await repository.ensureAccessSettings(siteId);
+	const updated: SiteAccessSettingsRecord = {
+		...existing,
+		session_verification_token_hash: null,
+		session_verification_token_created_at: null,
+		updated_at: Date.now(),
+	};
+	await repository.updateAccessSettings(updated);
+	settingsCache.set(siteId, { settings: updated, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS });
+}
+
+export async function verifySessionVerificationToken(siteId: string, token: string): Promise<boolean> {
+	const supplied = token.trim();
+	if (!supplied) return false;
+	const settings = await repository.accessSettings(siteId);
+	if (!settings?.session_verification_token_hash) return false;
+	return await timingSafeEqualText(await sha256Hex(supplied), settings.session_verification_token_hash);
 }
 
 export async function accessIdentitySetCookies(request: Request, site: SiteRecord, session: AccessSessionRecord, username: string): Promise<string[]> {

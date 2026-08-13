@@ -13,16 +13,19 @@ import {
 	completeAccessTotpEnrollment,
 	consumePendingAccessTwoFactor,
 	decryptAccessTotpSecret,
+	introspectAccessSessionAssertion,
+	issueAccessSessionAssertion,
 	pendingAccessTwoFactor,
 	recordAccessTwoFactorFailure,
 	setPendingAccessTotpSecret,
 	setPendingAccessWebauthnChallenge,
+	verifySessionVerificationToken,
 	type PendingAccessTwoFactorMode,
 } from "../services/access-list-service.ts";
 import { beginAccessSsoLogin, completeAccessSsoLogin, handleAccessBackchannelLogout, siteSsoLoginInfo } from "../services/access-sso-service.ts";
 import { createFlow } from "../services/challenge-service.ts";
 import { recordEvent } from "../services/event-service.ts";
-import { findAccessSession, userAgentHash } from "../services/session-service.ts";
+import { clearAccessSessionCookies, findAccessSession, userAgentHash } from "../services/session-service.ts";
 import { resolveSiteForHost } from "../services/site-service.ts";
 import { enrollmentUri, generateSecret, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
 import type { AccessSessionRecord, AccessUserRecord, SiteRecord } from "../types.ts";
@@ -87,6 +90,63 @@ async function issueAccessSession(
 }
 
 export function registerAccessRoutes(app: Web<any>): void {
+	app.post("/_burrowgate/access/logout", async (ctx) => {
+		const { site, ip } = await context(ctx);
+		if (!site) return jsonResponse({ error: "No BurrowGate site is configured for this host." }, 421);
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const session = await findAccessSession(ctx.req, site, ip);
+		const user = await authenticatedAccessUser(site.id, session);
+		if (session) await repository.revokeSessionForSite(session.id, site.id, Date.now());
+		if (session) {
+			await recordEvent({
+				siteId: site.id,
+				sessionId: session.id,
+				ip,
+				method: "POST",
+				path: "/_burrowgate/access/logout",
+				status: 200,
+				decision: "access-logout",
+				accessUsername: user?.username ?? null,
+				latencyMs: 0,
+			});
+		}
+		return appendSetCookies(jsonResponse({ ok: true }), [...clearAccessSessionCookies(ctx.req), ...clearAccessIdentityCookies(ctx.req)]);
+	});
+
+	app.post("/_burrowgate/access/session-token", async (ctx) => {
+		const { site, ip } = await context(ctx);
+		if (!site) return jsonResponse({ error: "No BurrowGate site is configured for this host." }, 421);
+		if (!sameOriginRequest(ctx.req)) return jsonResponse({ error: "Request validation failed" }, 403);
+		const settings = await accessSettingsForSite(site.id);
+		if (settings.enabled !== 1) return jsonResponse({ error: "Access authentication is not enabled for this site" }, 409);
+		const session = await findAccessSession(ctx.req, site, ip);
+		const user = await authenticatedAccessUser(site.id, session);
+		if (!session || !user) return jsonResponse({ error: "Authentication required" }, 401);
+		return jsonResponse(await issueAccessSessionAssertion(site, session, user));
+	});
+
+	app.post("/_burrowgate/api/access/session/introspect", async (ctx) => {
+		const siteId = (ctx.req.headers.get("x-burrowgate-site-id") ?? "").trim();
+		if (!siteId) return jsonResponse({ error: "X-BurrowGate-Site-Id is required" }, 400);
+		const authorization = ctx.req.headers.get("authorization") ?? "";
+		const verificationToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+		if (!(await verifySessionVerificationToken(siteId, verificationToken))) {
+			return jsonResponse({ error: "Invalid session verification credentials" }, 401, { "www-authenticate": "Bearer" });
+		}
+		const contentLength = Number(ctx.req.headers.get("content-length") ?? 0);
+		if (Number.isFinite(contentLength) && contentLength > 16_384) return jsonResponse({ error: "Request body is too large" }, 413);
+		let body: { token?: unknown };
+		try {
+			body = (await ctx.req.json()) as { token?: unknown };
+		} catch {
+			return jsonResponse({ error: "A JSON body is required" }, 400);
+		}
+		const assertion = String(body?.token ?? "").trim();
+		if (!assertion) return jsonResponse({ error: "token is required" }, 400);
+		const identity = await introspectAccessSessionAssertion(siteId, assertion);
+		return jsonResponse(identity ?? { active: false });
+	});
+
 	app.get("/_burrowgate/access/login", async (ctx) => {
 		const { site, ip, returnPath } = await context(ctx);
 		if (!site) return htmlResponse("No BurrowGate site is configured for this host.", 421);

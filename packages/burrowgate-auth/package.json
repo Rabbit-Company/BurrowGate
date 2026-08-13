@@ -1,0 +1,50 @@
+{
+	"name": "@rabbit-company/burrowgate-auth",
+	"version": "1.0.0",
+	"description": "Runtime-neutral BurrowGate session assertion and introspection client for Browsers, Bun, Deno, and Node.js.",
+	"type": "module",
+	"homepage": "https://github.com/Rabbit-Company/BurrowGate",
+	"funding": "https://rabbit-company.com/donation",
+	"author": "Rabbit Company <info@rabbit-company.com>",
+	"license": "MIT",
+	"sideEffects": false,
+	"main": "./dist/mod.js",
+	"types": "./dist/mod.d.ts",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Rabbit-Company/BurrowGate.git",
+		"directory": "packages/burrowgate-auth"
+	},
+	"contributors": [
+		"Rabbit Company <info@rabbit-company.com> (https://github.com/Rabbit-Company)"
+	],
+	"keywords": [
+		"burrowgate",
+		"authentication",
+		"sso",
+		"session",
+		"security"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/mod.d.ts",
+			"import": "./dist/mod.js",
+			"default": "./dist/mod.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"test": "bun test",
+		"prepublishOnly": "npm run build"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=18"
+	}
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>BurrowGate cross-site authentication demo</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				font-family: system-ui, sans-serif;
+				background: #101412;
+				color: #e8eee9;
+			}
+			body {
+				margin: 0;
+				padding: 3rem 1rem;
+			}
+			main {
+				width: min(860px, 100%);
+				margin: auto;
+			}
+			.card {
+				background: #18201b;
+				border: 1px solid #344039;
+				border-radius: 14px;
+				padding: 1.25rem;
+				margin: 1rem 0;
+			}
+			button {
+				border: 0;
+				border-radius: 8px;
+				padding: 0.7rem 1rem;
+				margin: 0.25rem;
+				cursor: pointer;
+				font-weight: 650;
+			}
+			button.primary {
+				background: #79d99a;
+				color: #102016;
+			}
+			button.danger {
+				background: #d96f79;
+				color: #250d10;
+			}
+			code,
+			pre {
+				font-family: ui-monospace, monospace;
+			}
+			pre {
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+				background: #0c100e;
+				padding: 1rem;
+				border-radius: 8px;
+				min-height: 8rem;
+			}
+			#status[data-kind="ok"] {
+				color: #8be5a9;
+			}
+			#status[data-kind="error"] {
+				color: #ff9ca5;
+			}
+			.muted {
+				color: #aab6ae;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Cross-site authentication demo</h1>
+			<p class="muted">
+				This frontend and API are separate BurrowGate sites. The browser transfers a short-lived assertion. The HTTP-only BurrowGate session is never exposed.
+			</p>
+			<section class="card">
+				<p><strong>Identity:</strong> <span id="identity">Not loaded</span></p>
+				<p id="status">Loading configuration...</p>
+				<button id="mint" class="primary">1. Mint session assertion</button>
+				<button id="call-api">2. Call protected API</button>
+				<button id="call-repeatedly">3. Call API three times</button>
+				<button id="logout" class="danger">4. Log out</button>
+				<button id="call-revoked">5. Test previous assertion</button>
+			</section>
+			<section class="card">
+				<h2>Latest result</h2>
+				<pre id="output">No request made yet.</pre>
+			</section>
+		</main>
+		<script type="module" src="/app.js"></script>
+	</body>
+</html>
