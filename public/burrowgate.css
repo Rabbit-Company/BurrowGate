@@ -297,6 +297,9 @@ body.modal-open {
 .modal-large {
 	max-width: 1320px;
 }
+.modal-xlarge {
+	max-width: 95vw;
+}
 .modal-header {
 	display: flex;
 	align-items: center;
@@ -450,6 +453,9 @@ form.grid label {
 }
 .table tbody tr:hover {
 	background: rgba(51, 65, 85, 0.22);
+}
+.table tbody tr.clickable-row {
+	cursor: pointer;
 }
 .table th {
 	color: #94a3b8;
@@ -1149,6 +1155,43 @@ form.grid label {
 }
 .compact-code-input {
 	min-height: 96px;
+}
+.event-detail-pre {
+	max-height: 320px;
+	overflow: auto;
+	margin: 0;
+	padding: 11px 12px;
+	border-radius: 10px;
+	border: 1px solid #374151;
+	background: #0b1220;
+	color: #e5e7eb;
+	font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+	font-size: 12px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.event-detail-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 22px 28px;
+	margin-bottom: 24px;
+}
+.event-detail-grid > div {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.event-detail-body {
+	margin-top: 16px;
+}
+.event-detail-body h3 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
 }
 .check-row {
 	display: flex !important;

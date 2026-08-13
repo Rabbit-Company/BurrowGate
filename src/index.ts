@@ -44,7 +44,8 @@ import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
-import { requestLimitViolation } from "./services/http-policy-service.ts";
+import { isBodyCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
+import { tapBodyForCapture, type CapturedBody } from "./services/body-capture-service.ts";
 import { staticAssetCache } from "./services/static-cache-service.ts";
 import {
 	inspectManagedRequest,
@@ -437,7 +438,15 @@ async function gateway(ctx: any): Promise<Response> {
 	const cacheStatus = cacheLookup.outcome === "disabled" ? null : cacheLookup.outcome;
 	if (cacheLookup.outcome === "hit" && cacheLookup.response) {
 		const cached = cacheLookup.response;
-		const cachedBody = meteredBody(cached.body, { siteId: site.id, ip, countryCode: eventBase.countryCode ?? null, protocol: "http" }, (bytes) => ({
+		const bodyCaptureActive = isBodyCaptureActive(route.http.bodyCapture);
+		const { body: tappedCachedBody, captured: capturedResponseBody } = tapBodyForCapture(
+			cached.body,
+			cached.headers.get("content-type"),
+			bodyCaptureActive ? route.http.bodyCapture.maxResponseBytes : 0,
+			cached.headers.get("content-encoding"),
+			route.http.bodyCapture.contentTypes,
+		);
+		const cachedBody = meteredBody(tappedCachedBody, { siteId: site.id, ip, countryCode: eventBase.countryCode ?? null, protocol: "http" }, (bytes) => ({
 			clientSentBytes: bytes,
 		}));
 		let response = new Response(cachedBody, { status: cached.status, statusText: cached.statusText, headers: cached.headers });
@@ -456,6 +465,12 @@ async function gateway(ctx: any): Promise<Response> {
 			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
 		});
+		if (bodyCaptureActive && route.http.bodyCapture.maxResponseBytes > 0) {
+			const requestId = eventBase.requestId;
+			capturedResponseBody
+				.then((captured) => captured && repository.updateEventResponseBody(requestId, captured.text, captured.truncated, captured.contentType))
+				.catch((error) => Logger.error("Failed to persist captured response body", { error }));
+		}
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	}
 	let selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip);
@@ -494,8 +509,13 @@ async function gateway(ctx: any): Promise<Response> {
 				route.http,
 			);
 		let response: Response;
+		let capturedRequestBody: CapturedBody | null = null;
+		let capturedResponseBody: Promise<CapturedBody | null> | null = null;
 		try {
-			response = await proxySelectedOrigin();
+			const proxied = await proxySelectedOrigin();
+			response = proxied.response;
+			capturedRequestBody = proxied.capturedRequestBody;
+			capturedResponseBody = proxied.capturedResponseBody;
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		} catch (firstError) {
 			if (firstError instanceof RequestBodyTooLargeError) throw firstError;
@@ -504,7 +524,10 @@ async function gateway(ctx: any): Promise<Response> {
 			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
 			if (!replacement) throw firstError;
 			selectedOrigin = replacement;
-			response = await proxySelectedOrigin();
+			const proxied = await proxySelectedOrigin();
+			response = proxied.response;
+			capturedRequestBody = proxied.capturedRequestBody;
+			capturedResponseBody = proxied.capturedResponseBody;
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 		}
 		response = staticAssetCache.observeResponse(request, response, cacheLookup, site, route.policy, route.http.cache, selectedOrigin.id);
@@ -522,7 +545,16 @@ async function gateway(ctx: any): Promise<Response> {
 			originId: selectedOrigin.id,
 			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
+			requestBody: capturedRequestBody?.text ?? null,
+			requestBodyTruncated: capturedRequestBody?.truncated ?? null,
+			requestContentType: capturedRequestBody?.contentType ?? null,
 		});
+		if (capturedResponseBody) {
+			const requestId = eventBase.requestId;
+			capturedResponseBody
+				.then((captured) => captured && repository.updateEventResponseBody(requestId, captured.text, captured.truncated, captured.contentType))
+				.catch((error) => Logger.error("Failed to persist captured response body", { error }));
+		}
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	} catch (error) {
 		if (error instanceof RequestBodyTooLargeError) {

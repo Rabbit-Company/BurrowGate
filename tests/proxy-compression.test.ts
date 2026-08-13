@@ -72,11 +72,12 @@ const headerPolicy: ResolvedHttpPolicy = {
 	cache: { mode: "disabled", ttlSeconds: 3_600, maxObjectBytes: 5_242_880, extensions: [".css"] },
 	protection: { mode: "disabled", rulesetId: "default", excludedRuleIds: [] },
 	banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
+	bodyCapture: { mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: ["*"] },
 };
 
 describe("reverse-proxy compression", () => {
 	test("preserves compressed bytes and representation headers", async () => {
-		const response = await proxyRequest(
+		const { response } = await proxyRequest(
 			new Request("http://proxy.test/", {
 				headers: { "accept-encoding": "gzip" },
 			}),
@@ -93,7 +94,7 @@ describe("reverse-proxy compression", () => {
 	});
 
 	test("does not leak the origin port into relative redirects", async () => {
-		const response = await proxyRequest(new Request("https://proxy.test/redirect-test"), site, "127.0.0.1", null);
+		const { response } = await proxyRequest(new Request("https://proxy.test/redirect-test"), site, "127.0.0.1", null);
 
 		expect(response.status).toBe(302);
 		expect(response.headers.get("location")).toBe("https://proxy.test/web/");
@@ -101,7 +102,7 @@ describe("reverse-proxy compression", () => {
 
 	test("preserves fixed-length request bodies without chunked framing", async () => {
 		const body = "username=admin&password=correct";
-		const response = await proxyRequest(
+		const { response } = await proxyRequest(
 			new Request("http://proxy.test/form-test", {
 				method: "POST",
 				headers: {
@@ -123,7 +124,7 @@ describe("reverse-proxy compression", () => {
 
 	test("derives the upstream length from the buffered request bytes", async () => {
 		const body = "action=pause&hashes=all";
-		const response = await proxyRequest(
+		const { response } = await proxyRequest(
 			new Request("http://proxy.test/form-test", {
 				method: "POST",
 				headers: {
@@ -144,7 +145,7 @@ describe("reverse-proxy compression", () => {
 	});
 
 	test("applies request and response header policies at the origin boundary", async () => {
-		const response = await proxyRequest(
+		const { response } = await proxyRequest(
 			new Request("http://proxy.test/header-policy", { headers: { "x-remove-me": "client" } }),
 			site,
 			"127.0.0.1",
@@ -213,7 +214,7 @@ describe("reverse-proxy compression", () => {
 			proxy = Bun.serve({
 				hostname: "127.0.0.1",
 				port: 0,
-				fetch: async (request) => await proxyRequest(request, rawSite, "127.0.0.1", null),
+				fetch: async (request) => (await proxyRequest(request, rawSite, "127.0.0.1", null)).response,
 			});
 			const response = await fetch(`http://127.0.0.1:${proxy.port}/form-test`, {
 				method: "POST",

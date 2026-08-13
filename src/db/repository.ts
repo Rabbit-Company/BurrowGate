@@ -875,7 +875,10 @@ export const repository = {
 		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,request_body,request_body_truncated,request_content_type,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.created_at})`;
+	},
+	async updateEventResponseBody(id: string, responseBody: string, truncated: boolean, contentType: string | null): Promise<void> {
+		await db`UPDATE request_events SET response_body=${responseBody}, response_body_truncated=${truncated ? 1 : 0}, response_content_type=${contentType} WHERE id=${id}`;
 	},
 	async addBandwidthDeltas(records: BandwidthMinuteRecord[]): Promise<void> {
 		if (records.length === 0) return;
@@ -936,12 +939,23 @@ export const repository = {
       WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
-      SELECT * FROM request_events
+      SELECT id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,
+        protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,
+        protection_matches_json,access_username,referer,referer_host,created_at,
+        (CASE WHEN request_body IS NOT NULL THEN 1 ELSE 0 END) AS has_request_body,
+        (CASE WHEN response_body IS NOT NULL THEN 1 ELSE 0 END) AS has_response_body
+      FROM request_events
       WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
-    `) as RequestEventRecord[];
+    `) as Array<RequestEventRecord & { has_request_body: number; has_response_body: number }>;
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async eventById(id: string, siteId?: string): Promise<RequestEventRecord | null> {
+		const rows = siteId
+			? ((await db`SELECT * FROM request_events WHERE id=${id} AND site_id=${siteId} LIMIT 1`) as RequestEventRecord[])
+			: ((await db`SELECT * FROM request_events WHERE id=${id} LIMIT 1`) as RequestEventRecord[]);
+		return rows[0] ?? null;
 	},
 	async trafficMetrics(
 		siteId: string | undefined,

@@ -358,6 +358,7 @@ export function adminPage(): string {
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="protection" aria-selected="false">Protection</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="http" aria-selected="false">HTTP</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="cache" aria-selected="false">Cache</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="bodyCapture" aria-selected="false">Body capture</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="rate" aria-selected="false">Rate limiting</button>
         </nav>
         <form id="routePolicyForm" class="site-form">
@@ -440,6 +441,16 @@ export function adminPage(): string {
               <label><span>TTL (seconds)</span><input id="routeHttpCacheTtl" class="input" type="number" min="1" max="604800" step="1" placeholder="Inherit site"><small class="muted">Origin max-age or s-maxage can shorten this value.</small></label>
               <label><span>Maximum object (bytes)</span><input id="routeHttpCacheMaxObject" class="input" type="number" min="1024" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site maximum.</small></label>
               <label><span>Cacheable extensions</span><textarea id="routeHttpCacheExtensions" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site extensions"></textarea><small class="muted">Comma or whitespace separated. Blank inherits.</small></label>
+            </div>
+          </section>
+          <section class="error-response-editor hidden" data-route-editor-panel="bodyCapture">
+            <div class="section-heading error-response-heading"><div><h3>Body capture</h3><p class="muted">Override body capture for requests matching this route. Only text-based content types are ever captured.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Body capture mode</span><select id="routeHttpBodyCaptureMode" class="select"><option value="inherit">Inherit site default</option><option value="enabled">Enable</option><option value="disabled">Disable</option></select><small class="muted">The route override applies only when this policy matches.</small></label>
+              <label><span>Maximum request body (bytes)</span><input id="routeHttpBodyCaptureMaxRequest" class="input" type="number" min="0" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site value. 0 disables request body capture.</small></label>
+              <label><span>Maximum response body (bytes)</span><input id="routeHttpBodyCaptureMaxResponse" class="input" type="number" min="0" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site value. 0 disables response body capture.</small></label>
+              <label><span>Expires at</span><input id="routeHttpBodyCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. Blank inherits the site expiration, if any.</small></label>
+              <label class="site-origin-field"><span>Content types to capture</span><textarea id="routeHttpBodyCaptureContentTypes" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site content types"></textarea><small class="muted">Comma or whitespace separated, e.g. <code>application/json</code>. Use <code>*</code> for any text-based type. Blank inherits.</small></label>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="rate">
@@ -593,6 +604,14 @@ export function adminPage(): string {
             </div>
 			<p class="notice muted">Historical metrics, runtime memory, and purge controls are available in the dedicated Cache tab.</p>
 			<button id="openCacheDashboard" class="button secondary" type="button">Open Cache dashboard</button>
+            <div class="section-heading error-response-heading"><div><h3>Body capture</h3><p class="muted">Store request and response bodies so they can be inspected from Recent traffic. Disabled by default, and only text-based content types are ever captured.</p></div></div>
+            <label class="check-row"><input id="siteHttpBodyCaptureEnabled" type="checkbox"><span><strong>Enable body capture</strong><small class="muted">Keep the size limits low. Set an expiration if you only need this temporarily.</small></span></label>
+            <div id="siteHttpBodyCaptureSettings" class="site-form-grid hidden">
+              <label><span>Maximum request body (bytes)</span><input id="siteHttpBodyCaptureMaxRequest" class="input" type="number" min="0" step="1" required><small class="muted">0 disables request body capture.</small></label>
+              <label><span>Maximum response body (bytes)</span><input id="siteHttpBodyCaptureMaxResponse" class="input" type="number" min="0" step="1" required><small class="muted">0 disables response body capture.</small></label>
+              <label><span>Expires at</span><input id="siteHttpBodyCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. New captures stop after this time; already-captured bodies are unaffected.</small></label>
+              <label class="site-origin-field"><span>Content types to capture</span><textarea id="siteHttpBodyCaptureContentTypes" class="input code-input compact-code-input" rows="4" spellcheck="false" required></textarea><small class="muted">Comma or whitespace separated, e.g. <code>application/json</code>. Use <code>*</code> for any text-based type.</small></label>
+            </div>
             <div class="section-heading error-response-heading"><div><h3>Header policies</h3><p class="muted">Change headers at the origin boundary. BurrowGate keeps routing, framing, forwarding, and signed identity headers under proxy control.</p></div></div>
             <div class="site-form-grid">
               <label><span>Set request headers</span><textarea id="siteHttpRequestHeadersSet" class="input code-input" rows="6" spellcheck="false" placeholder="X-Application: media"></textarea><small class="muted">One <code>Name: value</code> rule per line.</small></label>
@@ -812,6 +831,15 @@ export function adminPage(): string {
       <article class="card account-webauthn-card">
         <div class="pad"><h2>Security keys</h2><p class="muted">Register a hardware security key (e.g. a YubiKey) as an alternative to authenticator-app codes.</p><ul id="webauthnCredentialList" class="settings-list"></ul><button id="webauthnRegisterButton" class="button secondary" type="button">Register a security key</button></div>
       </article>
+    </div>
+  </div>
+</div>
+
+<div id="modal-event" class="modal-overlay hidden" data-modal="event">
+  <div class="modal modal-xlarge">
+    <div class="modal-header"><h2>Request detail</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <div id="eventDetailBody">Loading...</div>
     </div>
   </div>
 </div>

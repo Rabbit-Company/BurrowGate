@@ -829,6 +829,7 @@ async function ensureStreamEventColumns(): Promise<void> {
 }
 
 async function ensureRequestEventColumns(): Promise<void> {
+	const largeTextType = isMySql() ? "LONGTEXT" : "TEXT";
 	for (const statement of [
 		"ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL",
 		"ALTER TABLE request_events ADD COLUMN cache_status VARCHAR(16) NULL",
@@ -842,6 +843,12 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN access_username VARCHAR(255) NULL",
 		"ALTER TABLE request_events ADD COLUMN referer TEXT NULL",
 		"ALTER TABLE request_events ADD COLUMN referer_host VARCHAR(255) NULL",
+		`ALTER TABLE request_events ADD COLUMN request_body ${largeTextType} NULL`,
+		"ALTER TABLE request_events ADD COLUMN request_body_truncated INTEGER NULL",
+		"ALTER TABLE request_events ADD COLUMN request_content_type VARCHAR(255) NULL",
+		`ALTER TABLE request_events ADD COLUMN response_body ${largeTextType} NULL`,
+		"ALTER TABLE request_events ADD COLUMN response_body_truncated INTEGER NULL",
+		"ALTER TABLE request_events ADD COLUMN response_content_type VARCHAR(255) NULL",
 	]) {
 		try {
 			await db.unsafe(statement);

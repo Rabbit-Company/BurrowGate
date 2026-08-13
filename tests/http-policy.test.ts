@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import type { RoutePolicyRecord, SiteRecord } from "../src/types.ts";
 import {
 	applyHeaderPolicy,
+	isBodyCaptureActive,
 	requestLimitViolation,
 	resolveHttpPolicy,
 	routeHttpPolicyView,
 	serializeRouteHttpPolicy,
 	serializeSiteHttpPolicy,
 	siteHttpPolicyView,
+	instanceBodyCaptureDefaults,
 	instanceStaticCacheDefaults,
 } from "../src/services/http-policy-service.ts";
 
@@ -66,6 +68,7 @@ function route(httpPolicy?: string | null): RoutePolicyRecord {
 describe("HTTP header and request-limit policies", () => {
 	test("defaults sites to no header changes and unlimited requests", () => {
 		const { maxEntries: _maxEntries, maxBytes: _maxBytes, instanceMaxObjectBytes: _instanceMaxObjectBytes, ...cache } = instanceStaticCacheDefaults();
+		const { instanceMaxBytesCeiling: _instanceMaxBytesCeiling, ...bodyCapture } = instanceBodyCaptureDefaults();
 		expect(siteHttpPolicyView(site(null))).toEqual({
 			requestHeaders: { set: [], remove: [] },
 			responseHeaders: { set: [], remove: [] },
@@ -73,6 +76,7 @@ describe("HTTP header and request-limit policies", () => {
 			cache,
 			protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 			banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
+			bodyCapture,
 		});
 	});
 
@@ -164,5 +168,102 @@ describe("HTTP header and request-limit policies", () => {
 				maxHeaderBytes: 0,
 			})?.status,
 		).toBe(413);
+	});
+});
+
+describe("body capture policy", () => {
+	test("defaults to disabled with low byte caps and no expiration", () => {
+		const view = siteHttpPolicyView(site(null));
+		expect(view.bodyCapture.mode).toBe("disabled");
+		expect(view.bodyCapture.expiresAt).toBeNull();
+		expect(view.bodyCapture.maxRequestBytes).toBeGreaterThan(0);
+		expect(view.bodyCapture.maxResponseBytes).toBeGreaterThan(0);
+	});
+
+	test("lets a route enable capture and override sizes while inheriting others", () => {
+		const sitePolicy = serializeSiteHttpPolicy({
+			bodyCapture: { mode: "disabled", maxRequestBytes: 2_048, maxResponseBytes: 8_192, expiresAt: null },
+		});
+		const routePolicy = serializeRouteHttpPolicy({ bodyCapture: { mode: "enabled", maxRequestBytes: 512 } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.bodyCapture.mode).toBe("enabled");
+		expect(resolved.bodyCapture.maxRequestBytes).toBe(512);
+		expect(resolved.bodyCapture.maxResponseBytes).toBe(8_192);
+	});
+
+	test("clamps configured sizes to the instance-wide ceiling", () => {
+		const ceiling = instanceBodyCaptureDefaults().instanceMaxBytesCeiling;
+		const sitePolicy = serializeSiteHttpPolicy({
+			bodyCapture: { mode: "enabled", maxRequestBytes: ceiling, maxResponseBytes: ceiling, expiresAt: null },
+		});
+		const resolved = resolveHttpPolicy(site(sitePolicy));
+		expect(resolved.bodyCapture.maxRequestBytes).toBeLessThanOrEqual(ceiling);
+		expect(resolved.bodyCapture.maxResponseBytes).toBeLessThanOrEqual(ceiling);
+	});
+
+	test("route without an override inherits the site's expiration", () => {
+		const expiresAt = Date.now() + 3_600_000;
+		const sitePolicy = serializeSiteHttpPolicy({ bodyCapture: { mode: "enabled", expiresAt } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(serializeRouteHttpPolicy({})));
+		expect(resolved.bodyCapture.expiresAt).toBe(expiresAt);
+	});
+
+	test("rejects an invalid mode", () => {
+		expect(() => serializeSiteHttpPolicy({ bodyCapture: { mode: "sometimes" } })).toThrow("Body capture mode");
+		expect(() => serializeRouteHttpPolicy({ bodyCapture: { mode: "sometimes" } })).toThrow("Body capture mode");
+	});
+
+	test("defaults content types to a broad text-based list and lets an admin narrow it to just JSON", () => {
+		const view = siteHttpPolicyView(site(null));
+		expect(view.bodyCapture.contentTypes).toContain("application/json");
+		expect(view.bodyCapture.contentTypes).toContain("text/html");
+
+		const narrowed = serializeSiteHttpPolicy({ bodyCapture: { contentTypes: "application/json" } });
+		expect(siteHttpPolicyView(site(narrowed)).bodyCapture.contentTypes).toEqual(["application/json"]);
+	});
+
+	test("a route can narrow content types independently of the site while inheriting sizes", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ bodyCapture: { mode: "enabled", contentTypes: "application/json, text/plain" } });
+		const routePolicy = serializeRouteHttpPolicy({ bodyCapture: { contentTypes: "application/json" } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.bodyCapture.contentTypes).toEqual(["application/json"]);
+	});
+
+	test("a route without its own content types inherits the site's list", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ bodyCapture: { contentTypes: "application/json" } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(serializeRouteHttpPolicy({})));
+		expect(resolved.bodyCapture.contentTypes).toEqual(["application/json"]);
+	});
+
+	test("accepts the * wildcard for any text-based content type", () => {
+		const view = siteHttpPolicyView(site(serializeSiteHttpPolicy({ bodyCapture: { contentTypes: "*" } })));
+		expect(view.bodyCapture.contentTypes).toEqual(["*"]);
+	});
+
+	test("rejects binary or malformed content types", () => {
+		expect(() => serializeSiteHttpPolicy({ bodyCapture: { contentTypes: "image/png" } })).toThrow("text-based content types");
+		expect(() => serializeSiteHttpPolicy({ bodyCapture: { contentTypes: "not-a-content-type" } })).toThrow("text-based content types");
+	});
+});
+
+describe("isBodyCaptureActive", () => {
+	test("is false when disabled even without an expiration", () => {
+		expect(isBodyCaptureActive({ mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: [] })).toBe(false);
+	});
+
+	test("is true when enabled with no expiration", () => {
+		expect(isBodyCaptureActive({ mode: "enabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: [] })).toBe(true);
+	});
+
+	test("is true when enabled and the expiration is in the future", () => {
+		expect(isBodyCaptureActive({ mode: "enabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: Date.now() + 60_000, contentTypes: [] })).toBe(
+			true,
+		);
+	});
+
+	test("is false once the expiration has passed", () => {
+		expect(isBodyCaptureActive({ mode: "enabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: Date.now() - 1_000, contentTypes: [] })).toBe(
+			false,
+		);
 	});
 });

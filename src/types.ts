@@ -486,6 +486,12 @@ export interface RequestEventRecord {
 	access_username: string | null;
 	referer: string | null;
 	referer_host: string | null;
+	request_body: string | null;
+	request_body_truncated: number | null;
+	request_content_type: string | null;
+	response_body: string | null;
+	response_body_truncated: number | null;
+	response_content_type: string | null;
 	created_at: number;
 }
 

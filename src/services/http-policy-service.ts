@@ -1,4 +1,5 @@
 import { config } from "../config.ts";
+import { isTextContentType } from "./body-capture-service.ts";
 import type { RoutePolicyRecord, SiteRecord } from "../types.ts";
 
 export interface HeaderAssignment {
@@ -54,6 +55,25 @@ export interface ResolvedManagedProtectionPolicy {
 	excludedRuleIds: string[];
 }
 
+export type SiteBodyCaptureMode = "disabled" | "enabled";
+export type RouteBodyCaptureMode = "inherit" | SiteBodyCaptureMode;
+
+export interface SiteBodyCapturePolicy {
+	mode: SiteBodyCaptureMode;
+	maxRequestBytes: number;
+	maxResponseBytes: number;
+	expiresAt: number | null;
+	contentTypes: string[];
+}
+
+export interface RouteBodyCapturePolicy {
+	mode: RouteBodyCaptureMode;
+	maxRequestBytes: number | null;
+	maxResponseBytes: number | null;
+	contentTypes: string[] | null;
+	expiresAt: number | null;
+}
+
 export type BanDurationSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SiteBanDurationsPolicy {
@@ -92,6 +112,17 @@ export const DEFAULT_STATIC_CACHE_EXTENSIONS = [
 	".xml",
 ] as const;
 
+export const DEFAULT_BODY_CAPTURE_CONTENT_TYPES = [
+	"text/plain",
+	"text/html",
+	"text/css",
+	"text/javascript",
+	"application/javascript",
+	"application/json",
+	"application/xml",
+	"application/x-www-form-urlencoded",
+] as const;
+
 export interface SiteHttpPolicyView {
 	requestHeaders: HeaderMutationPolicy;
 	responseHeaders: HeaderMutationPolicy;
@@ -99,6 +130,7 @@ export interface SiteHttpPolicyView {
 	cache: SiteStaticCachePolicy;
 	protection: SiteManagedProtectionPolicy;
 	banDurations: SiteBanDurationsPolicy;
+	bodyCapture: SiteBodyCapturePolicy;
 }
 
 export interface RouteHttpPolicyView {
@@ -108,6 +140,7 @@ export interface RouteHttpPolicyView {
 	cache: RouteStaticCachePolicy;
 	protection: RouteManagedProtectionPolicy;
 	banDurations: RouteBanDurationsPolicy;
+	bodyCapture: RouteBodyCapturePolicy;
 }
 
 export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection"> {
@@ -134,6 +167,7 @@ const limitDefinitions = {
 	maxHeaderBytes: { label: "Maximum request headers", maximum: 1_048_576 },
 } as const;
 const staticCacheObjectCeiling = Math.min(config.httpCache.maxObjectBytes, config.httpCache.maxBytes);
+const bodyCaptureByteCeiling = config.bodyCapture.maxBytesCeiling;
 
 // These fields control connection framing, origin routing, or BurrowGate's
 // authenticated forwarding boundary. They must remain proxy-owned.
@@ -185,6 +219,13 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 	},
 	protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 	banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
+	bodyCapture: {
+		mode: "disabled",
+		maxRequestBytes: 4_096,
+		maxResponseBytes: 4_096,
+		expiresAt: null,
+		contentTypes: [...DEFAULT_BODY_CAPTURE_CONTENT_TYPES],
+	},
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
@@ -194,6 +235,7 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
 	protection: { mode: "inherit", excludedRuleIds: [] },
 	banDurations: { low: null, medium: null, high: null, critical: null },
+	bodyCapture: { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null },
 });
 
 function protectionMode(
@@ -316,6 +358,70 @@ function parseRouteCache(value: unknown): RouteStaticCachePolicy {
 	};
 }
 
+function bodyCaptureMode(value: unknown, route: boolean, fallback: SiteBodyCaptureMode | RouteBodyCaptureMode): SiteBodyCaptureMode | RouteBodyCaptureMode {
+	if (value === undefined) return fallback;
+	const mode = String(value).trim().toLowerCase();
+	if (mode === "enabled" || mode === "disabled" || (route && mode === "inherit")) return mode as SiteBodyCaptureMode | RouteBodyCaptureMode;
+	throw new Error(`Body capture mode must be ${route ? "inherit, enabled, or disabled" : "enabled or disabled"}`);
+}
+
+function bodyCaptureBytes(value: unknown, label: string, fallback: number | null, nullable: boolean): number | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	const result = value === undefined ? fallback : Number(value);
+	if (!Number.isSafeInteger(result) || Number(result) < 0 || Number(result) > bodyCaptureByteCeiling) {
+		throw new Error(`${label} must be an integer from 0 to ${bodyCaptureByteCeiling} bytes`);
+	}
+	return Number(result);
+}
+
+function bodyCaptureExpiresAt(value: unknown, fallback: number | null): number | null {
+	if (value === undefined) return fallback;
+	if (value === null || value === "") return null;
+	const result = Number(value);
+	if (!Number.isSafeInteger(result) || result < 0) throw new Error("Body capture expiration must be a valid timestamp");
+	return result;
+}
+
+const BODY_CAPTURE_CONTENT_TYPE_PATTERN = /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/u;
+
+function bodyCaptureContentTypes(value: unknown, nullable: boolean, fallback: readonly string[] | null): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/u);
+	const contentTypes = [...new Set(raw.map((item) => String(item).split(";")[0]!.trim().toLowerCase()).filter(Boolean))];
+	if (contentTypes.length > 32) throw new Error("Body capture content types supports at most 32 values");
+	for (const contentType of contentTypes) {
+		if (contentType === "*") continue;
+		if (contentType.length > 128 || !BODY_CAPTURE_CONTENT_TYPE_PATTERN.test(contentType) || !isTextContentType(contentType)) {
+			throw new Error(`Body capture only supports text-based content types: ${contentType}`);
+		}
+	}
+	return contentTypes;
+}
+
+function parseSiteBodyCapture(value: unknown): SiteBodyCapturePolicy {
+	const defaults = defaultSitePolicy().bodyCapture;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: bodyCaptureMode(input.mode, false, defaults.mode) as SiteBodyCaptureMode,
+		maxRequestBytes: bodyCaptureBytes(input.maxRequestBytes, "Site maximum request body", defaults.maxRequestBytes, false)!,
+		maxResponseBytes: bodyCaptureBytes(input.maxResponseBytes, "Site maximum response body", defaults.maxResponseBytes, false)!,
+		expiresAt: bodyCaptureExpiresAt(input.expiresAt, defaults.expiresAt),
+		contentTypes: bodyCaptureContentTypes(input.contentTypes, false, defaults.contentTypes)!,
+	};
+}
+
+function parseRouteBodyCapture(value: unknown): RouteBodyCapturePolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: bodyCaptureMode(input.mode, true, "inherit") as RouteBodyCaptureMode,
+		maxRequestBytes: bodyCaptureBytes(input.maxRequestBytes, "Route maximum request body", null, true),
+		maxResponseBytes: bodyCaptureBytes(input.maxResponseBytes, "Route maximum response body", null, true),
+		expiresAt: bodyCaptureExpiresAt(input.expiresAt, null),
+		contentTypes: bodyCaptureContentTypes(input.contentTypes, true, null),
+	};
+}
+
 function objectValue(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
 	return value as Record<string, unknown>;
@@ -400,6 +506,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 		cache: parseSiteCache(input.cache),
 		protection: parseSiteProtection(input.protection),
 		banDurations: parseSiteBanDurations(input.banDurations),
+		bodyCapture: parseSiteBodyCapture(input.bodyCapture),
 	};
 }
 
@@ -417,6 +524,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 		cache: parseRouteCache(input.cache),
 		protection: parseRouteProtection(input.protection),
 		banDurations: parseRouteBanDurations(input.banDurations),
+		bodyCapture: parseRouteBodyCapture(input.bodyCapture),
 	};
 }
 
@@ -445,6 +553,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Site static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Site managed protection policy");
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Site ban duration policy");
+	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Site body capture policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -453,6 +562,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
+			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 		}),
 	);
 }
@@ -466,6 +576,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Route static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Route managed protection policy");
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Route ban duration policy");
+	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Route body capture policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -474,6 +585,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
+			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 		}),
 	);
 }
@@ -528,7 +640,18 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			high: routePolicy.banDurations.high ?? sitePolicy.banDurations.high,
 			critical: routePolicy.banDurations.critical ?? sitePolicy.banDurations.critical,
 		},
+		bodyCapture: {
+			mode: routePolicy.bodyCapture.mode === "inherit" ? sitePolicy.bodyCapture.mode : routePolicy.bodyCapture.mode,
+			maxRequestBytes: Math.min(routePolicy.bodyCapture.maxRequestBytes ?? sitePolicy.bodyCapture.maxRequestBytes, bodyCaptureByteCeiling),
+			maxResponseBytes: Math.min(routePolicy.bodyCapture.maxResponseBytes ?? sitePolicy.bodyCapture.maxResponseBytes, bodyCaptureByteCeiling),
+			expiresAt: routePolicy.bodyCapture.expiresAt ?? sitePolicy.bodyCapture.expiresAt,
+			contentTypes: routePolicy.bodyCapture.contentTypes ?? sitePolicy.bodyCapture.contentTypes,
+		},
 	};
+}
+
+export function isBodyCaptureActive(policy: SiteBodyCapturePolicy): boolean {
+	return policy.mode === "enabled" && (policy.expiresAt === null || policy.expiresAt > Date.now());
 }
 
 export function applyHeaderPolicy(headers: Headers, policy: HeaderMutationPolicy): void {
@@ -567,5 +690,12 @@ export function instanceStaticCacheDefaults(): SiteStaticCachePolicy & { maxEntr
 		maxEntries: config.httpCache.maxEntries,
 		maxBytes: config.httpCache.maxBytes,
 		instanceMaxObjectBytes: staticCacheObjectCeiling,
+	};
+}
+
+export function instanceBodyCaptureDefaults(): SiteBodyCapturePolicy & { instanceMaxBytesCeiling: number } {
+	return {
+		...defaultSitePolicy().bodyCapture,
+		instanceMaxBytesCeiling: bodyCaptureByteCeiling,
 	};
 }

@@ -56,6 +56,9 @@ export async function recordEvent(input: {
 	accessUsername?: string | null;
 	referer?: string | null;
 	refererHost?: string | null;
+	requestBody?: string | null;
+	requestBodyTruncated?: boolean | null;
+	requestContentType?: string | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
@@ -84,6 +87,12 @@ export async function recordEvent(input: {
 			access_username: input.accessUsername ?? null,
 			referer: input.referer ?? null,
 			referer_host: input.refererHost ?? null,
+			request_body: input.requestBody ?? null,
+			request_body_truncated: input.requestBodyTruncated === undefined || input.requestBodyTruncated === null ? null : input.requestBodyTruncated ? 1 : 0,
+			request_content_type: input.requestContentType ?? null,
+			response_body: null,
+			response_body_truncated: null,
+			response_content_type: null,
 			created_at: Date.now(),
 		});
 	} catch (error) {

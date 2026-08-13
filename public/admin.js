@@ -216,6 +216,23 @@ let httpCacheDefaults = {
 	],
 	instanceMaxObjectBytes: 33554432,
 };
+let bodyCaptureDefaults = {
+	mode: "disabled",
+	maxRequestBytes: 4096,
+	maxResponseBytes: 4096,
+	expiresAt: null,
+	contentTypes: [
+		"text/plain",
+		"text/html",
+		"text/css",
+		"text/javascript",
+		"application/javascript",
+		"application/json",
+		"application/xml",
+		"application/x-www-form-urlencoded",
+	],
+	instanceMaxBytesCeiling: 1048576,
+};
 let managedProtection = { defaultRuleSetId: "burrowgate-core", items: [] };
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = null;
@@ -315,6 +332,19 @@ function parseCacheExtensions(id, nullable) {
 	return nullable ? null : [...httpCacheDefaults.extensions];
 }
 
+function parseBodyCaptureContentTypes(id, nullable) {
+	const contentTypes = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toLowerCase())
+				.filter(Boolean),
+		),
+	];
+	if (contentTypes.length > 0) return contentTypes;
+	return nullable ? null : [...bodyCaptureDefaults.contentTypes];
+}
+
 function parseRuleIds(id) {
 	return [
 		...new Set(
@@ -367,6 +397,13 @@ function readHttpPolicy(prefix, routeOverrides) {
 			high: routeOverrides ? optionalNumberInput(`${prefix}BanDurationHigh`) : Number(byId(`${prefix}BanDurationHigh`).value),
 			critical: routeOverrides ? optionalNumberInput(`${prefix}BanDurationCritical`) : Number(byId(`${prefix}BanDurationCritical`).value),
 		},
+		bodyCapture: {
+			mode: routeOverrides ? byId(`${prefix}BodyCaptureMode`).value : byId(`${prefix}BodyCaptureEnabled`).checked ? "enabled" : "disabled",
+			maxRequestBytes: routeOverrides ? optionalNumberInput(`${prefix}BodyCaptureMaxRequest`) : Number(byId(`${prefix}BodyCaptureMaxRequest`).value),
+			maxResponseBytes: routeOverrides ? optionalNumberInput(`${prefix}BodyCaptureMaxResponse`) : Number(byId(`${prefix}BodyCaptureMaxResponse`).value),
+			expiresAt: parseDateTimeLocal(`${prefix}BodyCaptureExpiresAt`),
+			contentTypes: parseBodyCaptureContentTypes(`${prefix}BodyCaptureContentTypes`, routeOverrides),
+		},
 	};
 }
 
@@ -406,7 +443,20 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 		const value = banDurations[key];
 		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? DEFAULT_BAN_DURATIONS[key]);
 	}
+	const bodyCapture =
+		http.bodyCapture ??
+		(routeOverrides ? { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null } : bodyCaptureDefaults);
+	if (routeOverrides) byId(`${prefix}BodyCaptureMode`).value = bodyCapture.mode ?? "inherit";
+	else byId(`${prefix}BodyCaptureEnabled`).checked = bodyCapture.mode === "enabled";
+	byId(`${prefix}BodyCaptureMaxRequest`).value =
+		routeOverrides && bodyCapture.maxRequestBytes == null ? "" : String(bodyCapture.maxRequestBytes ?? bodyCaptureDefaults.maxRequestBytes);
+	byId(`${prefix}BodyCaptureMaxResponse`).value =
+		routeOverrides && bodyCapture.maxResponseBytes == null ? "" : String(bodyCapture.maxResponseBytes ?? bodyCaptureDefaults.maxResponseBytes);
+	byId(`${prefix}BodyCaptureExpiresAt`).value = bodyCapture.expiresAt == null ? "" : toDateTimeLocal(bodyCapture.expiresAt);
+	byId(`${prefix}BodyCaptureContentTypes`).value =
+		routeOverrides && bodyCapture.contentTypes == null ? "" : (bodyCapture.contentTypes ?? bodyCaptureDefaults.contentTypes).join(", ");
 	if (!routeOverrides) updateSiteHttpCacheControls();
+	if (!routeOverrides) updateSiteHttpBodyCaptureControls();
 	if (!routeOverrides) updateSiteProtectionControls();
 }
 
@@ -479,6 +529,11 @@ function toDateTimeLocal(value) {
 	const date = new Date(Number(value));
 	const pad = (part) => String(part).padStart(2, "0");
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function parseDateTimeLocal(id) {
+	const value = byId(id).value.trim();
+	return value ? new Date(value).getTime() : null;
 }
 
 function rangeDurationLabel(durationMs) {
@@ -794,7 +849,7 @@ async function loadTraffic() {
 				? `<tr><td colspan="${trafficColumnCount()}" class="empty-cell">No traffic matches these filters.</td></tr>`
 				: result.items
 						.map(
-							(event) => `<tr>
+							(event) => `<tr class="clickable-row" data-event-id="${escapeHtml(event.id)}">
           <td>${formatDate(event.created_at)}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
           ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
@@ -814,6 +869,50 @@ async function loadTraffic() {
 	} catch (error) {
 		if (requestId !== trafficRequestId) return;
 		setTableError("events", trafficColumnCount(), error);
+	}
+}
+
+function bodySection(label, body, truncated, contentType) {
+	if (body === null || body === undefined) {
+		return `<div class="event-detail-body"><h3>${label}</h3><p class="muted">No ${label.toLowerCase()} was captured for this request. Body capture may be disabled, expired, or the content type isn't text-based.</p></div>`;
+	}
+	return `<div class="event-detail-body"><h3>${label}${truncated ? ' <span class="badge warn">truncated</span>' : ""}</h3>${
+		contentType ? `<p class="muted">${escapeHtml(contentType)}</p>` : ""
+	}<pre class="event-detail-pre">${escapeHtml(body)}</pre></div>`;
+}
+
+function renderEventDetail(event) {
+	const rows = [
+		["Time", escapeHtml(formatDate(event.created_at))],
+		["Method", escapeHtml(event.method)],
+		["Path", escapeHtml(event.path)],
+		["Status", String(event.status)],
+		["Decision", escapeHtml(event.decision)],
+		["IP", escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)],
+		["Session", event.session_id ? escapeHtml(event.session_id) : "-"],
+		["User", event.access_username ? escapeHtml(event.access_username) : "-"],
+		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
+		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-"],
+		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-"],
+		["Referrer", event.referer ? escapeHtml(event.referer) : "-"],
+		["Latency", escapeHtml(formatDuration(event.latency_ms))],
+	];
+	return `
+    <div class="event-detail-grid">${rows.map(([label, value]) => `<div><span class="muted">${label}</span><div>${value}</div></div>`).join("")}</div>
+    ${bodySection("Request body", event.request_body, event.request_body_truncated === 1, event.request_content_type)}
+    ${bodySection("Response body", event.response_body, event.response_body_truncated === 1, event.response_content_type)}
+  `;
+}
+
+async function openEventDetail(id) {
+	openModal("event");
+	const container = byId("eventDetailBody");
+	container.innerHTML = '<p class="muted"><span class="spinner"></span> Loading...</p>';
+	try {
+		const event = await api(`/events/${encodeURIComponent(id)}`, {}, false);
+		container.innerHTML = renderEventDetail(event);
+	} catch (error) {
+		container.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
 	}
 }
 
@@ -1392,6 +1491,10 @@ function updateSiteHttpCacheControls() {
 	byId("siteHttpCacheSettings").classList.toggle("hidden", !byId("siteHttpCacheEnabled").checked);
 }
 
+function updateSiteHttpBodyCaptureControls() {
+	byId("siteHttpBodyCaptureSettings").classList.toggle("hidden", !byId("siteHttpBodyCaptureEnabled").checked);
+}
+
 function updateSiteProtectionControls() {
 	const mode = byId("siteHttpProtectionMode").value;
 	const badge = byId("siteProtectionModeBadge");
@@ -1480,6 +1583,8 @@ function resetSiteForm() {
 	updateSiteWebSocketControls();
 	writeHttpPolicy("siteHttp", null, false);
 	byId("siteHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("siteHttpBodyCaptureMaxRequest").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
+	byId("siteHttpBodyCaptureMaxResponse").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
 	byId("originPoolRuntime").classList.add("hidden");
 	siteOrigins = [];
 	resetOriginForm();
@@ -1548,6 +1653,8 @@ function editSite(id) {
 	updateSiteWebSocketControls();
 	writeHttpPolicy("siteHttp", site.http, false);
 	byId("siteHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("siteHttpBodyCaptureMaxRequest").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
+	byId("siteHttpBodyCaptureMaxResponse").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
 	byId("originPoolRuntime").classList.remove("hidden");
 	resetOriginForm();
 	const health = site.healthCheck ?? {};
@@ -1608,6 +1715,7 @@ async function loadSites() {
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
 	httpCacheDefaults = response.httpCacheDefaults ?? httpCacheDefaults;
+	bodyCaptureDefaults = response.bodyCaptureDefaults ?? bodyCaptureDefaults;
 	managedProtection = response.managedProtection ?? managedProtection;
 	const protectionRulesetSelect = byId("siteHttpProtectionRuleset");
 	const selectedProtectionRuleset = protectionRulesetSelect.value;
@@ -1620,6 +1728,8 @@ async function loadSites() {
 	updateSiteProtectionControls();
 	applyWebSocketInputLimits();
 	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("routeHttpBodyCaptureMaxRequest").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
+	byId("routeHttpBodyCaptureMaxResponse").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
 	const firstErrorOptionsLoad = !errorResponseOptionsLoaded;
 	const previousErrorJsonFields = errorResponseOptionsLoaded ? selectedErrorJsonFields() : null;
 	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
@@ -1924,6 +2034,8 @@ function resetRoutePolicyForm() {
 	byId("routeWebSocketUpstreamBuffer").value = "";
 	writeHttpPolicy("routeHttp", null, true);
 	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("routeHttpBodyCaptureMaxRequest").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
+	byId("routeHttpBodyCaptureMaxResponse").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
 	byId("purgeRouteCache").classList.add("hidden");
 	byId("routeRateEnabled").checked = false;
 	byId("routeRateAlgorithm").value = "sliding-window";
@@ -1969,6 +2081,8 @@ function editRoutePolicy(id) {
 	byId("routeWebSocketUpstreamBuffer").value = websocket.upstreamBufferBytes ?? "";
 	writeHttpPolicy("routeHttp", policy.http, true);
 	byId("routeHttpCacheMaxObject").max = String(httpCacheDefaults.instanceMaxObjectBytes);
+	byId("routeHttpBodyCaptureMaxRequest").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
+	byId("routeHttpBodyCaptureMaxResponse").max = String(bodyCaptureDefaults.instanceMaxBytesCeiling);
 	byId("purgeRouteCache").classList.remove("hidden");
 	byId("routeRateEnabled").checked = Boolean(policy.rateLimit.enabled);
 	byId("routeRateAlgorithm").value = policy.rateLimit.algorithm;
@@ -3787,6 +3901,11 @@ async function purgeAuditLog() {
 }
 
 async function handleBodyClick(event) {
+	const eventRow = event.target.closest("tr[data-event-id]");
+	if (eventRow) {
+		await openEventDetail(eventRow.dataset.eventId);
+		return;
+	}
 	const userPermissionsButton = event.target.closest("button[data-user-permissions]");
 	if (userPermissionsButton) {
 		openUserPermissions(userPermissionsButton.dataset.userPermissions);
@@ -4286,6 +4405,7 @@ function bindActions() {
 		byId("siteName").focus();
 	});
 	byId("siteHttpCacheEnabled").addEventListener("change", updateSiteHttpCacheControls);
+	byId("siteHttpBodyCaptureEnabled").addEventListener("change", updateSiteHttpBodyCaptureControls);
 	byId("siteHttpProtectionMode").addEventListener("change", updateSiteProtectionControls);
 	byId("siteHttpProtectionRuleset").addEventListener("change", updateSiteProtectionControls);
 	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));

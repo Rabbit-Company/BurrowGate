@@ -94,6 +94,9 @@ export const config = {
 		maxBytes: envNumber("BG_HTTP_CACHE_MAX_BYTES", 256 * 1_024 * 1_024, 1 * 1_024 * 1_024, 16 * 1_024 * 1_024 * 1_024),
 		maxObjectBytes: envNumber("BG_HTTP_CACHE_MAX_OBJECT_BYTES", 32 * 1_024 * 1_024, 1_024, 1 * 1_024 * 1_024 * 1_024),
 	},
+	bodyCapture: {
+		maxBytesCeiling: envNumber("BG_BODY_CAPTURE_MAX_BYTES_CEILING", 1 * 1_024 * 1_024, 1_024, 16 * 1_024 * 1_024),
+	},
 	accessLoginMaxFailureKeys: envNumber("BG_ACCESS_LOGIN_MAX_FAILURE_KEYS", 50_000, 100, 1_000_000),
 	streams: {
 		connectTimeoutSeconds: envNumber("BG_STREAM_CONNECT_TIMEOUT_SECONDS", 15, 1, 300),

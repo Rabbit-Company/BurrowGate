@@ -8,7 +8,8 @@ import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { resolveRequestId, siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
-import { applyHeaderPolicy, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
+import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
+import { applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
@@ -166,12 +167,24 @@ interface UpstreamRequestBody {
 	body: RequestInit["body"];
 	bufferedBytes: number;
 	limitState: { exceeded: boolean };
+	capturedRequestBody: Promise<CapturedBody | null>;
 }
 
-async function upstreamRequestBody(request: Request, headers: Headers, bandwidth: BandwidthContext, maxBodyBytes: number): Promise<UpstreamRequestBody> {
+async function upstreamRequestBody(
+	request: Request,
+	headers: Headers,
+	bandwidth: BandwidthContext,
+	maxBodyBytes: number,
+	captureMaxBytes: number,
+	captureContentTypes: readonly string[],
+): Promise<UpstreamRequestBody> {
 	const limitState = { exceeded: false };
-	if (["GET", "HEAD"].includes(request.method) || !request.body) return { body: null, bufferedBytes: 0, limitState };
+	if (["GET", "HEAD"].includes(request.method) || !request.body) {
+		return { body: null, bufferedBytes: 0, limitState, capturedRequestBody: Promise.resolve(null) };
+	}
 
+	const contentType = request.headers.get("content-type");
+	const contentEncoding = request.headers.get("content-encoding");
 	const rawContentLength = request.headers.get("content-length");
 	const contentLength = rawContentLength === null ? null : Number(rawContentLength);
 	if (contentLength !== null && Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= FIXED_LENGTH_BODY_BUFFER_LIMIT) {
@@ -181,11 +194,16 @@ async function upstreamRequestBody(request: Request, headers: Headers, bandwidth
 			throw new RequestBodyTooLargeError(maxBodyBytes);
 		}
 		headers.set("content-length", String(body.byteLength));
-		return { body, bufferedBytes: body.byteLength, limitState };
+		return {
+			body,
+			bufferedBytes: body.byteLength,
+			limitState,
+			capturedRequestBody: Promise.resolve(captureBufferedBody(body, contentType, captureMaxBytes, contentEncoding, captureContentTypes)),
+		};
 	}
 
 	let receivedBytes = 0;
-	const body = request.body.pipeThrough(
+	const limited = request.body.pipeThrough(
 		new TransformStream<Uint8Array, Uint8Array>({
 			transform(chunk, controller) {
 				receivedBytes += chunk.byteLength;
@@ -200,10 +218,12 @@ async function upstreamRequestBody(request: Request, headers: Headers, bandwidth
 			},
 		}),
 	);
+	const { body, captured } = tapBodyForCapture(limited, contentType, captureMaxBytes, contentEncoding, captureContentTypes);
 	return {
 		body,
 		bufferedBytes: 0,
 		limitState,
+		capturedRequestBody: captured,
 	};
 }
 
@@ -218,12 +238,12 @@ export async function proxyRequest(
 	countryCode: string | null = null,
 	originUrl: string = site.origin_url,
 	httpPolicy: ResolvedHttpPolicy = resolveHttpPolicy(site),
-): Promise<Response> {
+): Promise<{ response: Response; capturedRequestBody: CapturedBody | null; capturedResponseBody: Promise<CapturedBody | null> | null }> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
 		// dispatch. This is only a defensive response if a custom listener calls
 		// the HTTP proxy directly.
-		return siteErrorResponse(
+		const response = siteErrorResponse(
 			site,
 			request,
 			{
@@ -235,6 +255,7 @@ export async function proxyRequest(
 			},
 			{ upgrade: "websocket" },
 		);
+		return { response, capturedRequestBody: null, capturedResponseBody: null };
 	}
 
 	const incoming = new URL(request.url);
@@ -243,7 +264,15 @@ export async function proxyRequest(
 	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
 	applyHeaderPolicy(headers, httpPolicy.requestHeaders);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
-	const requestBody = await upstreamRequestBody(request, headers, bandwidth, httpPolicy.limits.maxBodyBytes);
+	const bodyCaptureActive = isBodyCaptureActive(httpPolicy.bodyCapture);
+	const requestBody = await upstreamRequestBody(
+		request,
+		headers,
+		bandwidth,
+		httpPolicy.limits.maxBodyBytes,
+		bodyCaptureActive ? httpPolicy.bodyCapture.maxRequestBytes : 0,
+		httpPolicy.bodyCapture.contentTypes,
+	);
 
 	let response: Response;
 	try {
@@ -272,15 +301,26 @@ export async function proxyRequest(
 		});
 	}
 
-	const responseBody = meteredBody(response.body, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
+	const { body: tappedBody, captured: capturedResponseBody } = tapBodyForCapture(
+		response.body,
+		response.headers.get("content-type"),
+		bodyCaptureActive ? httpPolicy.bodyCapture.maxResponseBytes : 0,
+		response.headers.get("content-encoding"),
+		httpPolicy.bodyCapture.contentTypes,
+	);
+	const responseBody = meteredBody(tappedBody, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
-	return rememberOriginResponse(
-		new Response(responseBody, {
-			status: response.status,
-			statusText: response.statusText,
-			headers: responseHeaders,
-		}),
-		response,
-	);
+	return {
+		response: rememberOriginResponse(
+			new Response(responseBody, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: responseHeaders,
+			}),
+			response,
+		),
+		capturedRequestBody: await requestBody.capturedRequestBody,
+		capturedResponseBody: bodyCaptureActive && httpPolicy.bodyCapture.maxResponseBytes > 0 ? capturedResponseBody : null,
+	};
 }

@@ -79,7 +79,7 @@ import { loadBalancer } from "../services/load-balancer-service.ts";
 import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
 import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
 import { staticAssetCache } from "../services/static-cache-service.ts";
-import { instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
+import { instanceBodyCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
 import {
 	isAdministrator,
@@ -614,6 +614,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			defaultEventRetentionDays: config.eventRetentionDays,
 			websocketDefaults: instanceWebSocketDefaults(),
 			httpCacheDefaults: instanceStaticCacheDefaults(),
+			bodyCaptureDefaults: instanceBodyCaptureDefaults(),
 			managedProtection: managedRuleSetCatalog(),
 			errorResponseDefaults: {
 				mode: "json",
@@ -2040,6 +2041,21 @@ export function registerAdminRoutes(app: Web<any>): void {
 				origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null,
 			})),
 			origins: origins.map((origin) => ({ id: origin.id, name: origin.name })),
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/events/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const event = await repository.eventById(ctx.params.id);
+		if (!event) return jsonResponse({ error: "Event not found" }, 404);
+		if ((await siteAccessLevel(user, event.site_id)) === "none") return jsonResponse({ error: "Forbidden" }, 403);
+		const origin = event.origin_id ? await repository.originById(event.origin_id, event.site_id) : null;
+		return jsonResponse({
+			...event,
+			protection_matches: protectionMatches(event.protection_matches_json),
+			origin_name: origin?.name ?? null,
 		});
 	});
 
