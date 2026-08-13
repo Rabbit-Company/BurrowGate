@@ -129,3 +129,13 @@ purge controls are available in the dashboard's **Cache** tab. Recent Traffic
 stores and filters cache status separately from its access decision: `hit`, `miss`,
 or `bypass` is shown without replacing verified, authenticated, allowlisted, or
 unprotected request classification.
+
+## Body capture overrides
+
+The site HTTP policy defines the default body-capture mode, maximum request/response
+sizes, allowed content types, and expiration. A route can inherit, enable, or disable
+capture and independently override every other value. A blank route value inherits
+the site value; `0` for a size explicitly disables capture for that direction.
+
+See [`BODY_CAPTURE.md`](BODY_CAPTURE.md) for size limits, content-type filtering,
+expiration, compressed-body handling, and the Recent Traffic detail view.
