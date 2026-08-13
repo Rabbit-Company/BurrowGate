@@ -390,10 +390,7 @@ export class BurrowGateClient {
  * @param fetchImplementation Optional runtime fetch implementation.
  * @throws {@link BurrowGateError} when the session is unauthenticated or the response is invalid.
  */
-export async function createBrowserSessionAssertion(
-	baseUrl?: string | URL,
-	fetchImplementation?: FetchLike,
-): Promise<BrowserSessionAssertion> {
+export async function createBrowserSessionAssertion(baseUrl?: string | URL, fetchImplementation?: FetchLike): Promise<BrowserSessionAssertion> {
 	const browserOrigin = (globalThis as typeof globalThis & { location?: { origin?: string } }).location?.origin;
 	const resolvedBaseUrl = baseUrl ?? browserOrigin;
 	if (!resolvedBaseUrl) throw new TypeError("baseUrl is required outside a browser");

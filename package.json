@@ -10,7 +10,7 @@
 		"test": "bun test",
 		"typecheck": "bunx tsc --noEmit",
 		"origin": "bun examples/origin.ts",
-		"example:cross-site-auth": "bun --env-file=examples/cross-site-auth/.env examples/cross-site-auth/start.ts",
+		"example:cross-site-auth": "bun run build:auth-sdk && bun --env-file=examples/cross-site-auth/.env examples/cross-site-auth/start.ts",
 		"build:map": "bun scripts/build-map-assets.ts",
 		"build:auth-sdk": "bunx tsc -p packages/burrowgate-auth/tsconfig.json"
 	},

@@ -103,6 +103,8 @@ BurrowGate sessions and cookies are scoped to one site. To authenticate a browse
 
 The assertion is not the HTTP-only browser session token and does not expose it. It is HMAC-signed, expires after `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` (five minutes by default), and is limited by the parent session's expiry. Each BurrowGate introspection checks the parent session, site membership, user enabled state, expiry, and revocation. The SDK caches successful results for five seconds by default, so logout and administrative revocation can take up to that configured cache TTL to reach a backend process.
 
+Browser applications can keep one `BrowserSessionAssertionClient` instance globally and configure `apiBaseUrl` once. Its `fetch()` method adds the assertion automatically, while `logout()` revokes the session, stops refresh, and clears local state. The client stores the assertion only in memory, refreshes 30 seconds before expiry by default, and deduplicates concurrent refreshes. The five-minute browser assertion lifetime and five-second backend introspection cache are independent settings.
+
 ```ts
 import { BurrowGateClient } from "@rabbit-company/burrowgate-auth";
 

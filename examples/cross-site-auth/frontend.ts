@@ -3,6 +3,7 @@ import { demoConfig } from "./config.ts";
 const directory = import.meta.dir;
 const index = Bun.file(`${directory}/public/index.html`);
 const application = Bun.file(`${directory}/public/app.js`);
+const authSdk = Bun.file(`${directory}/../../packages/burrowgate-auth/dist/mod.js`);
 
 export const frontendServer = Bun.serve({
 	port: demoConfig.frontendPort,
@@ -13,6 +14,9 @@ export const frontendServer = Bun.serve({
 		}
 		if (request.method === "GET" && url.pathname === "/app.js") {
 			return new Response(application, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
+		}
+		if (request.method === "GET" && url.pathname === "/burrowgate-auth.js") {
+			return new Response(authSdk, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
 		}
 		if (request.method === "GET" && url.pathname === "/demo-config") {
 			return Response.json(

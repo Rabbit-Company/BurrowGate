@@ -147,7 +147,7 @@ describe("browser session assertions", () => {
 	test("binds the browser's global fetch to its required receiver", async () => {
 		const originalFetch = globalThis.fetch;
 		let requests = 0;
-		globalThis.fetch = (async function (this: unknown, input: string | URL | Request) {
+		globalThis.fetch = async function (this: unknown, input: string | URL | Request) {
 			if (this !== globalThis) throw new TypeError("Illegal invocation");
 			requests += 1;
 			const url = new URL(input instanceof Request ? input.url : input);
@@ -159,7 +159,7 @@ describe("browser session assertions", () => {
 				});
 			}
 			return Response.json({ ok: true });
-		}) as typeof fetch;
+		} as typeof fetch;
 
 		try {
 			const client = new BrowserSessionAssertionClient({

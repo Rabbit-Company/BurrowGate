@@ -71,10 +71,10 @@ DEMO_ALLOWED_FRONTEND_ORIGINS=http://localhost:4200,https://another-app.example.
 
 Origins must match exactly, including scheme and port. Do not use a wildcard for this authenticated workflow.
 
-Start both origins from the repository root:
+Build the browser SDK and start both origins from the repository root:
 
 ```sh
-bun --env-file=examples/cross-site-auth/.env examples/cross-site-auth/start.ts
+bun run example:cross-site-auth
 ```
 
 Open `https://app.example.test`—never open port 3100 directly for the workflow test. BurrowGate will request login, 2FA, or SSO before serving the frontend.
@@ -83,10 +83,10 @@ Open `https://app.example.test`—never open port 3100 directly for the workflow
 
 Use the buttons in order:
 
-1. **Mint session assertion** calls the same-origin `POST /_burrowgate/access/session-token` endpoint.
-2. **Call protected API** sends the assertion to `https://api.example.test/api/me`.
+1. **Refresh session assertion** forces the global `BrowserSessionAssertionClient` to mint a new assertion. The client also initializes automatically and refreshes in the background before expiry.
+2. **Call protected API** uses the SDK's authenticated `fetch()` method. It immediately reuses the in-memory assertion and adds the required header automatically.
 3. **Call API three times** demonstrates the backend cache. The three results should show at most one additional BurrowGate introspection within the configured cache TTL.
-4. **Log out** calls `POST /_burrowgate/access/logout` and revokes the frontend session.
+4. **Log out** calls the SDK's `logout()` method, which revokes the frontend session, stops background refresh, and clears the in-memory assertion.
 5. **Test previous assertion** deliberately resends the old assertion. It can succeed during the short backend cache window and must return `401` after that window.
 
 Because successful introspections are cached for five seconds by default, an assertion may remain accepted by that backend process until the cache entry expires. After that delay, a call using the old assertion returns `401`. Reloading the frontend starts the BurrowGate login flow again.
@@ -101,7 +101,7 @@ Backend ── server-only token ───────> BurrowGate introspection
 Backend <── active user/session ───── BurrowGate
 ```
 
-The browser never receives the HTTP-only BurrowGate session cookie value or the server-only session verification token.
+The browser never receives the HTTP-only BurrowGate session cookie value or the server-only session verification token. The short-lived assertion is held only in memory and is not persisted in browser storage.
 
 ## CORS troubleshooting
 
