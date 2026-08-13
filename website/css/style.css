@@ -774,6 +774,80 @@ pre {
 	font-size: 14.5px;
 }
 
+/* cross-site authentication flow */
+
+.auth-flow-figure {
+	margin: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: #070a0f;
+	overflow: hidden;
+	box-shadow: var(--shadow-md);
+}
+.auth-flow-figure a,
+.auth-flow-figure img {
+	display: block;
+}
+.auth-flow-figure img {
+	width: 100%;
+	height: auto;
+}
+.auth-flow-figure figcaption {
+	padding: 13px 20px;
+	border-top: 1px solid var(--border-soft);
+	color: var(--muted-2);
+	font-size: 13px;
+	text-align: center;
+}
+.auth-flow-summary {
+	margin-top: 24px;
+}
+.auth-flow-summary .card {
+	position: relative;
+}
+.auth-flow-summary h3 {
+	font-size: 17px;
+	margin: 18px 0 8px;
+}
+.auth-flow-summary p,
+.auth-flow-notes p {
+	color: var(--muted);
+	font-size: 14.5px;
+	margin: 0;
+}
+.auth-flow-number {
+	display: grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 11px;
+	background: var(--gradient);
+	color: #0b1020;
+	font-size: 15px;
+	font-weight: 800;
+}
+.auth-flow-notes {
+	margin-top: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 32px;
+}
+.auth-flow-notes > div:first-child {
+	max-width: 700px;
+}
+.auth-flow-notes h3 {
+	font-size: 18px;
+	margin-bottom: 8px;
+}
+
+@media (max-width: 800px) {
+	.auth-flow-notes {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+}
+
 /* screenshots gallery */
 
 .shot-card {

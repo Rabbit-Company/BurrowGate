@@ -2,6 +2,14 @@
 
 Runtime-neutral TypeScript client for verifying BurrowGate browser sessions from a separate backend site. It uses standard `fetch`, `Request`, and `AbortController` APIs and supports Bun, Deno, and Node.js.
 
+## How verification works
+
+![BurrowGate cross-site authentication flow](https://cdn.rabbit-company.com/burrowgate/burrowgate-auth-flow.svg)
+
+BurrowGate authenticates the frontend with its Access List, password plus 2FA, or OIDC SSO. The browser client obtains a short-lived signed assertion and adds it to API calls automatically. The backend client then introspects that assertion with BurrowGate using a server-only verification token before trusting the user identity.
+
+See the [complete cross-site authentication guide](https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/CROSS_SITE_AUTH.md) for setup, trust boundaries, CORS, caching, and logout behavior.
+
 ## Backend
 
 Generate a session verification token from the frontend site's **Access List** settings. Keep it server-side.

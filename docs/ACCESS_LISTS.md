@@ -95,6 +95,8 @@ The endpoint is idempotent. It revokes the current server-side session and expir
 
 BurrowGate sessions and cookies are scoped to one site. To authenticate a browser that signed in on `app.example.com` to a separate `api.example.com` backend:
 
+![BurrowGate cross-site authentication flow](https://cdn.rabbit-company.com/burrowgate/burrowgate-auth-flow.svg)
+
 1. Enable the Access List on the frontend site.
 2. Generate a **Cross-site session verification** token from that frontend site's Access List settings. Store it only on the backend.
 3. The authenticated browser sends `POST /_burrowgate/access/session-token` to the frontend site. BurrowGate returns a short-lived signed assertion and the current user.
@@ -121,7 +123,7 @@ if (!session) return new Response("Unauthorized", { status: 401 });
 
 The API site's own Access List should remain disabled for this browser flow because it has a different site-scoped cookie. Keep the API origin private, use BurrowGate's normal signed origin headers to prevent proxy bypass, and let the backend SDK authenticate the frontend site's assertion. Configure CORS to allow only the frontend origin and include `X-BurrowGate-Session-Assertion`.
 
-The SDK live in [`packages/burrowgate-auth`](../packages/burrowgate-auth/README.md).
+The complete request flow, security boundaries, setup, CORS requirements, caching behavior, and SDK examples are documented in [CROSS_SITE_AUTH.md](CROSS_SITE_AUTH.md). The SDK lives in [`packages/burrowgate-auth`](../packages/burrowgate-auth/README.md) and is published on [NPM](https://www.npmjs.com/package/@rabbit-company/burrowgate-auth) and [JSR](https://jsr.io/@rabbit-company/burrowgate-auth).
 
 ## Two-factor authentication
 

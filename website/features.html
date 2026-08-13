@@ -265,6 +265,74 @@
 				</div>
 			</section>
 
+			<section class="section section-border-top" id="cross-site-auth">
+				<div class="shell">
+					<div class="section-head center">
+						<div class="eyebrow center">Cross-site authentication</div>
+						<h2>One login for a separate frontend and API</h2>
+						<p>
+							Let BurrowGate handle passwords, TOTP/WebAuthn 2FA, and OIDC SSO while your frontend and backend consume a verified identity through a
+							framework-neutral SDK.
+						</p>
+					</div>
+
+					<figure class="auth-flow-figure">
+						<a
+							href="https://cdn.rabbit-company.com/burrowgate/burrowgate-auth-flow.svg"
+							target="_blank"
+							rel="noopener"
+							aria-label="Open the full-size BurrowGate authentication flow diagram"
+						>
+							<img
+								src="https://cdn.rabbit-company.com/burrowgate/burrowgate-auth-flow.svg"
+								width="1600"
+								height="1000"
+								loading="lazy"
+								alt="Sequence diagram of a browser authenticating through BurrowGate, receiving a short-lived assertion, calling a separate backend, and the backend verifying the session with BurrowGate"
+							/>
+						</a>
+						<figcaption>BurrowGate remains the source of truth. Neither application receives the HTTP-only browser session secret.</figcaption>
+					</figure>
+
+					<div class="grid grid-3 auth-flow-summary">
+						<div class="card pad-lg">
+							<span class="auth-flow-number">1</span>
+							<h3>Authenticate at the gateway</h3>
+							<p>The browser signs in on the frontend site. BurrowGate applies its Access List, 2FA, and SSO policies before proxying the application.</p>
+						</div>
+						<div class="card pad-lg">
+							<span class="auth-flow-number">2</span>
+							<h3>Call the API normally</h3>
+							<p>
+								The browser SDK keeps a signed, short-lived assertion in memory. <code>auth.fetch()</code> refreshes it and adds the required header
+								automatically.
+							</p>
+						</div>
+						<div class="card pad-lg">
+							<span class="auth-flow-number">3</span>
+							<h3>Verify on the backend</h3>
+							<p>The backend SDK asks BurrowGate to validate the assertion and parent session, then exposes the verified user to application code.</p>
+						</div>
+					</div>
+
+					<div class="auth-flow-notes card pad-lg">
+						<div>
+							<h3>Secure by design</h3>
+							<p>
+								The browser sees only an in-memory assertion. The site ID and verification token stay on the backend, cross-origin destinations are restricted,
+								and logout revokes the BurrowGate session and clears local state.
+							</p>
+						</div>
+						<div class="row wrap">
+							<a class="button gradient" href="https://www.npmjs.com/package/@rabbit-company/burrowgate-auth" target="_blank" rel="noopener">View SDK on NPM</a>
+							<a class="button secondary" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/CROSS_SITE_AUTH.md" target="_blank" rel="noopener"
+								>Read the integration guide</a
+							>
+						</div>
+					</div>
+				</div>
+			</section>
+
 			<section class="section section-border-top">
 				<div class="shell">
 					<div class="section-head center">

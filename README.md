@@ -386,7 +386,7 @@ Each protected site can require a BurrowGate user login after the browser challe
 
 Proxy authentication uses the existing HTTP-only BurrowGate session, so an application's `Authorization: Basic` or `Authorization: Bearer` header remains available to the origin. An optional setting sends the authenticated username in client-spoof-resistant, HMAC-signed identity headers and browser-readable signed cookies; passwords are never forwarded.
 
-See [`docs/ACCESS_LISTS.md`](docs/ACCESS_LISTS.md) and [`docs/TWO_FACTOR_AUTH.md`](docs/TWO_FACTOR_AUTH.md).
+See [`docs/ACCESS_LISTS.md`](docs/ACCESS_LISTS.md), [`docs/TWO_FACTOR_AUTH.md`](docs/TWO_FACTOR_AUTH.md), and the separate frontend/API flow in [`docs/CROSS_SITE_AUTH.md`](docs/CROSS_SITE_AUTH.md).
 
 ## Challenge Providers
 
