@@ -390,6 +390,7 @@ CREATE TABLE IF NOT EXISTS streams (
   forward_port INTEGER NOT NULL,
   tcp_enabled INTEGER NOT NULL DEFAULT 1,
   udp_enabled INTEGER NOT NULL DEFAULT 0,
+  proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled',
   certificate_id VARCHAR(64) NULL,
   event_retention_days INTEGER NOT NULL DEFAULT 7,
   default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
@@ -719,6 +720,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100",
 		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
+		"ALTER TABLE streams ADD COLUMN proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled'",
 	];
 	for (const statement of statements) {
 		try {

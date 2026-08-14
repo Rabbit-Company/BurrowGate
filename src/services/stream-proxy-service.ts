@@ -14,6 +14,7 @@ import { openMetrics } from "./openmetrics-service.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
 import { inspectStreamConnection, streamDecodeConfigFor, streamDecodeProtocols, type StreamRuleFieldValue } from "./stream-protection-service.ts";
 import { streamProtocolDecoder } from "./stream-protocol-decoders/index.ts";
+import { proxyProtocolDatagram, proxyProtocolHeader } from "./stream-proxy-protocol.ts";
 import {
 	computeStreamLiveRates,
 	pruneStaleStreamConnectionEntries,
@@ -42,6 +43,8 @@ interface TcpConnection {
 	toUpstream: Uint8Array[];
 	toClient: Uint8Array[];
 	queuedBytes: number;
+	proxyHeader: Uint8Array | null;
+	proxyHeaderOffset: number;
 	closed: boolean;
 	clientEnded: boolean;
 	/** Non-null while a payload decoder (e.g. minecraft-java) is buffering initial client bytes for protection inspection. */
@@ -71,9 +74,14 @@ interface UdpPeer {
 	clientToUpstreamBytes: number;
 	upstreamToClientBytes: number;
 	upstream: Bun.udp.ConnectedSocket<"buffer">;
-	pendingUpstream: Uint8Array[];
+	pendingUpstream: UdpPendingDatagram[];
 	closed: boolean;
 	amplificationThrottled: boolean;
+}
+
+interface UdpPendingDatagram {
+	wireData: Uint8Array;
+	payloadBytes: number;
 }
 
 interface UdpReply {
@@ -151,11 +159,11 @@ function runtimeError(error: unknown): string {
 }
 
 function tcpFingerprint(record: StreamRecord): string {
-	return JSON.stringify([record.incoming_port, record.forward_host, record.forward_port, record.certificate_id]);
+	return JSON.stringify([record.incoming_port, record.forward_host, record.forward_port, record.certificate_id, record.proxy_protocol]);
 }
 
 function udpFingerprint(record: StreamRecord): string {
-	return JSON.stringify([record.incoming_port, record.forward_host, record.forward_port]);
+	return JSON.stringify([record.incoming_port, record.forward_host, record.forward_port, record.proxy_protocol]);
 }
 
 function udpPeerKey(address: string, port: number): string {
@@ -420,7 +428,7 @@ export class StreamProxyManager {
 		if (connection.closed) return;
 		connection.lastActivityAt = Date.now();
 		const destination = direction === "upstream" ? connection.upstream : connection.client;
-		if (!destination) {
+		if (!destination || (direction === "upstream" && connection.proxyHeader !== null)) {
 			this.queueTcp(connection, direction, data);
 			return;
 		}
@@ -437,6 +445,15 @@ export class StreamProxyManager {
 		if (connection.closed) return;
 		const destination = direction === "upstream" ? connection.upstream : connection.client;
 		if (!destination) return;
+		if (direction === "upstream" && connection.proxyHeader) {
+			const pendingHeader = connection.proxyHeader.subarray(connection.proxyHeaderOffset);
+			const written = destination.write(pendingHeader);
+			if (written < 0) return this.finishTcp(connection, "socket write failed", new Error("TCP destination is closed"));
+			connection.proxyHeaderOffset += written;
+			if (connection.proxyHeaderOffset < connection.proxyHeader.byteLength) return;
+			connection.proxyHeader = null;
+			connection.proxyHeaderOffset = 0;
+		}
 		const queue = direction === "upstream" ? connection.toUpstream : connection.toClient;
 		while (queue.length) {
 			const chunk = queue[0]!;
@@ -716,6 +733,16 @@ export class StreamProxyManager {
 		}, config.streams.connectTimeoutSeconds * 1_000);
 		(connectTimer as unknown as { unref?: () => void }).unref?.();
 		try {
+			const mode = connection.record.proxy_protocol ?? "disabled";
+			if (mode !== "disabled") {
+				connection.proxyHeader = proxyProtocolHeader(mode, "tcp", {
+					sourceAddress: connection.clientIp,
+					destinationAddress: connection.client.localAddress,
+					sourcePort: connection.clientPort,
+					destinationPort: connection.client.localPort,
+				});
+				connection.proxyHeaderOffset = 0;
+			}
 			const upstream = await connect({
 				hostname: connection.record.forward_host,
 				port: connection.record.forward_port,
@@ -783,6 +810,8 @@ export class StreamProxyManager {
 						toUpstream: [],
 						toClient: [],
 						queuedBytes: 0,
+						proxyHeader: null,
+						proxyHeaderOffset: 0,
 						closed: false,
 						clientEnded: false,
 						protectionDecodeProtocol: null,
@@ -944,6 +973,18 @@ export class StreamProxyManager {
 		);
 	}
 
+	private udpUpstreamDatagram(runtime: UdpRuntime, data: Uint8Array, clientIp: string, clientPort: number): UdpPendingDatagram {
+		if ((runtime.record.proxy_protocol ?? "disabled") !== "v2") return { wireData: data, payloadBytes: data.byteLength };
+		const local = runtime.socket.address;
+		const header = proxyProtocolHeader("v2", "udp", {
+			sourceAddress: clientIp,
+			destinationAddress: local.address,
+			sourcePort: clientPort,
+			destinationPort: local.port,
+		});
+		return { wireData: proxyProtocolDatagram(header, data), payloadBytes: data.byteLength };
+	}
+
 	private async handleUdpData(runtime: UdpRuntime, data: Uint8Array, clientPort: number, clientIp: string, truncated: boolean): Promise<void> {
 		try {
 			const key = udpPeerKey(clientIp, clientPort);
@@ -1023,10 +1064,12 @@ export class StreamProxyManager {
 			if (peer.closed) return;
 			peer.lastActivityAt = Date.now();
 			if (truncated) return this.closeUdpPeer(runtime, peer, "truncated client datagram", new Error("UDP datagram was truncated"));
-			const sent = peer.upstream.send(data);
-			if (sent) this.recordUdpBytes(peer, "upstream", data.byteLength);
-			else if (peer.pendingUpstream.length < config.streams.maxPendingDatagrams) peer.pendingUpstream.push(copyChunk(data));
-			else this.closeUdpPeer(runtime, peer, "UDP upstream queue exceeded", new Error("UDP upstream queue limit exceeded"));
+			const datagram = this.udpUpstreamDatagram(runtime, data, clientIp, clientPort);
+			const sent = peer.upstream.send(datagram.wireData);
+			if (sent) this.recordUdpBytes(peer, "upstream", datagram.payloadBytes);
+			else if (peer.pendingUpstream.length < config.streams.maxPendingDatagrams) {
+				peer.pendingUpstream.push({ wireData: copyChunk(datagram.wireData), payloadBytes: datagram.payloadBytes });
+			} else this.closeUdpPeer(runtime, peer, "UDP upstream queue exceeded", new Error("UDP upstream queue limit exceeded"));
 		} catch (error) {
 			recordStreamUpstreamFailure(runtime.record.id, clientIp);
 			Logger.error(`[BurrowGate] Unable to create UDP peer for ${clientIp}:${clientPort}`, { error });
@@ -1035,10 +1078,10 @@ export class StreamProxyManager {
 
 	private flushUdpUpstream(peer: UdpPeer): void {
 		while (!peer.closed && peer.pendingUpstream.length) {
-			const data = peer.pendingUpstream[0]!;
-			if (!peer.upstream.send(data)) return;
+			const datagram = peer.pendingUpstream[0]!;
+			if (!peer.upstream.send(datagram.wireData)) return;
 			peer.pendingUpstream.shift();
-			this.recordUdpBytes(peer, "upstream", data.byteLength);
+			this.recordUdpBytes(peer, "upstream", datagram.payloadBytes);
 		}
 	}
 

@@ -33,6 +33,7 @@ function record(): StreamRecord {
 		forward_port: 23456,
 		tcp_enabled: 1,
 		udp_enabled: 0,
+		proxy_protocol: "disabled",
 		certificate_id: null,
 		event_retention_days: 7,
 		default_ip_action: "inherit",
@@ -52,16 +53,21 @@ function record(): StreamRecord {
 	};
 }
 
-function fakeSocket(address: string, port: number) {
+function fakeSocket(address: string, port: number, maxWriteBytes = Number.POSITIVE_INFINITY) {
 	return {
 		data: undefined as any,
 		remoteAddress: address,
 		remotePort: port,
+		remoteFamily: address.includes(":") ? "IPv6" : "IPv4",
+		localAddress: address.includes(":") ? "2001:db8::10" : "192.0.2.20",
+		localPort: 12345,
+		localFamily: address.includes(":") ? "IPv6" : "IPv4",
 		writes: [] as Uint8Array[],
 		terminated: false,
 		write(data: Uint8Array) {
-			this.writes.push(Buffer.from(data));
-			return data.byteLength;
+			const written = Math.min(data.byteLength, maxWriteBytes);
+			this.writes.push(Buffer.from(data.subarray(0, written)));
+			return written;
 		},
 		end() {},
 		terminate() {
@@ -115,6 +121,41 @@ describe("TCP stream proxy", () => {
 		expect(manager.activeConnections()).toMatchObject([
 			{ streamId: "stream-test", protocol: "tcp", clientIp: "203.0.113.8", clientToUpstreamBytes: 5, upstreamToClientBytes: 5 },
 		]);
+		await manager.remove("stream-test");
+	});
+
+	test("writes a complete PROXY v1 header before buffered client bytes and excludes it from traffic totals", async () => {
+		let listenOptions: any;
+		let connectOptions: any;
+		let releaseConnect!: () => void;
+		const client = fakeSocket("203.0.113.8", 45_678);
+		const upstream = fakeSocket("192.0.2.10", 23_456, 10);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectOptions = options;
+				await new Promise<void>((resolve) => {
+					releaseConnect = resolve;
+				});
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({ ...record(), proxy_protocol: "v1" });
+		const opening = listenOptions.socket.open(client);
+		await waitUntil(() => connectOptions !== undefined);
+		listenOptions.socket.data(client, Buffer.from("hello"));
+		releaseConnect();
+		await opening;
+		for (let attempt = 0; attempt < 10; attempt += 1) connectOptions.socket.drain(upstream);
+
+		expect(Buffer.concat(upstream.writes).toString()).toBe("PROXY TCP4 203.0.113.8 192.0.2.20 45678 12345\r\nhello");
+		expect(manager.activeConnections()).toMatchObject([{ clientToUpstreamBytes: 5 }]);
 		await manager.remove("stream-test");
 	});
 
@@ -188,6 +229,54 @@ describe("TCP stream proxy", () => {
 });
 
 describe("UDP stream proxy", () => {
+	test("prepends a PROXY v2 DGRAM header to every upstream datagram without counting header bytes", async () => {
+		let listenerOptions: any;
+		const upstreamWrites: Buffer[] = [];
+		const manager = new StreamProxyManager({
+			resolveHost: async () => "192.0.2.10",
+			udpSocket: (async (options: any) => {
+				if (options.connect) {
+					return {
+						send: (data: Uint8Array) => {
+							upstreamWrites.push(Buffer.from(data));
+							return true;
+						},
+						close() {},
+					} as any;
+				}
+				listenerOptions = options;
+				return {
+					address: { address: "192.0.2.20", port: 19_132, family: "IPv4" },
+					send: () => true,
+					close() {},
+				} as any;
+			}) as any,
+		});
+
+		await manager.apply({
+			...record(),
+			id: "stream-udp-proxy-v2-test",
+			incoming_port: 19_132,
+			forward_port: 19_133,
+			tcp_enabled: 0,
+			udp_enabled: 1,
+			proxy_protocol: "v2",
+		});
+
+		listenerOptions.socket.data(undefined, Buffer.from("ping"), 40_000, "203.0.113.20", { truncated: false });
+		listenerOptions.socket.data(undefined, Buffer.from("pong"), 40_000, "203.0.113.20", { truncated: false });
+		await waitUntil(() => upstreamWrites.length === 2);
+
+		const datagram = upstreamWrites[0]!;
+		expect(datagram.subarray(0, 16).toString("hex")).toBe("0d0a0d0a000d0a515549540a2112000c");
+		expect(datagram.subarray(16, 28).toString("hex")).toBe("cb007114c00002149c404abc");
+		expect(datagram.subarray(28).toString()).toBe("ping");
+		expect(upstreamWrites[1]!.subarray(0, 28)).toEqual(datagram.subarray(0, 28));
+		expect(upstreamWrites[1]!.subarray(28).toString()).toBe("pong");
+		expect(manager.activeConnections()).toMatchObject([{ protocol: "udp", clientToUpstreamBytes: 8 }]);
+		await manager.remove("stream-udp-proxy-v2-test");
+	});
+
 	test("throttles UDP replies once the amplification ratio is exceeded", async () => {
 		let listenerOptions: any;
 		let upstreamOptions: any;

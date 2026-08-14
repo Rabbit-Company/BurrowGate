@@ -962,7 +962,9 @@ function renderStreams() {
 			const deleteButton = isAdministrator
 				? `<button class="button danger compact" type="button" data-delete-stream="${escapeHtml(stream.id)}">Delete</button>`
 				: "";
-			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${protocols} :${stream.incomingPort}</strong><span>${stream.certificateId ? "TLS" : "Raw"}</span></div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
+			const transportLabel = stream.certificateId ? "TLS" : "Raw";
+			const proxyLabel = stream.proxyProtocol && stream.proxyProtocol !== "disabled" ? ` · PROXY ${stream.proxyProtocol}` : "";
+			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${protocols} :${stream.incomingPort}</strong><span>${transportLabel}${proxyLabel}</span></div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
 		})
 		.join("");
 }
@@ -1732,6 +1734,9 @@ function updateProtocolControls() {
 	byId("saveStream").disabled = !valid;
 	byId("streamCertificate").disabled = !byId("streamTcp").checked;
 	if (!byId("streamTcp").checked) byId("streamCertificate").value = "";
+	const proxyV1Option = byId("streamProxyProtocol").querySelector('option[value="v1"]');
+	proxyV1Option.disabled = !byId("streamTcp").checked;
+	if (!byId("streamTcp").checked && byId("streamProxyProtocol").value === "v1") byId("streamProxyProtocol").value = "disabled";
 	const rateEnabled = byId("streamRateLimitEnabled").checked;
 	byId("streamRateLimitSettings").classList.toggle("hidden", !rateEnabled);
 	const algorithm = byId("streamRateLimitAlgorithm").value;
@@ -1750,6 +1755,7 @@ function resetForm() {
 	byId("cancelStreamEdit").classList.add("hidden");
 	byId("streamTcp").checked = true;
 	byId("streamUdp").checked = false;
+	byId("streamProxyProtocol").value = "disabled";
 	byId("streamRetentionDays").value = "7";
 	byId("streamMaxConnectionsPerIp").value = "0";
 	byId("streamRateLimitEnabled").checked = false;
@@ -1783,6 +1789,7 @@ function editStream(id) {
 	byId("streamUdpAmplificationMaxRatio").value = String(stream.udpAmplificationMaxRatio ?? 0);
 	byId("streamTcp").checked = stream.tcpEnabled;
 	byId("streamUdp").checked = stream.udpEnabled;
+	byId("streamProxyProtocol").value = stream.proxyProtocol ?? "disabled";
 	byId("streamCertificate").value = stream.certificateId || "";
 	byId("streamFormTitle").textContent = `Edit stream :${stream.incomingPort}`;
 	byId("saveStream").textContent = "Save";
@@ -1799,6 +1806,7 @@ async function saveStream(event) {
 		forwardPort: Number(byId("forwardPort").value),
 		tcpEnabled: byId("streamTcp").checked,
 		udpEnabled: byId("streamUdp").checked,
+		proxyProtocol: byId("streamProxyProtocol").value,
 		certificateId: byId("streamCertificate").value || null,
 		eventRetentionDays: Number(byId("streamRetentionDays").value),
 		maxConnectionsPerIp: Number(byId("streamMaxConnectionsPerIp").value),

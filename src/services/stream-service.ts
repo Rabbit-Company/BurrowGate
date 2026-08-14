@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { isIP } from "node:net";
 import { repository } from "../db/repository.ts";
-import type { RateLimitAlgorithm, StreamRecord } from "../types.ts";
+import type { RateLimitAlgorithm, StreamProxyProtocol, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
 
@@ -11,6 +11,7 @@ export interface StreamInput {
 	forwardPort?: unknown;
 	tcpEnabled?: unknown;
 	udpEnabled?: unknown;
+	proxyProtocol?: unknown;
 	certificateId?: unknown;
 	eventRetentionDays?: unknown;
 	maxConnectionsPerIp?: unknown;
@@ -76,6 +77,15 @@ function rateLimitAlgorithm(value: unknown, fallback: RateLimitAlgorithm): RateL
 	throw new Error("Connection rate-limit algorithm must be fixed-window, sliding-window, or token-bucket");
 }
 
+function proxyProtocol(value: unknown, fallback: StreamProxyProtocol, tcpEnabled: boolean): StreamProxyProtocol {
+	const result = value === undefined ? fallback : String(value).trim().toLowerCase();
+	if (result !== "disabled" && result !== "v1" && result !== "v2") {
+		throw new Error("PROXY protocol must be disabled, v1, or v2");
+	}
+	if (result === "v1" && !tcpEnabled) throw new Error("PROXY protocol v1 is only available for TCP streams (use v2 for UDP)");
+	return result;
+}
+
 function udpAmplificationMaxRatio(value: unknown, fallback: number): number {
 	const result = value === undefined || value === "" ? fallback : Number(value);
 	if (!Number.isInteger(result) || result < 0 || result > 10_000) {
@@ -104,6 +114,7 @@ export function streamView(stream: StreamRecord) {
 		forwardPort: Number(stream.forward_port),
 		tcpEnabled: stream.tcp_enabled === 1,
 		udpEnabled: stream.udp_enabled === 1,
+		proxyProtocol: stream.proxy_protocol ?? "disabled",
 		certificateId: stream.certificate_id,
 		eventRetentionDays: Number(stream.event_retention_days),
 		defaultIpAction: stream.default_ip_action ?? "inherit",
@@ -140,6 +151,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		forward_port: port(input.forwardPort ?? existing?.forward_port, "Forward port"),
 		tcp_enabled: tcpEnabled ? 1 : 0,
 		udp_enabled: udpEnabled ? 1 : 0,
+		proxy_protocol: proxyProtocol(input.proxyProtocol, existing?.proxy_protocol ?? "disabled", tcpEnabled),
 		certificate_id: await certificateId(input.certificateId === undefined ? existing?.certificate_id : input.certificateId, tcpEnabled),
 		event_retention_days: retentionDays(input.eventRetentionDays, existing?.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: existing?.default_ip_action ?? "inherit",

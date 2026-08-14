@@ -304,6 +304,7 @@ export interface AccessWebauthnCredentialRecord {
 
 export type BandwidthProtocol = "http" | "websocket";
 export type StreamProtocol = "tcp" | "udp";
+export type StreamProxyProtocol = "disabled" | "v1" | "v2";
 export type StreamEventType = "connected" | "disconnected" | "upstream-error" | "listener-error" | "blocked" | "throttled" | "monitored";
 
 export interface BandwidthMinuteRecord {
@@ -325,6 +326,7 @@ export interface StreamRecord {
 	forward_port: number;
 	tcp_enabled: number;
 	udp_enabled: number;
+	proxy_protocol: StreamProxyProtocol;
 	certificate_id: string | null;
 	event_retention_days: number;
 	default_ip_action: StreamDefaultNetworkAction;

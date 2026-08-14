@@ -9,10 +9,23 @@ Each stream contains:
 - an incoming port;
 - a forward host and port;
 - TCP, UDP, or both protocols;
+- optional PROXY protocol client-address forwarding;
 - an optional certificate for incoming TCP TLS termination;
 - monitoring-data retention from 1 to 365 days.
 
 TCP and UDP use separate operating-system port namespaces, so one stream may enable both on the same numeric port. Two streams cannot claim the same protocol and incoming port. TCP stream ports also cannot conflict with BurrowGate's HTTP or HTTPS listener.
+
+## Client IP forwarding
+
+TCP and UDP upstream sockets normally see BurrowGate as their network peer. A stream can prepend the standard HAProxy PROXY protocol so a compatible upstream can recover the original client IP and port:
+
+- **Disabled** is the default and preserves raw byte forwarding.
+- **PROXY protocol v1** sends a human-readable header at the start of each TCP connection. Version 1 does not support UDP.
+- **PROXY protocol v2** sends a binary header at the start of each TCP connection and prepends a binary `DGRAM` header to every forwarded UDP datagram.
+
+The upstream service must be configured to expect the selected format. A service without PROXY protocol support will treat the header as application data and usually reject the connection or datagram. Restrict the upstream port so it only accepts traffic from trusted BurrowGate hosts (otherwise a direct client could submit a forged header).
+
+PROXY metadata is transport overhead and is not included in BurrowGate's client payload bandwidth totals. The wire formats follow the [HAProxy PROXY protocol specification](https://github.com/haproxy/haproxy/blob/master/doc/proxy-protocol.txt).
 
 ## TLS
 
