@@ -24,13 +24,16 @@ let rangeFrom = 0;
 let rangeTo = 0;
 let geoMapGeometry = null;
 let geoStatus = null;
-let geoData = { active: [], events: [], bandwidth: [] };
+let geoData = { active: [], events: [], bandwidth: [], blocked: [] };
 let geoZoom = null;
 const GEO_ZOOM_MAX_SCALE = 8;
 let activeConnections = [];
 let latestStreamMetrics = null;
 let streamTrafficChart = null;
-let streamBandwidthChart = null;
+let streamChartViewSelection = "connections:primary";
+let streamTopListScopeSelection = "blocked";
+let streamTopListData = null;
+let streamTopListRequestId = 0;
 let dateTimeFormat = "iso-24";
 
 const tableState = {
@@ -192,6 +195,29 @@ function formatBytes(value) {
 	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
+function formatBitrate(value) {
+	const bits = Math.max(0, Number(value ?? 0));
+	if (!Number.isFinite(bits) || bits === 0) return "0 bps";
+	const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+	const index = Math.min(units.length - 1, Math.floor(Math.log(bits) / Math.log(1000)));
+	const scaled = bits / 1000 ** index;
+	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function bytesDefinitionToBitrate(definition, bucketMs) {
+	if (definition.valueFormat !== "bytes" || !bucketMs) return definition;
+	const bucketSeconds = bucketMs / 1000;
+	return {
+		...definition,
+		valueFormat: "bitrate",
+		data: definition.data.map((point) => {
+			const converted = { ...point };
+			for (const dataset of definition.datasets) converted[dataset.key] = (Number(point[dataset.key] ?? 0) * 8) / bucketSeconds;
+			return converted;
+		}),
+	};
+}
+
 function twoDigits(value) {
 	return String(value).padStart(2, "0");
 }
@@ -322,8 +348,8 @@ const dateRangeSelectionPlugin = {
 function attachDateRangeSelection(chart, definition) {
 	const canvas = chart.canvas;
 	canvas.$dateRangeCleanup?.();
-	canvas.parentElement?.classList.add("time-selectable");
-	if (definition.data.length < 2) return;
+	canvas.parentElement?.classList.toggle("time-selectable", Boolean(definition.timeSeries));
+	if (!definition.timeSeries || definition.data.length < 2) return;
 
 	const selection = { dragging: false, startX: 0, currentX: 0, pointerId: null };
 	chart.$dateRangeSelection = selection;
@@ -396,13 +422,27 @@ function attachDateRangeSelection(chart, definition) {
 function createStreamChart(canvasId, definition) {
 	if (!window.Chart) throw new Error("Chart.js failed to load");
 	const theme = chartTheme();
-	const formatter = definition.valueFormat === "bytes" ? formatBytes : (value) => formatNumber(Math.round(Number(value)));
-	const labels = definition.data.map((point) => metricLabel(point.bucket));
+	const formatter = streamValueFormatter(definition.valueFormat);
+	const labels = definition.data.map((point) => (definition.timeSeries ? metricLabel(point.bucket) : String(point.label ?? "")));
+	const isBar = definition.type === "bar";
 	const datasets = definition.datasets.map((dataset, index) => {
 		const color = theme.palette[index % theme.palette.length];
+		const values = definition.data.map((point) => Number(point[dataset.key] ?? 0));
+		if (isBar) {
+			const perBarColor = definition.datasets.length === 1 ? definition.data.map((_, pointIndex) => theme.palette[pointIndex % theme.palette.length]) : color;
+			return {
+				label: dataset.label,
+				data: values,
+				backgroundColor: perBarColor,
+				borderColor: perBarColor,
+				borderWidth: 1,
+				borderRadius: 5,
+				maxBarThickness: 52,
+			};
+		}
 		return {
 			label: dataset.label,
-			data: definition.data.map((point) => Number(point[dataset.key] ?? 0)),
+			data: values,
 			borderColor: color,
 			backgroundColor: color,
 			pointBackgroundColor: color,
@@ -416,27 +456,28 @@ function createStreamChart(canvasId, definition) {
 		};
 	});
 	const chart = new window.Chart(byId(canvasId), {
-		type: "line",
+		type: isBar ? "bar" : "line",
 		data: { labels, datasets },
 		options: {
 			responsive: true,
 			resizeDelay: 150,
 			animation: false,
 			normalized: true,
-			interaction: { mode: "index", intersect: false },
+			interaction: { mode: definition.timeSeries ? "index" : "nearest", intersect: false },
 			plugins: {
 				legend: {
 					display: datasets.length > 1,
 					position: "bottom",
-					labels: { color: theme.text, usePointStyle: true, pointStyle: "line", boxWidth: 18, boxHeight: 3, padding: 18 },
+					labels: { color: theme.text, usePointStyle: true, pointStyle: isBar ? "rectRounded" : "line", boxWidth: 18, boxHeight: 3, padding: 18 },
 				},
 				tooltip: {
 					enabled: true,
-					mode: "index",
+					mode: definition.timeSeries ? "index" : "nearest",
 					intersect: false,
 					callbacks: {
 						title(items) {
-							return metricLabel(definition.data[items[0].dataIndex]?.bucket, true);
+							const point = definition.data[items[0].dataIndex];
+							return definition.timeSeries ? metricLabel(point?.bucket, true) : String(point?.label ?? "");
 						},
 						label(context) {
 							return `${context.dataset.label}: ${formatter(context.parsed.y)}`;
@@ -464,71 +505,257 @@ function createStreamChart(canvasId, definition) {
 	return chart;
 }
 
+function streamValueFormatter(format) {
+	if (format === "bytes") return (value) => formatBytes(Number(value));
+	if (format === "bitrate") return (value) => formatBitrate(Number(value));
+	return (value) => formatNumber(Math.round(Number(value)));
+}
+
+function summarizeChartDefinition(definition) {
+	if (!definition?.datasets?.length || !definition.data?.length) return [];
+	if (definition.datasets.length === 1 && !definition.timeSeries) {
+		const [dataset] = definition.datasets;
+		return definition.data.map((point) => ({ label: String(point.label ?? ""), count: Number(point[dataset.key] ?? 0) }));
+	}
+	return definition.datasets.map((dataset) => {
+		const total = definition.data.reduce((sum, point) => sum + Number(point[dataset.key] ?? 0), 0);
+		return { label: dataset.label, count: total };
+	});
+}
+
+function renderSummaryList(containerId, items, formatter) {
+	const container = byId(containerId);
+	if (!items || items.length === 0) {
+		container.innerHTML = "";
+		return;
+	}
+	const max = Math.max(0, ...items.map((item) => Number(item.count) || 0));
+	if (max === 0) {
+		container.innerHTML = '<p class="muted">No summary data is available.</p>';
+		return;
+	}
+	container.innerHTML = items
+		.slice(0, 6)
+		.map((item) => {
+			const percentage = Math.max(1, (Number(item.count) / max) * 100);
+			return `<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.label)}</span><strong>${formatter(item.count)}</strong></div><div class="breakdown-track"><div style="width:${percentage}%"></div></div></div>`;
+		})
+		.join("");
+}
+
+function streamChartCatalog(data) {
+	return {
+		"connections:primary": {
+			title: "Stream traffic volume",
+			subtitle: "Connections, disconnections, blocked connections, and proxy errors",
+			emptyMessage: "No stream lifecycle activity in this range.",
+			valueFormat: "number",
+			timeSeries: true,
+			datasets: [
+				{ key: "connected", label: "Connected" },
+				{ key: "blocked", label: "Blocked" },
+				{ key: "errors", label: "Errors" },
+				{ key: "disconnected", label: "Disconnected" },
+			],
+			data,
+		},
+		"connections:secondary": {
+			title: "Stream data volume",
+			subtitle: "Payload bytes transferred in both proxy directions",
+			emptyMessage: "No stream bandwidth in this range.",
+			valueFormat: "bytes",
+			timeSeries: true,
+			datasets: [
+				{ key: "clientToUpstreamBytes", label: "To origin" },
+				{ key: "upstreamToClientBytes", label: "To clients" },
+			],
+			data,
+		},
+		"bandwidth:primary": {
+			title: "Client to origin bandwidth",
+			subtitle: "Payload bytes received from stream clients and forwarded to origin",
+			emptyMessage: "No client-to-origin bandwidth in this range.",
+			valueFormat: "bytes",
+			timeSeries: true,
+			datasets: [{ key: "clientToUpstreamBytes", label: "To origin" }],
+			data,
+		},
+		"bandwidth:secondary": {
+			title: "Origin to client bandwidth",
+			subtitle: "Payload bytes received from origin and returned to stream clients",
+			emptyMessage: "No origin-to-client bandwidth in this range.",
+			valueFormat: "bytes",
+			timeSeries: true,
+			datasets: [{ key: "upstreamToClientBytes", label: "To clients" }],
+			data,
+		},
+	};
+}
+
+function streamComparisonCatalog(comparison) {
+	const streamLabel = (id) => {
+		const stream = streams.find((item) => item.id === id);
+		return stream ? `Port ${stream.incomingPort} → ${stream.forwardHost}:${stream.forwardPort}` : id;
+	};
+	const byConnections = [...comparison].sort((a, b) => b.connections - a.connections).slice(0, 15);
+	const byBytes = [...comparison].sort((a, b) => b.bytes - a.bytes).slice(0, 15);
+	return {
+		"compare:primary": {
+			title: "Connections by stream",
+			subtitle: "Total connections per stream in the selected range",
+			type: "bar",
+			timeSeries: false,
+			valueFormat: "number",
+			emptyMessage: "No stream connections in this range.",
+			datasets: [{ key: "count", label: "Connections" }],
+			data: byConnections.map((item) => ({ label: streamLabel(item.streamId), count: item.connections })),
+		},
+		"compare:secondary": {
+			title: "Bandwidth by stream",
+			subtitle: "Total bytes transferred per stream in the selected range",
+			type: "bar",
+			timeSeries: false,
+			valueFormat: "bytes",
+			emptyMessage: "No stream bandwidth in this range.",
+			datasets: [{ key: "count", label: "Bytes" }],
+			data: byBytes.map((item) => ({ label: streamLabel(item.streamId), count: item.bytes })),
+		},
+	};
+}
+
+function streamBlockReasonCatalog(blockReasons) {
+	return {
+		"protection:primary": {
+			title: "Blocked connections by reason",
+			subtitle: "Why connections were blocked in the selected range",
+			type: "bar",
+			timeSeries: false,
+			valueFormat: "number",
+			emptyMessage: "No blocked connections in this range.",
+			datasets: [{ key: "count", label: "Blocked" }],
+			data: blockReasons.map((item) => ({ label: item.reason, count: item.count })),
+		},
+	};
+}
+
+function streamProtocolCatalog(protocolBreakdown) {
+	const label = (protocol) => protocol.toUpperCase();
+	return {
+		"protocol:primary": {
+			title: "Connections by protocol",
+			subtitle: "Total connections per protocol in the selected range",
+			type: "bar",
+			timeSeries: false,
+			valueFormat: "number",
+			emptyMessage: "No connections in this range.",
+			datasets: [{ key: "count", label: "Connections" }],
+			data: protocolBreakdown.map((item) => ({ label: label(item.protocol), count: item.connections })),
+		},
+		"protocol:secondary": {
+			title: "Bandwidth by protocol",
+			subtitle: "Total bytes transferred per protocol in the selected range",
+			type: "bar",
+			timeSeries: false,
+			valueFormat: "bytes",
+			emptyMessage: "No bandwidth in this range.",
+			datasets: [{ key: "count", label: "Bytes" }],
+			data: protocolBreakdown.map((item) => ({ label: label(item.protocol), count: item.bytes })),
+		},
+	};
+}
+
+function parseStreamChartViewKey(key) {
+	const [group, slot, bitrate] = key.split(":");
+	return { base: `${group}:${slot}`, isBitrate: bitrate === "bitrate" };
+}
+
 function renderStreamCharts() {
 	if (!latestStreamMetrics) return;
 	const data = latestStreamMetrics.series ?? [];
-	const bandwidthMode = activeTab === "bandwidth";
-	const primary = bandwidthMode
-		? {
-				title: "Client to origin bandwidth",
-				subtitle: "Payload bytes received from stream clients and forwarded to origin",
-				emptyMessage: "No client-to-origin bandwidth in this range.",
-				valueFormat: "bytes",
-				datasets: [{ key: "clientToUpstreamBytes", label: "To origin" }],
-				data,
-			}
-		: {
-				title: "Stream traffic volume",
-				subtitle: "Connections, disconnections, blocked connections, and proxy errors",
-				emptyMessage: "No stream lifecycle activity in this range.",
-				valueFormat: "number",
-				datasets: [
-					{ key: "connected", label: "Connected" },
-					{ key: "blocked", label: "Blocked" },
-					{ key: "errors", label: "Errors" },
-					{ key: "disconnected", label: "Disconnected" },
-				],
-				data,
-			};
-	const secondary = bandwidthMode
-		? {
-				title: "Origin to client bandwidth",
-				subtitle: "Payload bytes received from origin and returned to stream clients",
-				emptyMessage: "No origin-to-client bandwidth in this range.",
-				valueFormat: "bytes",
-				datasets: [{ key: "upstreamToClientBytes", label: "To clients" }],
-				data,
-			}
-		: {
-				title: "Stream data volume",
-				subtitle: "Payload bytes transferred in both proxy directions",
-				emptyMessage: "No stream bandwidth in this range.",
-				valueFormat: "bytes",
-				datasets: [
-					{ key: "clientToUpstreamBytes", label: "To origin" },
-					{ key: "upstreamToClientBytes", label: "To clients" },
-				],
-				data,
-			};
-	byId("primaryChartTitle").textContent = primary.title;
-	byId("primaryChartSubtitle").textContent = primary.subtitle;
-	byId("secondaryChartTitle").textContent = secondary.title;
-	byId("secondaryChartSubtitle").textContent = secondary.subtitle;
-	byId("streamTrafficEmpty").textContent = primary.emptyMessage;
-	byId("streamBandwidthEmpty").textContent = secondary.emptyMessage;
-	const primaryHasData = primary.datasets.some((dataset) => data.some((point) => Number(point[dataset.key]) > 0));
-	const secondaryHasData = secondary.datasets.some((dataset) => data.some((point) => Number(point[dataset.key]) > 0));
-	byId("streamTrafficEmpty").classList.toggle("hidden", primaryHasData);
-	byId("streamBandwidthEmpty").classList.toggle("hidden", secondaryHasData);
+	const catalog = {
+		...streamChartCatalog(data),
+		...streamComparisonCatalog(latestStreamMetrics.comparison ?? []),
+		...streamBlockReasonCatalog(latestStreamMetrics.blockReasons ?? []),
+		...streamProtocolCatalog(latestStreamMetrics.protocolBreakdown ?? []),
+	};
+	const { base, isBitrate } = parseStreamChartViewKey(streamChartViewSelection);
+	const definition = catalog[base] ?? catalog["connections:primary"];
+	const display = isBitrate ? bytesDefinitionToBitrate(definition, latestStreamMetrics.bucketMs) : definition;
+
+	const select = byId("streamChartView");
+	byId("primaryChartTitle").textContent = select.selectedOptions[0]?.textContent ?? display.title;
+	byId("primaryChartSubtitle").textContent = display.subtitle;
+	byId("streamTrafficEmpty").textContent = display.emptyMessage;
+	const hasData = display.datasets.some((dataset) => display.data.some((point) => Number(point[dataset.key]) > 0));
+	byId("streamTrafficEmpty").classList.toggle("hidden", hasData);
 	streamTrafficChart?.destroy();
-	streamBandwidthChart?.destroy();
-	streamTrafficChart = createStreamChart("streamTrafficChart", primary);
-	streamBandwidthChart = createStreamChart("streamBandwidthChart", secondary);
+	streamTrafficChart = createStreamChart("streamTrafficChart", display);
+	renderSummaryList("streamPrimarySummary", summarizeChartDefinition(display), streamValueFormatter(display.valueFormat));
 }
 
 async function loadStreamMetrics() {
 	latestStreamMetrics = await api(`/streams/metrics?${queryString({ streamId: selectedStreamId, ...rangeQuery() })}`);
 	renderStreamCharts();
+}
+
+const STREAM_TOP_LIST_KIND = {
+	blocked: {
+		endpoint: "streams/ip-metrics-tab?scope=blocked",
+		field: "ips",
+		itemKey: "ip",
+		title: "Top blocked IPs",
+		subtitle: (rangeLabel) => `Source IPs blocked most often in the selected range (${rangeLabel})`,
+		empty: "No blocked connections in this range.",
+		formatCount: formatNumber,
+	},
+	bandwidth: {
+		endpoint: "streams/ip-bandwidth-metrics-tab",
+		field: "ips",
+		itemKey: "ip",
+		title: "Top IPs by bandwidth",
+		subtitle: (rangeLabel) => `Source IPs generating the most bandwidth in the selected range (${rangeLabel})`,
+		empty: "No bandwidth activity in this range.",
+		formatCount: formatBytes,
+	},
+	errors: {
+		endpoint: "streams/error-metrics-tab",
+		field: "errors",
+		itemKey: "error",
+		title: "Top error reasons",
+		subtitle: (rangeLabel) => `Upstream and listener error messages seen most often in the selected range (${rangeLabel})`,
+		empty: "No upstream or listener errors in this range.",
+		formatCount: formatNumber,
+	},
+};
+
+async function loadStreamTopList() {
+	const requestId = ++streamTopListRequestId;
+	const kind = STREAM_TOP_LIST_KIND[streamTopListScopeSelection];
+	const result = await api(`/${kind.endpoint}${kind.endpoint.includes("?") ? "&" : "?"}${queryString({ streamId: selectedStreamId, ...rangeQuery() })}`);
+	if (requestId !== streamTopListRequestId) return;
+	streamTopListData = result;
+	renderStreamTopList();
+}
+
+function renderStreamTopList() {
+	const kind = STREAM_TOP_LIST_KIND[streamTopListScopeSelection];
+	if (!streamTopListData) return;
+	const items = streamTopListData[kind.field] ?? [];
+	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
+	const rangeLabel = rangeDurationLabel(streamTopListData.rangeDurationMs ?? rangeTo - rangeFrom);
+	byId("streamRefererTitle").textContent = byId("streamTopListMode").selectedOptions[0]?.textContent ?? kind.title;
+	byId("streamRefererSubtitle").textContent = kind.subtitle(rangeLabel);
+	byId("streamRefererTotal").textContent = kind.formatCount(total);
+	byId("streamRefererList").innerHTML =
+		items.length === 0
+			? `<p class="muted">${kind.empty}</p>`
+			: items
+					.map((item) => {
+						const label = String(item[kind.itemKey] ?? "");
+						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
+						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${kind.formatCount(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+					})
+					.join("");
 }
 
 function toDateTimeLocal(value) {
@@ -1069,6 +1296,7 @@ async function loadOverview() {
 	geoStatus = result.geoip;
 	geoData.events = result.countries.map((item) => ({ countryCode: item.countryCode, count: Number(item.connections) }));
 	geoData.bandwidth = result.countries.map((item) => ({ countryCode: item.countryCode, count: Number(item.bytes) }));
+	geoData.blocked = result.countries.map((item) => ({ countryCode: item.countryCode, count: Number(item.blocked) }));
 	renderActive(result.active);
 	renderGeoMap();
 }
@@ -1251,8 +1479,15 @@ function renderGeoMap() {
 	const maximum = Math.max(0, ...items.filter((item) => item.countryCode !== "ZZ" && item.countryCode !== "XX").map((item) => Number(item.count)));
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const bandwidth = mode === "bandwidth";
-	const title = mode === "active" ? "Active connections" : mode === "events" ? "Connections in traffic log" : "Proxied bandwidth";
-	const unit = bandwidth ? "bytes" : mode === "active" ? "active connections" : "connections";
+	const title =
+		mode === "active"
+			? "Active connections"
+			: mode === "events"
+				? "Connections in traffic log"
+				: mode === "blocked"
+					? "Blocked connections"
+					: "Proxied bandwidth";
+	const unit = bandwidth ? "bytes" : mode === "active" ? "active connections" : mode === "blocked" ? "blocked connections" : "connections";
 	const formatValue = bandwidth ? formatBytes : formatNumber;
 	const rangeLabel = mode === "active" ? "live" : rangeDurationLabel(rangeTo - rangeFrom);
 	byId("geoSubtitle").textContent = `${title} by country (${rangeLabel})`;
@@ -1378,7 +1613,7 @@ async function loadEvents() {
           <td>${escapeHtml(formatDate(item.created_at))}</td>
           <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td>
           ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
-          ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
+          ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" || item.event_type === "monitored" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
           <td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td>
           <td class="port-column"><code>${item.incoming_port}</code></td>
           ${isColumnVisible("events", "reason") ? `<td class="reason-cell" title="${escapeHtml(item.reason || item.error || "")}">${escapeHtml(item.reason || item.error || "-")}</td>` : ""}
@@ -1858,12 +2093,19 @@ function setActiveTab(name) {
 	document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
 	document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
 	byId(`panel-${name}`).classList.remove("hidden");
-	const geoMode = { connections: "active", events: "events", bandwidth: "bandwidth" }[name];
-	if (geoMode) {
-		byId("geoMetricMode").value = geoMode;
-		renderGeoMap();
-		renderStreamCharts();
-	}
+	const geoMode = { connections: "active", events: "events", bandwidth: "bandwidth", rules: "blocked", protection: "blocked", streams: "active" }[name];
+	byId("geoMetricMode").value = geoMode;
+	renderGeoMap();
+	streamChartViewSelection = {
+		connections: "connections:primary",
+		events: "connections:primary",
+		bandwidth: "bandwidth:primary",
+		rules: "protection:primary",
+		protection: "protection:primary",
+		streams: "connections:primary",
+	}[name];
+	byId("streamChartView").value = streamChartViewSelection;
+	renderStreamCharts();
 	if (name === "events") void loadEvents();
 	if (name === "bandwidth") void loadBandwidth();
 	if (name === "connections") void loadConnections();
@@ -1876,7 +2118,7 @@ async function refreshDashboard(updateLabel = "Updated") {
 	try {
 		if (!currentAdmin) await loadCurrentAdmin();
 		await loadStreams();
-		await Promise.all([loadOverview(), loadStreamMetrics()]);
+		await Promise.all([loadOverview(), loadStreamMetrics(), loadStreamTopList()]);
 		if (activeTab === "events") await loadEvents();
 		if (activeTab === "bandwidth") await loadBandwidth();
 		if (activeTab === "connections") await loadConnections();
@@ -1936,6 +2178,14 @@ document.querySelectorAll(".sort-button").forEach((button) => {
 	});
 });
 byId("geoMetricMode").addEventListener("change", renderGeoMap);
+byId("streamChartView").addEventListener("change", (event) => {
+	streamChartViewSelection = event.currentTarget.value;
+	renderStreamCharts();
+});
+byId("streamTopListMode").addEventListener("change", (event) => {
+	streamTopListScopeSelection = event.currentTarget.value;
+	void loadStreamTopList();
+});
 byId("refreshDashboard").addEventListener("click", () => void refreshDashboard());
 byId("refreshConnections").addEventListener("click", () => void loadConnections());
 byId("refreshEvents").addEventListener("click", () => void loadEvents());
@@ -2142,9 +2392,7 @@ window.addEventListener(
 	"pagehide",
 	() => {
 		byId("streamTrafficChart").$dateRangeCleanup?.();
-		byId("streamBandwidthChart").$dateRangeCleanup?.();
 		streamTrafficChart?.destroy();
-		streamBandwidthChart?.destroy();
 	},
 	{ once: true },
 );

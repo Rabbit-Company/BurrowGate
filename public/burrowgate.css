@@ -212,12 +212,24 @@ button:disabled {
 }
 
 .charts-grid {
-	grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+	grid-template-columns: 1fr;
 	margin-bottom: 20px;
 }
 .chart-card {
 	min-width: 0;
 	overflow: hidden;
+}
+.chart-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+}
+.chart-sidebar {
+	display: grid;
+	align-content: start;
+	gap: 10px;
+	min-width: 0;
+	padding: 4px 20px 18px 16px;
+	border-left: 1px solid var(--border);
 }
 .chart-wrap {
 	position: relative;
@@ -868,8 +880,13 @@ form.grid label {
 	.stats {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
-	.charts-grid {
+	.chart-layout {
 		grid-template-columns: 1fr;
+	}
+	.chart-sidebar {
+		border-left: none;
+		border-top: 1px solid var(--border);
+		padding: 14px 16px 18px;
 	}
 	.toolbar,
 	.compact-toolbar {
@@ -1260,6 +1277,7 @@ form.grid label {
 	border-top: 1px solid var(--border);
 	background: rgba(15, 23, 42, 0.96);
 	backdrop-filter: blur(12px);
+	border-radius: 18px;
 }
 #siteFormActions > .muted {
 	margin-right: auto;

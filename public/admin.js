@@ -145,7 +145,9 @@ const selectedRuleIds = new Set();
 let activeTab = "traffic";
 let latestMetrics = null;
 let trafficChart = null;
-let latencyChart = null;
+let chartViewSelection = "traffic:primary";
+let geoScopeSelection = "requests";
+let topListScopeSelection = "requests";
 let geoMapGeometry = null;
 let geoMetrics = null;
 let topListData = null;
@@ -163,6 +165,16 @@ const GEO_TAB_CONFIG = {
 	routes: { geoScope: "routes", label: "Route enforcement actions", unit: "enforcement actions", topList: "ips", ipScope: "routes" },
 	sites: { geoScope: "sites", label: "Requests (all sites)", unit: "requests", topList: "referrers", refererScope: "sites" },
 };
+
+const SUPPLEMENTAL_TOP_LIST_CONFIG = {
+	topPathsAll: { geoScope: "paths-requests", topList: "paths", pathScope: "requests" },
+	topIpsBandwidth: { geoScope: "bandwidth-ips", topList: "ipsBandwidth" },
+};
+
+function geoConfigForScope(scope) {
+	const allEntries = [...Object.values(GEO_TAB_CONFIG), ...Object.values(SUPPLEMENTAL_TOP_LIST_CONFIG)];
+	return allEntries.find((entry) => entry.geoScope === scope) ?? GEO_TAB_CONFIG.traffic;
+}
 let sites = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
@@ -289,6 +301,29 @@ function formatBytes(value) {
 	const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
 	const scaled = bytes / 1024 ** index;
 	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function formatBitrate(value) {
+	const bits = Math.max(0, Number(value ?? 0));
+	if (!Number.isFinite(bits) || bits === 0) return "0 bps";
+	const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+	const index = Math.min(units.length - 1, Math.floor(Math.log(bits) / Math.log(1000)));
+	const scaled = bits / 1000 ** index;
+	return `${scaled >= 100 || index === 0 ? Math.round(scaled).toLocaleString() : scaled.toFixed(scaled >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function bytesDefinitionToBitrate(definition, bucketMs) {
+	if (definition.valueFormat !== "bytes" || !bucketMs) return definition;
+	const bucketSeconds = bucketMs / 1000;
+	return {
+		...definition,
+		valueFormat: "bitrate",
+		data: definition.data.map((point) => {
+			const converted = { ...point };
+			for (const dataset of definition.datasets) converted[dataset.key] = (Number(point[dataset.key] ?? 0) * 8) / bucketSeconds;
+			return converted;
+		}),
+	};
 }
 
 function optionalNumberInput(id) {
@@ -2701,6 +2736,7 @@ function metricLabel(bucket, rangeDurationMs, detailed = false) {
 function metricValueFormatter(format) {
 	if (format === "duration") return (value) => formatDuration(Number(value));
 	if (format === "bytes") return (value) => formatBytes(Number(value));
+	if (format === "bitrate") return (value) => formatBitrate(Number(value));
 	if (format === "percentage") return (value) => `${Number(value).toFixed(1)}%`;
 	return (value) => formatNumber(Math.round(Number(value)));
 }
@@ -2982,50 +3018,89 @@ function createChart(canvasId, definition) {
 	return chart;
 }
 
-function renderBreakdown(items) {
-	const container = byId("decisionBreakdown");
+function summarizeChartDefinition(definition) {
+	if (!definition?.datasets?.length || !definition.data?.length) return [];
+	if (definition.datasets.length === 1 && !definition.timeSeries) {
+		const [dataset] = definition.datasets;
+		return definition.data.map((point) => ({ label: String(point.label ?? ""), count: Number(point[dataset.key] ?? 0) }));
+	}
+	const useAverage = definition.valueFormat === "duration";
+	return definition.datasets.map((dataset) => {
+		const values = definition.data.map((point) => Number(point[dataset.key] ?? 0));
+		const total = values.reduce((sum, value) => sum + value, 0);
+		return { label: dataset.label, count: useAverage ? total / values.length : total };
+	});
+}
+
+function renderSummaryList(containerId, items, formatter = formatNumber) {
+	const container = byId(containerId);
 	if (!items || items.length === 0) {
 		container.innerHTML = "";
-		container.classList.add("hidden");
 		return;
 	}
-	container.classList.remove("hidden");
-	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
-	if (total === 0) {
+	const max = Math.max(0, ...items.map((item) => Number(item.count) || 0));
+	if (max === 0) {
 		container.innerHTML = '<p class="muted">No summary data is available.</p>';
 		return;
 	}
 	container.innerHTML = items
 		.slice(0, 6)
 		.map((item) => {
-			const percentage = Math.max(1, (Number(item.count) / total) * 100);
-			return `<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.label)}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${percentage}%"></div></div></div>`;
+			const percentage = Math.max(1, (Number(item.count) / max) * 100);
+			return `<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.label)}</span><strong>${formatter(item.count)}</strong></div><div class="breakdown-track"><div style="width:${percentage}%"></div></div></div>`;
 		})
 		.join("");
 }
 
-function renderMetrics() {
-	if (!latestMetrics?.primary || !latestMetrics?.secondary) return;
-	const primary = normalizeChartDefinition(latestMetrics.primary);
-	const secondary = normalizeChartDefinition(latestMetrics.secondary);
+function parseChartViewKey(key) {
+	const [section, slot, bitrate] = key.split(":");
+	return { section, slot, isBitrate: bitrate === "bitrate" };
+}
 
-	byId("primaryChartTitle").textContent = primary.title;
-	byId("primaryChartSubtitle").textContent = primary.subtitle;
-	byId("secondaryChartTitle").textContent = secondary.title;
-	byId("secondaryChartSubtitle").textContent = secondary.subtitle;
+async function fetchSectionMetrics(section) {
+	return api(`/metrics?${queryString({ ...rangeQuery(), section })}`, {}, section !== "sites");
+}
+
+let chartViewRequestId = 0;
+
+async function refreshChartView() {
+	const requestId = ++chartViewRequestId;
+	const { section, slot, isBitrate } = parseChartViewKey(chartViewSelection);
+	let metrics = latestMetrics;
+	if (section !== latestMetrics?.section) {
+		try {
+			metrics = await fetchSectionMetrics(section);
+		} catch (error) {
+			if (requestId !== chartViewRequestId) return;
+			showToast(error.message, "bad");
+			chartViewSelection = `${activeTab}:primary`;
+			byId("chartView").value = chartViewSelection;
+			metrics = latestMetrics;
+		}
+	}
+	if (requestId !== chartViewRequestId || !metrics) return;
+
+	const definition = normalizeChartDefinition(metrics[slot] ?? metrics.primary);
+	const display = isBitrate ? bytesDefinitionToBitrate(definition, metrics.bucketMs) : definition;
+	const select = byId("chartView");
+	byId("primaryChartTitle").textContent = select.selectedOptions[0]?.textContent ?? display.title;
+	byId("primaryChartSubtitle").textContent = display.subtitle;
 	byId("trafficEmpty").classList.add("hidden");
-	byId("latencyEmpty").classList.add("hidden");
 	byId("trafficChart").classList.remove("hidden");
-	byId("latencyChart").classList.remove("hidden");
 
 	trafficChart?.destroy();
-	latencyChart?.destroy();
-	trafficChart = createChart("trafficChart", primary);
-	latencyChart = createChart("latencyChart", secondary);
-	renderBreakdown(latestMetrics.breakdown ?? []);
+	trafficChart = createChart("trafficChart", display);
+	const showExplicitBreakdown = slot === "secondary" && metrics.breakdown?.length;
+	const summaryItems = showExplicitBreakdown ? metrics.breakdown : summarizeChartDefinition(display);
+	renderSummaryList("primarySummary", summaryItems, showExplicitBreakdown ? formatNumber : metricValueFormatter(display.valueFormat));
+}
+
+function renderMetrics() {
+	if (!latestMetrics) return;
 	if (latestMetrics.section === "bandwidth") renderBandwidthDetails(latestMetrics);
 	if (latestMetrics.section === "cache") renderCacheDetails(latestMetrics.cache);
 	if (latestMetrics.section === "protection") renderProtectionDetails(latestMetrics);
+	void refreshChartView();
 }
 
 function renderCacheDetails(cache) {
@@ -3296,8 +3371,7 @@ function setupGeoMapZoom(svg) {
 
 function renderGeoMap() {
 	if (!geoMapGeometry || !geoMetrics) return;
-	const config = GEO_TAB_CONFIG[activeTab];
-	if (!config) return;
+	const config = geoConfigForScope(geoScopeSelection);
 	const items = geoMetrics.items ?? [];
 	const rangeDurationMs = geoMetrics.rangeDurationMs;
 	const status = geoMetrics.status;
@@ -3396,8 +3470,7 @@ async function loadGeoMapGeometry() {
 
 async function loadGeoMetrics() {
 	const requestId = ++geoRequestId;
-	const config = GEO_TAB_CONFIG[activeTab];
-	if (!config) return;
+	const config = geoConfigForScope(geoScopeSelection);
 	await loadGeoMapGeometry();
 	const result = await api(`/geo-metrics-tab?scope=${config.geoScope}&${queryString(rangeQuery())}`);
 	if (requestId !== geoRequestId) return;
@@ -3442,13 +3515,21 @@ const TOP_LIST_KIND = {
 		empty: "No matching activity in this range.",
 		totalUnit: "requests",
 	},
+	ipsBandwidth: {
+		endpoint: () => "ip-bandwidth-metrics-tab",
+		title: "Top IPs by bandwidth",
+		field: "ips",
+		itemKey: "ip",
+		subtitle: (rangeLabel) => `Source IPs generating the most bandwidth in the selected range (${rangeLabel})`,
+		empty: "No bandwidth activity in this range.",
+		totalUnit: "bytes",
+		formatCount: formatBytes,
+	},
 };
 
 async function loadTopList() {
 	const requestId = ++topListRequestId;
-	const config = GEO_TAB_CONFIG[activeTab];
-	byId("refererCard").classList.toggle("hidden", !config || config.topList === "none");
-	if (!config || config.topList === "none") return;
+	const config = geoConfigForScope(topListScopeSelection);
 	const kind = TOP_LIST_KIND[config.topList];
 	const endpoint = kind.endpoint(config);
 	const result = await api(`/${endpoint}${endpoint.includes("?") ? "&" : "?"}${queryString(rangeQuery())}`);
@@ -3462,15 +3543,16 @@ async function refreshGeoAndReferrers() {
 }
 
 function renderRefererList() {
-	const config = GEO_TAB_CONFIG[activeTab];
-	if (!config || config.topList === "none" || !topListData) return;
+	const config = geoConfigForScope(topListScopeSelection);
+	if (config.topList === "none" || !topListData) return;
 	const kind = TOP_LIST_KIND[config.topList];
 	const items = topListData[kind.field] ?? [];
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const rangeLabel = rangeDurationLabel(topListData.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
-	byId("refererTitle").textContent = kind.title;
+	const formatCount = kind.formatCount ?? formatNumber;
+	byId("refererTitle").textContent = byId("topListMode").selectedOptions[0]?.textContent ?? kind.title;
 	byId("refererSubtitle").textContent = kind.subtitle(rangeLabel);
-	byId("refererTotal").textContent = `${formatNumber(total)} ${kind.totalUnit}`;
+	byId("refererTotal").textContent = kind.formatCount ? formatCount(total) : `${formatNumber(total)} ${kind.totalUnit}`;
 	byId("refererList").innerHTML =
 		items.length === 0
 			? `<p class="muted">${kind.empty}</p>`
@@ -3478,7 +3560,7 @@ function renderRefererList() {
 					.map((item) => {
 						const label = String(item[kind.itemKey] ?? "");
 						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
-						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${formatCount(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
 					})
 					.join("");
 }
@@ -3530,6 +3612,14 @@ function setActiveTab(name) {
 	document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
 	document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
 	byId(`panel-${name}`).classList.remove("hidden");
+	chartViewSelection = `${name}:primary`;
+	byId("chartView").value = chartViewSelection;
+	geoScopeSelection = GEO_TAB_CONFIG[name].geoScope;
+	byId("geoMetricMode").value = geoScopeSelection;
+	if (GEO_TAB_CONFIG[name].topList !== "none") {
+		topListScopeSelection = GEO_TAB_CONFIG[name].geoScope;
+		byId("topListMode").value = topListScopeSelection;
+	}
 	void refreshGeoAndReferrers();
 	void loadMetrics();
 	if (name === "cache") void loadCacheMetrics();
@@ -4363,6 +4453,18 @@ function bindActions() {
 	document.querySelectorAll("[data-site-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setSiteEditorTab(tab.dataset.siteEditorTab)));
 	document.querySelectorAll("[data-route-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setRouteEditorTab(tab.dataset.routeEditorTab)));
 	byId("siteSelector").addEventListener("change", (event) => void chooseSite(event.currentTarget.value));
+	byId("chartView").addEventListener("change", (event) => {
+		chartViewSelection = event.currentTarget.value;
+		void refreshChartView();
+	});
+	byId("geoMetricMode").addEventListener("change", (event) => {
+		geoScopeSelection = event.currentTarget.value;
+		void loadGeoMetrics();
+	});
+	byId("topListMode").addEventListener("change", (event) => {
+		topListScopeSelection = event.currentTarget.value;
+		void loadTopList();
+	});
 	byId("dateTimeFormat").addEventListener("change", (event) => {
 		saveDateTimeFormat(event.currentTarget.value);
 		void refreshDashboard()
@@ -4739,7 +4841,6 @@ function bindActions() {
 		"pagehide",
 		() => {
 			trafficChart?.destroy();
-			latencyChart?.destroy();
 		},
 		{ once: true },
 	);

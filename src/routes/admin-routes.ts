@@ -1614,13 +1614,31 @@ export function registerAdminRoutes(app: Web<any>): void {
 		});
 	});
 
+	app.get("/_burrowgate/api/admin/ip-bandwidth-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const range = requestedDateRange(url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const ips = await repository.tabBandwidthIpMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			ips,
+		});
+	});
+
 	app.get("/_burrowgate/api/admin/path-metrics-tab", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
 		const url = new URL(ctx.req.url);
 		const scope = stringParam(url, "scope");
-		if (scope !== "protection") return jsonResponse({ error: "Invalid scope" }, 400);
+		if (scope !== "protection" && scope !== "requests") return jsonResponse({ error: "Invalid scope" }, 400);
 		const range = requestedDateRange(url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
@@ -2035,6 +2053,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 				data: metrics.series,
 			},
 			breakdown: metrics.decisions.map((item) => ({ label: item.decision, count: item.count })),
+			methods: {
+				title: "Requests by method",
+				subtitle: "HTTP methods used in the selected range",
+				type: "bar",
+				timeSeries: false,
+				valueFormat: "number",
+				emptyMessage: "No traffic in this range.",
+				datasets: [{ key: "count", label: "Requests" }],
+				data: metrics.methods.map((item) => ({ label: item.method, count: item.count })),
+			},
 		});
 	});
 

@@ -352,12 +352,79 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const selectedRange = range(url);
 		const durationMs = selectedRange.until - selectedRange.since;
 		const bucketMs = metricBucketSize(durationMs);
+		const visibleStreams = await streamsVisibleToUser(user);
+		const comparison = await repository.streamsComparisonMetrics(
+			visibleStreams.map((stream) => stream.id),
+			selectedRange.since,
+			selectedRange.until,
+		);
+		const blockReasons = await repository.streamBlockReasonMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
+		const protocolBreakdown = await repository.streamProtocolMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
 		return jsonResponse({
 			...(await repository.streamMetrics(scopeStreamId, selectedRange.since, selectedRange.until, bucketMs)),
+			comparison,
+			blockReasons,
+			protocolBreakdown,
 			rangeFrom: selectedRange.since,
 			rangeTo: selectedRange.until,
 			rangeDurationMs: durationMs,
 			bucketMs,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/streams/ip-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const scope = stringParam(url, "scope");
+		if (scope !== "blocked") return jsonResponse({ error: "Invalid scope" }, 400);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
+		const selectedRange = range(url);
+		const ips = await repository.streamTabIpMetrics(scopeStreamId, selectedRange.since, selectedRange.until, scope);
+		return jsonResponse({
+			rangeFrom: selectedRange.since,
+			rangeTo: selectedRange.until,
+			rangeDurationMs: selectedRange.until - selectedRange.since,
+			ips,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/streams/ip-bandwidth-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
+		const selectedRange = range(url);
+		const ips = await repository.streamTabBandwidthIpMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
+		return jsonResponse({
+			rangeFrom: selectedRange.since,
+			rangeTo: selectedRange.until,
+			rangeDurationMs: selectedRange.until - selectedRange.since,
+			ips,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/streams/error-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		const scopeStreamId = streamsScopeId(selection, user);
+		const selectedRange = range(url);
+		const errors = await repository.streamErrorReasonMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
+		return jsonResponse({
+			rangeFrom: selectedRange.since,
+			rangeTo: selectedRange.until,
+			rangeDurationMs: selectedRange.until - selectedRange.since,
+			errors,
 		});
 	});
 

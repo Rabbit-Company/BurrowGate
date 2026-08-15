@@ -1003,6 +1003,7 @@ export const repository = {
       WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
       GROUP BY method
       ORDER BY count DESC
+      LIMIT 15
     `) as Array<{ method: string; count: number | string }>;
 		return {
 			series: fillTrafficMetricSeries(
@@ -1762,11 +1763,25 @@ export const repository = {
     `) as Array<{ ip: string; count: number | string }>;
 		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
 	},
+	async tabBandwidthIpMetrics(siteScope: string | string[] | undefined, since: number, until: number): Promise<Array<{ ip: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const rows = (await db`
+      SELECT ip, COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS count
+      FROM bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} AND ip <> '__other__' ${siteFilter}
+      GROUP BY ip
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ ip: string; count: number | string }>;
+		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
+	},
 	async tabPathMetrics(
 		siteScope: string | string[] | undefined,
 		since: number,
 		until: number,
-		scope: "protection",
+		scope: "protection" | "requests",
 	): Promise<Array<{ path: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
@@ -2155,7 +2170,7 @@ export const repository = {
 		uniqueIps: number;
 		clientToUpstreamBytes: number;
 		upstreamToClientBytes: number;
-		countries: Array<{ countryCode: string; connections: number; bytes: number }>;
+		countries: Array<{ countryCode: string; connections: number; bytes: number; blocked: number }>;
 	}> {
 		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
 		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
@@ -2178,17 +2193,32 @@ export const repository = {
 				country_code: string;
 				connections: number | string;
 			}>;
+		const blockedCountries =
+			(await db`SELECT COALESCE(country_code,'ZZ') AS country_code,COUNT(*) AS blocked FROM stream_events WHERE event_type='blocked' AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter} GROUP BY COALESCE(country_code,'ZZ')`) as Array<{
+				country_code: string;
+				blocked: number | string;
+			}>;
 		const connectionsByCountry = new Map(connectionCountries.map((row) => [row.country_code, toNumber(row.connections)]));
-		const countries = new Map<string, { countryCode: string; connections: number; bytes: number }>();
+		const blockedByCountry = new Map(blockedCountries.map((row) => [row.country_code, toNumber(row.blocked)]));
+		const countries = new Map<string, { countryCode: string; connections: number; bytes: number; blocked: number }>();
 		for (const row of countryRows)
 			countries.set(row.country_code, {
 				countryCode: row.country_code,
 				connections: connectionsByCountry.get(row.country_code) ?? 0,
 				bytes: toNumber(row.bytes),
+				blocked: blockedByCountry.get(row.country_code) ?? 0,
 			});
 		for (const row of connectionCountries)
 			if (!countries.has(row.country_code))
-				countries.set(row.country_code, { countryCode: row.country_code, connections: toNumber(row.connections), bytes: 0 });
+				countries.set(row.country_code, {
+					countryCode: row.country_code,
+					connections: toNumber(row.connections),
+					bytes: 0,
+					blocked: blockedByCountry.get(row.country_code) ?? 0,
+				});
+		for (const row of blockedCountries)
+			if (!countries.has(row.country_code))
+				countries.set(row.country_code, { countryCode: row.country_code, connections: 0, bytes: 0, blocked: toNumber(row.blocked) });
 		return {
 			connections: toNumber(events?.connections),
 			disconnections: toNumber(events?.disconnections),
@@ -2276,6 +2306,110 @@ export const repository = {
 			point.upstreamToClientBytes = toNumber(row.upstream_to_client_bytes);
 		}
 		return { series };
+	},
+	async streamsComparisonMetrics(streamIds: string[], since: number, until: number): Promise<Array<{ streamId: string; connections: number; bytes: number }>> {
+		if (streamIds.length === 0) return [];
+		const streamFilter = db`AND stream_id IN ${db(streamIds)}`;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const eventRows = (await db`
+      SELECT stream_id, COUNT(*) AS connections
+      FROM stream_events
+      WHERE event_type='connected' AND created_at >= ${since} AND created_at <= ${until} ${streamFilter}
+      GROUP BY stream_id
+    `) as Array<{ stream_id: string; connections: number | string }>;
+		const bandwidthRows = (await db`
+      SELECT stream_id, COALESCE(SUM(client_to_upstream_bytes + upstream_to_client_bytes),0) AS bytes
+      FROM stream_bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${streamFilter}
+      GROUP BY stream_id
+    `) as Array<{ stream_id: string; bytes: number | string }>;
+		const totals = new Map<string, { connections: number; bytes: number }>();
+		for (const row of eventRows) totals.set(row.stream_id, { connections: toNumber(row.connections), bytes: 0 });
+		for (const row of bandwidthRows) {
+			const current = totals.get(row.stream_id) ?? { connections: 0, bytes: 0 };
+			current.bytes = toNumber(row.bytes);
+			totals.set(row.stream_id, current);
+		}
+		return [...totals.entries()].map(([streamId, value]) => ({ streamId, ...value }));
+	},
+	async streamTabIpMetrics(streamId: string | undefined, since: number, until: number, scope: "blocked"): Promise<Array<{ ip: string; count: number }>> {
+		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const scopeFilter = scope === "blocked" ? db`AND event_type='blocked'` : db``;
+		const rows = (await db`
+      SELECT COALESCE(client_ip, 'unknown') AS ip, COUNT(*) AS count
+      FROM stream_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${streamFilter} ${scopeFilter}
+      GROUP BY COALESCE(client_ip, 'unknown')
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ ip: string; count: number | string }>;
+		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
+	},
+	async streamTabBandwidthIpMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ ip: string; count: number }>> {
+		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const rows = (await db`
+      SELECT ip, COALESCE(SUM(client_to_upstream_bytes + upstream_to_client_bytes),0) AS count
+      FROM stream_bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} AND ip <> '__other__' ${streamFilter}
+      GROUP BY ip
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ ip: string; count: number | string }>;
+		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
+	},
+	async streamBlockReasonMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ reason: string; count: number }>> {
+		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const rows = (await db`
+      SELECT COALESCE(reason, 'Unknown') AS reason, COUNT(*) AS count
+      FROM stream_events
+      WHERE event_type='blocked' AND created_at >= ${since} AND created_at <= ${until} ${streamFilter}
+      GROUP BY COALESCE(reason, 'Unknown')
+      ORDER BY count DESC
+      LIMIT 15
+    `) as Array<{ reason: string; count: number | string }>;
+		return rows.map((row) => ({ reason: row.reason, count: toNumber(row.count) }));
+	},
+	async streamErrorReasonMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ error: string; count: number }>> {
+		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const rows = (await db`
+      SELECT error, COUNT(*) AS count
+      FROM stream_events
+      WHERE event_type IN ('upstream-error','listener-error') AND error IS NOT NULL AND created_at >= ${since} AND created_at <= ${until} ${streamFilter}
+      GROUP BY error
+      ORDER BY count DESC
+      LIMIT 15
+    `) as Array<{ error: string; count: number | string }>;
+		return rows.map((row) => ({ error: row.error, count: toNumber(row.count) }));
+	},
+	async streamProtocolMetrics(
+		streamId: string | undefined,
+		since: number,
+		until: number,
+	): Promise<Array<{ protocol: string; connections: number; bytes: number }>> {
+		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const eventRows = (await db`
+      SELECT protocol, COUNT(*) AS connections
+      FROM stream_events
+      WHERE event_type='connected' AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}
+      GROUP BY protocol
+    `) as Array<{ protocol: string; connections: number | string }>;
+		const bandwidthRows = (await db`
+      SELECT protocol, COALESCE(SUM(client_to_upstream_bytes + upstream_to_client_bytes),0) AS bytes
+      FROM stream_bandwidth_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${bandwidthStreamFilter}
+      GROUP BY protocol
+    `) as Array<{ protocol: string; bytes: number | string }>;
+		const totals = new Map<string, { connections: number; bytes: number }>();
+		for (const row of eventRows) totals.set(row.protocol, { connections: toNumber(row.connections), bytes: 0 });
+		for (const row of bandwidthRows) {
+			const current = totals.get(row.protocol) ?? { connections: 0, bytes: 0 };
+			current.bytes = toNumber(row.bytes);
+			totals.set(row.protocol, current);
+		}
+		return [...totals.entries()].map(([protocol, value]) => ({ protocol, ...value }));
 	},
 	async deleteStreamEventsBeforeBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
 		const rows =

@@ -160,13 +160,13 @@ export function adminPage(): string {
 </section>
 
 <section class="grid charts-grid">
-  <article class="card chart-card"><div class="pad"><h2 id="primaryChartTitle">Traffic volume</h2><p id="primaryChartSubtitle" class="muted">Requests, blocked requests, and origin errors</p></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="trafficChart"></canvas></div><div id="trafficEmpty" class="empty-state hidden">No traffic in this range.</div></div></article>
-  <article class="card chart-card"><div class="pad"><h2 id="secondaryChartTitle">Origin latency</h2><p id="secondaryChartSubtitle" class="muted">Average proxy response time per interval</p></div><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="latencyChart"></canvas></div><div id="latencyEmpty" class="empty-state hidden">No latency data in this range.</div></div><div id="decisionBreakdown" class="breakdown"></div></article>
+  <article class="card chart-card"><div class="pad row between responsive"><div><h2 id="primaryChartTitle">Traffic volume</h2><p id="primaryChartSubtitle" class="muted">Requests, blocked requests, and origin errors</p></div><select id="chartView" class="select select-small"><option value="traffic:primary">Traffic volume</option><option value="traffic:secondary">Origin latency</option><option value="traffic:methods">Requests by method</option><option value="bandwidth:primary">Client-side bandwidth</option><option value="bandwidth:primary:bitrate">Client-side bandwidth (bitrate)</option><option value="bandwidth:secondary">Upstream bandwidth</option><option value="bandwidth:secondary:bitrate">Upstream bandwidth (bitrate)</option><option value="cache:primary">Cache outcomes</option><option value="cache:secondary">Cache hit ratio</option><option value="protection:primary">Request protection outcomes</option><option value="protection:secondary">Top matched rules</option><option value="sessions:primary">Session lifecycle</option><option value="sessions:secondary">Active sessions</option><option value="rules:primary">Network rules created</option><option value="rules:secondary">Current rule state</option><option value="routes:primary">Route outcomes</option><option value="routes:secondary">Route policy configuration</option><option value="access:primary">Access authentication</option><option value="access:secondary">Assigned users</option><option value="sites:primary">Traffic by site</option><option value="sites:secondary">Origin latency by site</option></select></div><div class="chart-layout"><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="trafficChart"></canvas></div><div id="trafficEmpty" class="empty-state hidden">No data in this range.</div></div><aside id="primarySummary" class="chart-sidebar"></aside></div></article>
 </section>
 
 <section class="card geo-card">
   <div class="pad row between responsive">
     <div><h2>Geographic distribution</h2><p id="geoSubtitle" class="muted">Requests by country for the selected range</p></div>
+    <select id="geoMetricMode" class="select select-small"><option value="requests">Requests</option><option value="bandwidth">Client bandwidth</option><option value="sessions">Sessions created</option><option value="blocked">Blocked requests</option><option value="protection">Matched requests</option><option value="cache">Cache hits</option><option value="access">Authentication events</option><option value="routes">Route enforcement actions</option><option value="sites">Requests (all sites)</option></select>
   </div>
   <div class="geo-layout">
     <div id="geoMapWrap" class="geo-map-wrap">
@@ -191,7 +191,7 @@ export function adminPage(): string {
 <section id="refererCard" class="card pad">
   <div class="row between responsive">
     <div><h2 id="refererTitle">Top referrers</h2><p id="refererSubtitle" class="muted">External referring domains for the selected range</p></div>
-    <strong id="refererTotal">0</strong>
+    <div class="row"><select id="topListMode" class="select select-small"><option value="requests">Top referrers (all requests)</option><option value="cache">Top referrers (cache hits)</option><option value="sites">Top referrers (all sites)</option><option value="sessions">Top usernames (sessions)</option><option value="access">Top usernames (authentication)</option><option value="blocked">Top offending IPs (blocked)</option><option value="routes">Top offending IPs (routes)</option><option value="protection">Top targeted paths (protection)</option><option value="paths-requests">Top requested paths (all traffic)</option><option value="bandwidth-ips">Top IPs by bandwidth</option></select><strong id="refererTotal">0</strong></div>
   </div>
   <div id="refererList" class="geo-country-list"><p class="muted">No external referrers in this range.</p></div>
 </section>
