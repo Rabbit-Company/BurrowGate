@@ -1,4 +1,4 @@
-import { authErrorToast, escapeHtml, page, tablerIcon } from "./layout.ts";
+import { APP_VERSION, authErrorToast, escapeHtml, page, tablerIcon } from "./layout.ts";
 
 export function loginPage(error = "", sso?: { enabled: boolean; enforceSso: boolean; buttonLabel: string }): string {
 	const passwordForm = `<form method="post" action="/_burrowgate/admin/login" class="grid"><label>Username<input class="input" name="username" autocomplete="username"></label><label>Password<input class="input" type="password" name="password" autocomplete="current-password"></label><button class="button" type="submit">Sign in</button></form>`;
@@ -126,7 +126,7 @@ export function adminPage(): string {
 		"Dashboard",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate</div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>

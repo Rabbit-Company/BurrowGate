@@ -57,6 +57,7 @@ describe("stream monitoring", () => {
 			protection_rule_id: null,
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
+			duration_ms: null,
 			created_at: Date.now(),
 		};
 		accumulator.recordEvent(event);
@@ -91,6 +92,7 @@ describe("stream monitoring", () => {
 			protection_rule_id: null,
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
+			duration_ms: null,
 			created_at: Date.now(),
 		});
 		accumulator.recordEvent(event("event-a"));
@@ -133,6 +135,7 @@ describe("stream monitoring", () => {
 			protection_rule_id: null,
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
+			duration_ms: null,
 			created_at: Date.now(),
 		});
 		accumulator.recordEvent(event("event-a"));

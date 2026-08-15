@@ -1,3 +1,7 @@
+import packageMetadata from "../../package.json" with { type: "json" };
+
+export const APP_VERSION = packageMetadata.version;
+
 export function escapeHtml(value: unknown): string {
 	return String(value ?? "")
 		.replaceAll("&", "&amp;")

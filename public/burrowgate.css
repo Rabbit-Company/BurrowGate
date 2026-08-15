@@ -114,6 +114,11 @@ button:disabled {
 	flex: none;
 	background: url("/_burrowgate/static/favicon.svg") center / contain no-repeat;
 }
+.version-tag {
+	font-size: 12px;
+	font-weight: 500;
+	color: #94a3b8;
+}
 .muted {
 	color: #94a3b8;
 }

@@ -148,10 +148,13 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 	return result;
 }
 
-type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protection_rule_id"> & { protection_rule_id?: string | null };
+type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protection_rule_id" | "duration_ms"> & {
+	protection_rule_id?: string | null;
+	duration_ms?: number | null;
+};
 
 function event(input: StreamEventInput): StreamEventRecord {
-	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, ...input };
+	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, duration_ms: null, ...input };
 }
 
 function runtimeError(error: unknown): string {
@@ -480,10 +483,11 @@ export class StreamProxyManager {
 		this.tcpConnections.delete(connection.id);
 		connection.client.terminate();
 		connection.upstream?.terminate();
+		const durationMs = Date.now() - connection.openedAt;
 		recordStreamDisconnect(
 			connection.record.id,
 			connection.clientIp,
-			Date.now() - connection.openedAt,
+			durationMs,
 			// protectionDecodeBytes covers bytes buffered for inspection but blocked before being forwarded -
 			// those are real client data, not a zero-byte recon probe, even though clientToUpstreamBytes is 0.
 			connection.clientToUpstreamBytes === 0 && connection.upstreamToClientBytes === 0 && connection.protectionDecodeBytes === 0,
@@ -519,6 +523,7 @@ export class StreamProxyManager {
 			error: error?.message ?? null,
 			client_to_upstream_bytes: connection.clientToUpstreamBytes,
 			upstream_to_client_bytes: connection.upstreamToClientBytes,
+			duration_ms: durationMs,
 		});
 		this.updateCounts(connection.record.id);
 	}
@@ -1103,7 +1108,8 @@ export class StreamProxyManager {
 		peer.closed = true;
 		peer.upstream.close();
 		runtime.peers.delete(udpPeerKey(peer.clientIp, peer.clientPort));
-		recordStreamDisconnect(peer.record.id, peer.clientIp, Date.now() - peer.openedAt, peer.clientToUpstreamBytes === 0 && peer.upstreamToClientBytes === 0);
+		const durationMs = Date.now() - peer.openedAt;
+		recordStreamDisconnect(peer.record.id, peer.clientIp, durationMs, peer.clientToUpstreamBytes === 0 && peer.upstreamToClientBytes === 0);
 		void this.evaluatePostDisconnectProtection(runtime.record, peer.clientIp, "udp");
 		if (error) {
 			this.monitorEvent({
@@ -1134,6 +1140,7 @@ export class StreamProxyManager {
 			error: error?.message ?? null,
 			client_to_upstream_bytes: peer.clientToUpstreamBytes,
 			upstream_to_client_bytes: peer.upstreamToClientBytes,
+			duration_ms: durationMs,
 		});
 		this.updateCounts(peer.record.id);
 	}

@@ -430,6 +430,7 @@ CREATE TABLE IF NOT EXISTS stream_events (
   protection_rule_id VARCHAR(128) NULL,
   client_to_upstream_bytes BIGINT NOT NULL DEFAULT 0,
   upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
+  duration_ms BIGINT NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stream_bandwidth_minutes (
@@ -608,6 +609,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_client_created ON stream_events (client_ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_port_created ON stream_events (incoming_port, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_events_protection_rule_id ON stream_events (protection_rule_id)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_events_type_duration ON stream_events (event_type, duration_ms)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_stream_bucket ON stream_bandwidth_minutes (stream_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_bandwidth_ip_bucket ON stream_bandwidth_minutes (ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_health_events_site_created ON origin_health_events (site_id, created_at)",
@@ -838,10 +840,15 @@ async function ensureAdminSessionColumns(): Promise<void> {
 }
 
 async function ensureStreamEventColumns(): Promise<void> {
-	try {
-		await db.unsafe("ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL");
-	} catch (error) {
-		if (!duplicateColumnError(error)) throw error;
+	for (const statement of [
+		"ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL",
+		"ALTER TABLE stream_events ADD COLUMN duration_ms BIGINT NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
 	}
 }
 

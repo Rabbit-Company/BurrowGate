@@ -360,6 +360,7 @@ export interface StreamEventRecord {
 	protection_rule_id: string | null;
 	client_to_upstream_bytes: number;
 	upstream_to_client_bytes: number;
+	duration_ms: number | null;
 	created_at: number;
 }
 

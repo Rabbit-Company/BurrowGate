@@ -61,6 +61,7 @@ const COLUMN_REGISTRY = {
 		{ key: "rule", label: "Rule" },
 		{ key: "toOrigin", label: "To origin" },
 		{ key: "toClient", label: "To client" },
+		{ key: "connectionId", label: "Connection ID", defaultVisible: false },
 	],
 	bandwidth: [
 		{ key: "country", label: "Country" },
@@ -93,7 +94,9 @@ function saveColumnVisibility() {
 }
 
 function isColumnVisible(tableKey, columnKey) {
-	return columnVisibility[tableKey]?.[columnKey] !== false;
+	const stored = columnVisibility[tableKey]?.[columnKey];
+	if (stored !== undefined) return stored;
+	return COLUMN_REGISTRY[tableKey]?.find((column) => column.key === columnKey)?.defaultVisible !== false;
 }
 
 const TABLE_RELOADERS = {
@@ -543,7 +546,7 @@ function renderSummaryList(containerId, items, formatter) {
 		.join("");
 }
 
-function streamChartCatalog(data) {
+function streamChartCatalog(data, longLivedData) {
 	return {
 		"connections:primary": {
 			title: "Stream traffic volume",
@@ -558,6 +561,18 @@ function streamChartCatalog(data) {
 				{ key: "disconnected", label: "Disconnected" },
 			],
 			data,
+		},
+		"connections:filtered": {
+			title: "Stream traffic volume (open ≥10s)",
+			subtitle: "Connections and disconnections open for at least 10 seconds (short pings and health checks are excluded)",
+			emptyMessage: "No connections open at least 10 seconds in this range.",
+			valueFormat: "number",
+			timeSeries: true,
+			datasets: [
+				{ key: "connected", label: "Connected" },
+				{ key: "disconnected", label: "Disconnected" },
+			],
+			data: longLivedData,
 		},
 		"connections:secondary": {
 			title: "Stream data volume",
@@ -672,8 +687,9 @@ function parseStreamChartViewKey(key) {
 function renderStreamCharts() {
 	if (!latestStreamMetrics) return;
 	const data = latestStreamMetrics.series ?? [];
+	const longLivedData = latestStreamMetrics.longLivedSeries ?? [];
 	const catalog = {
-		...streamChartCatalog(data),
+		...streamChartCatalog(data, longLivedData),
 		...streamComparisonCatalog(latestStreamMetrics.comparison ?? []),
 		...streamBlockReasonCatalog(latestStreamMetrics.blockReasons ?? []),
 		...streamProtocolCatalog(latestStreamMetrics.protocolBreakdown ?? []),
@@ -1620,6 +1636,7 @@ async function loadEvents() {
           ${isColumnVisible("events", "rule") ? `<td>${item.protection_rule_id ? `<code>${escapeHtml(item.protection_rule_id)}</code>` : "-"}</td>` : ""}
           ${isColumnVisible("events", "toOrigin") ? `<td>${formatBytes(item.client_to_upstream_bytes)}</td>` : ""}
           ${isColumnVisible("events", "toClient") ? `<td>${formatBytes(item.upstream_to_client_bytes)}</td>` : ""}
+          ${isColumnVisible("events", "connectionId") ? `<td>${item.connection_id ? `<code>${escapeHtml(item.connection_id)}</code>` : "-"}</td>` : ""}
         </tr>`,
 				)
 				.join("")

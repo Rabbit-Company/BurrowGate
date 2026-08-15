@@ -28,6 +28,8 @@ const METRIC_BUCKETS_MS = [
 	60_000, 300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 172_800_000, 345_600_000, 604_800_000,
 ] as const;
 
+const STREAM_LONG_LIVED_MIN_DURATION_MS = 10_000;
+
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
 	const session = await getAdminSession(request);
 	const user = session ? await resolveAdminUser(session) : null;
@@ -111,6 +113,7 @@ function eventSortBy(
 	| "country_code"
 	| "reason"
 	| "protection_rule_id"
+	| "connection_id"
 	| "client_to_upstream_bytes"
 	| "upstream_to_client_bytes" {
 	const value = stringParam(url, "sortBy");
@@ -121,6 +124,7 @@ function eventSortBy(
 		value === "country_code" ||
 		value === "reason" ||
 		value === "protection_rule_id" ||
+		value === "connection_id" ||
 		value === "client_to_upstream_bytes" ||
 		value === "upstream_to_client_bytes"
 		? value
@@ -360,11 +364,32 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		);
 		const blockReasons = await repository.streamBlockReasonMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
 		const protocolBreakdown = await repository.streamProtocolMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
+		const longLived = await repository.streamLongLivedMetrics(
+			scopeStreamId,
+			selectedRange.since,
+			selectedRange.until,
+			bucketMs,
+			STREAM_LONG_LIVED_MIN_DURATION_MS,
+		);
+		// Duration is only known once a connection closes, so long-running connections that are
+		// still open are invisible to the DB query above until they eventually disconnect. Fold
+		// still-open connections that already exceed the threshold into the current bucket so the
+		// chart doesn't under-report the most recent activity while it's still in progress.
+		const now = Date.now();
+		const nowBucket = Math.floor(now / bucketMs) * bucketMs;
+		const latestPoint = longLived.series.find((point) => point.bucket === nowBucket);
+		if (latestPoint) {
+			latestPoint.connected += streamProxyManager
+				.activeConnections()
+				.filter((connection) => now - connection.connectedAt >= STREAM_LONG_LIVED_MIN_DURATION_MS)
+				.filter((connection) => !scopeStreamId || connection.streamId === scopeStreamId).length;
+		}
 		return jsonResponse({
 			...(await repository.streamMetrics(scopeStreamId, selectedRange.since, selectedRange.until, bucketMs)),
 			comparison,
 			blockReasons,
 			protocolBreakdown,
+			longLivedSeries: longLived.series,
 			rangeFrom: selectedRange.since,
 			rangeTo: selectedRange.until,
 			rangeDurationMs: durationMs,

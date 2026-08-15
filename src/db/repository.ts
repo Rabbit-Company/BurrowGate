@@ -175,6 +175,7 @@ export interface StreamEventQuery {
 		| "country_code"
 		| "reason"
 		| "protection_rule_id"
+		| "connection_id"
 		| "client_to_upstream_bytes"
 		| "upstream_to_client_bytes";
 	sortDirection: SortDirection;
@@ -2103,7 +2104,7 @@ export const repository = {
 		if (events.length === 0) return;
 		await db.begin(async (transaction) => {
 			for (const event of events) {
-				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.created_at})`;
+				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,duration_ms,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.duration_ms},${event.created_at})`;
 			}
 		});
 	},
@@ -2304,6 +2305,47 @@ export const repository = {
 			if (!point) continue;
 			point.clientToUpstreamBytes = toNumber(row.client_to_upstream_bytes);
 			point.upstreamToClientBytes = toNumber(row.upstream_to_client_bytes);
+		}
+		return { series };
+	},
+	async streamLongLivedMetrics(
+		streamId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+		minDurationMs: number,
+	): Promise<{ series: Array<{ bucket: number; connected: number; disconnected: number }> }> {
+		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		// Duration is only known once a connection closes, so both series are derived from
+		// 'disconnected' rows: the disconnect bucket uses created_at directly, and the connect
+		// bucket is reconstructed as created_at - duration_ms (the connection's open time).
+		const disconnectedBucket = metricBucketExpression("created_at", bucketMs);
+		const connectedBucket = isMySqlDatabase()
+			? db`FLOOR((created_at - duration_ms) / ${bucketMs})`
+			: db`CAST((created_at - duration_ms) / ${bucketMs} AS BIGINT)`;
+		const disconnectedRows = (await db`
+      SELECT ${disconnectedBucket} * ${bucketMs} AS bucket, COUNT(*) AS count
+      FROM stream_events
+      WHERE event_type='disconnected' AND duration_ms >= ${minDurationMs}
+        AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}
+      GROUP BY ${disconnectedBucket}
+    `) as Array<{ bucket: number | string; count: number | string }>;
+		const connectedRows = (await db`
+      SELECT ${connectedBucket} * ${bucketMs} AS bucket, COUNT(*) AS count
+      FROM stream_events
+      WHERE event_type='disconnected' AND duration_ms >= ${minDurationMs}
+        AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}
+      GROUP BY ${connectedBucket}
+    `) as Array<{ bucket: number | string; count: number | string }>;
+		const series = emptyMetricPoints(since, until, bucketMs, (bucket) => ({ bucket, connected: 0, disconnected: 0 }));
+		const byBucket = new Map(series.map((point) => [point.bucket, point]));
+		for (const row of disconnectedRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) point.disconnected = toNumber(row.count);
+		}
+		for (const row of connectedRows) {
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) point.connected = toNumber(row.count);
 		}
 		return { series };
 	},
