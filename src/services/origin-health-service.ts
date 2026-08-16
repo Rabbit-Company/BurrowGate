@@ -1,7 +1,7 @@
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type {
-	HealthAlertOutboxRecord,
+	NotificationEventType,
 	OriginBackendHealthEventRecord,
 	OriginBackendHealthStatusRecord,
 	OriginHealthEventRecord,
@@ -10,15 +10,13 @@ import type {
 	SiteOriginRecord,
 	SiteRecord,
 } from "../types.ts";
-import { hmacSha256Hex, randomId } from "../utils/crypto.ts";
-import { decryptSecret } from "./secret-encryption-service.ts";
+import { randomId } from "../utils/crypto.ts";
+import { notificationService } from "./notification-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 
 const TICK_MS = 1_000;
 const STATUS_PERSIST_INTERVAL_MS = 5 * 60_000;
 const MAX_CONCURRENT_CHECKS = 10;
-const ALERT_POLL_MS = 2_000;
-const MAX_ALERT_ATTEMPTS = 8;
 
 export interface HealthCheckResult {
 	healthy: boolean;
@@ -164,7 +162,6 @@ export class OriginHealthManager {
 	private readonly runtime = new Map<string, RuntimeOriginHealth>();
 	private readonly poolStatuses = new Map<string, OriginHealthStatusRecord>();
 	private activeChecks = 0;
-	private alertWorkerRunning = false;
 
 	async initialize(): Promise<void> {
 		const [sites, origins, persistedBackends, persistedPools] = await Promise.all([
@@ -187,10 +184,7 @@ export class OriginHealthManager {
 	start(): void {
 		const checkTimer = setInterval(() => void this.tick(), TICK_MS);
 		(checkTimer as unknown as { unref?: () => void }).unref?.();
-		const alertTimer = setInterval(() => void this.deliverPendingAlerts(), ALERT_POLL_MS);
-		(alertTimer as unknown as { unref?: () => void }).unref?.();
 		void this.tick();
-		void this.deliverPendingAlerts();
 	}
 
 	summary(siteId: string) {
@@ -390,9 +384,8 @@ export class OriginHealthManager {
 				await repository.saveOriginHealthStatus(nextPool);
 				const event = this.poolEvent(runtime.site, previousPool.state, nextPool, result);
 				await repository.insertOriginHealthEvent(event);
-				if (nextPool.state === "unhealthy") await this.queueAlert(runtime.site, event.id, "pool_unhealthy", null, result, nextPool.state);
-				else if (previousPool.state === "unhealthy" && nextPool.state === "healthy")
-					await this.queueAlert(runtime.site, event.id, "pool_recovered", null, result, nextPool.state);
+				if (nextPool.state === "unhealthy") await this.notifyTransition(runtime.site, "pool_unhealthy", null, result);
+				else if (previousPool.state === "unhealthy" && nextPool.state === "healthy") await this.notifyTransition(runtime.site, "pool_recovered", null, result);
 			}
 			if (backendTransitioned && !poolTransitioned) {
 				const eventType =
@@ -401,7 +394,7 @@ export class OriginHealthManager {
 						: previousBackend.state === "unhealthy" && nextBackend.state === "healthy"
 							? "origin_recovered"
 							: null;
-				if (eventType && backendEvent) await this.queueAlert(runtime.site, backendEvent.id, eventType, runtime.origin, result, nextBackend.state);
+				if (eventType && backendEvent) await this.notifyTransition(runtime.site, eventType, runtime.origin, result);
 			}
 		} catch (error) {
 			Logger.error("[BurrowGate] Unable to persist origin health check", { siteId: runtime.site.id, originId: runtime.origin.id, error });
@@ -444,111 +437,28 @@ export class OriginHealthManager {
 		};
 	}
 
-	private async queueAlert(
+	private async notifyTransition(
 		site: SiteRecord,
-		eventId: string,
-		eventType: HealthAlertOutboxRecord["event_type"],
+		eventType: Extract<NotificationEventType, "origin_unhealthy" | "origin_recovered" | "pool_unhealthy" | "pool_recovered">,
 		origin: SiteOriginRecord | null,
 		result: HealthCheckResult,
-		state: OriginHealthState,
 	): Promise<void> {
-		if (site.health_alert_enabled !== 1 || !site.health_alert_webhook_url) return;
+		const originName = origin ? ` ${origin.name}` : "";
+		const summaries: Record<typeof eventType, string> = {
+			origin_unhealthy: `BurrowGate:${originName} origin for ${site.name} is unhealthy (${result.error ?? "health check failed"}).`,
+			origin_recovered: `BurrowGate:${originName} origin for ${site.name} recovered.`,
+			pool_unhealthy: `BurrowGate: all origins for ${site.name} are unavailable.`,
+			pool_recovered: `BurrowGate: the origin pool for ${site.name} recovered.`,
+		};
+		const severity = eventType === "origin_unhealthy" || eventType === "pool_unhealthy" ? "critical" : "info";
 		const payload = {
-			id: eventId,
-			type: eventType,
 			site: { id: site.id, name: site.name, publicHost: site.public_host },
 			origin: origin ? { id: origin.id, name: origin.name, url: new URL(origin.origin_url).origin } : null,
-			state,
 			status: result.status,
 			latencyMs: Math.round(result.latencyMs),
 			reason: result.error,
-			detectedAt: result.checkedAt,
 		};
-		await repository.insertHealthAlert({
-			id: randomId("health_alert"),
-			site_id: site.id,
-			event_id: eventId,
-			event_type: eventType,
-			payload_json: JSON.stringify(payload),
-			status: "pending",
-			attempts: 0,
-			next_attempt_at: Date.now(),
-			last_error: null,
-			created_at: Date.now(),
-			delivered_at: null,
-		});
-	}
-
-	private async deliverPendingAlerts(): Promise<void> {
-		if (this.alertWorkerRunning) return;
-		this.alertWorkerRunning = true;
-		try {
-			for (const alert of await repository.pendingHealthAlerts(Date.now(), 5)) await this.deliverAlert(alert);
-		} catch (error) {
-			Logger.error("[BurrowGate] Unable to process health alert outbox", { error });
-		} finally {
-			this.alertWorkerRunning = false;
-		}
-	}
-
-	private async deliverAlert(alert: HealthAlertOutboxRecord): Promise<void> {
-		const site = await repository.siteById(alert.site_id);
-		const attempts = Number(alert.attempts) + 1;
-		if (!site || site.health_alert_enabled !== 1 || !site.health_alert_webhook_url) {
-			await repository.updateHealthAlertDelivery(alert.id, "failed", attempts, Date.now(), "Health alert destination is no longer enabled", null);
-			openMetrics.recordHealthAlert(alert.site_id, "failed");
-			return;
-		}
-		try {
-			const url = await decryptSecret(site.health_alert_webhook_url);
-			const secret = site.health_alert_webhook_secret ? await decryptSecret(site.health_alert_webhook_secret) : null;
-			const payload = JSON.parse(alert.payload_json) as { origin?: { name?: string } | null; reason?: string };
-			const originName = payload.origin?.name ? ` ${payload.origin.name}` : "";
-			const messages: Record<HealthAlertOutboxRecord["event_type"], string> = {
-				origin_unhealthy: `BurrowGate:${originName} origin for ${site.name} is unhealthy (${payload.reason ?? "health check failed"}).`,
-				origin_recovered: `BurrowGate:${originName} origin for ${site.name} recovered.`,
-				pool_unhealthy: `BurrowGate: all origins for ${site.name} are unavailable.`,
-				pool_recovered: `BurrowGate: the origin pool for ${site.name} recovered.`,
-			};
-			const message = messages[alert.event_type];
-			const down = alert.event_type === "origin_unhealthy" || alert.event_type === "pool_unhealthy";
-			const headers = new Headers({ "x-burrowgate-event-id": alert.event_id, "user-agent": "BurrowGate-Alerts/1.0" });
-			let body: string;
-			if (site.health_alert_provider === "slack") {
-				headers.set("content-type", "application/json");
-				body = JSON.stringify({ text: message });
-			} else if (site.health_alert_provider === "discord") {
-				headers.set("content-type", "application/json");
-				body = JSON.stringify({ content: message });
-			} else if (site.health_alert_provider === "ntfy") {
-				headers.set("content-type", "text/plain; charset=utf-8");
-				headers.set("title", down ? `Origin down: ${site.name}` : `Origin recovered: ${site.name}`);
-				headers.set("priority", down ? "high" : "default");
-				headers.set("tags", down ? "warning" : "white_check_mark");
-				body = message;
-			} else {
-				headers.set("content-type", "application/json");
-				body = alert.payload_json;
-			}
-			if (secret) headers.set("x-burrowgate-signature", `sha256=${await hmacSha256Hex(secret, body)}`);
-			const response = await fetch(url, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(5_000) });
-			await response.body?.cancel().catch(() => undefined);
-			if (response.status < 200 || response.status >= 300) throw new Error(`Webhook returned HTTP ${response.status}`);
-			await repository.updateHealthAlertDelivery(alert.id, "delivered", attempts, Date.now(), null, Date.now());
-			openMetrics.recordHealthAlert(alert.site_id, "delivered");
-		} catch (error) {
-			const terminal = attempts >= MAX_ALERT_ATTEMPTS;
-			const delay = Math.min(60 * 60_000, 5_000 * 2 ** Math.max(0, attempts - 1));
-			await repository.updateHealthAlertDelivery(
-				alert.id,
-				terminal ? "failed" : "pending",
-				attempts,
-				Date.now() + delay + Math.round(Math.random() * 1_000),
-				boundedError(error),
-				null,
-			);
-			openMetrics.recordHealthAlert(alert.site_id, terminal ? "failed" : "retry");
-		}
+		await notificationService.recordSiteEvent(site, eventType, severity, summaries[eventType], payload, result.checkedAt);
 	}
 }
 

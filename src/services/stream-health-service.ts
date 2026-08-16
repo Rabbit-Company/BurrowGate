@@ -1,7 +1,10 @@
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import type { LatencyCheckResult, StreamRecord } from "../types.ts";
+import { notificationService } from "./notification-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+
+type StreamHealthState = "unknown" | "up" | "down";
 
 const TICK_MS = 1_000;
 
@@ -54,6 +57,9 @@ interface RuntimeStreamHealth {
 	nextCheckAt: number;
 	running: boolean;
 	settingsKey: string;
+	consecutiveFailures: number;
+	consecutiveSuccesses: number;
+	state: StreamHealthState;
 }
 
 class StreamHealthManager {
@@ -97,7 +103,32 @@ class StreamHealthManager {
 			nextCheckAt: enabled ? Date.now() + (immediate ? 0 : Math.round(Math.random() * 1_000)) : Number.POSITIVE_INFINITY,
 			running: false,
 			settingsKey: key,
+			consecutiveFailures: 0,
+			consecutiveSuccesses: 0,
+			state: "unknown",
 		});
+	}
+
+	/** Down on any transition into it; up only counts as a recovery once a prior down was reported. */
+	private advanceState(runtime: RuntimeStreamHealth, result: LatencyCheckResult): "down" | "up" | null {
+		const failureThreshold = Number(runtime.stream.origin_health_check_failure_threshold ?? 3);
+		const recoveryThreshold = Number(runtime.stream.origin_health_check_recovery_threshold ?? 2);
+		let next = runtime.state;
+		if (result.timedOut) {
+			runtime.consecutiveSuccesses = 0;
+			runtime.consecutiveFailures += 1;
+			if (runtime.consecutiveFailures >= failureThreshold) next = "down";
+		} else {
+			runtime.consecutiveFailures = 0;
+			runtime.consecutiveSuccesses += 1;
+			if (runtime.consecutiveSuccesses >= recoveryThreshold) next = "up";
+		}
+		if (next === runtime.state) return null;
+		const previous = runtime.state;
+		runtime.state = next;
+		if (next === "down") return "down";
+		if (next === "up" && previous === "down") return "up";
+		return null;
 	}
 
 	private async tick(): Promise<void> {
@@ -116,6 +147,21 @@ class StreamHealthManager {
 			openMetrics.recordStreamOriginHealthCheck(runtime.stream.id, result.timedOut, result.latencyMs ?? Number(runtime.stream.origin_health_check_timeout_ms));
 			const bucketStart = Math.floor(Date.now() / 60_000) * 60_000;
 			await repository.addStreamOriginLatencyResult(runtime.stream.id, bucketStart, result);
+			const transition = this.advanceState(runtime, result);
+			if (transition) {
+				const down = transition === "down";
+				const summary = down
+					? `BurrowGate: origin for ${runtime.stream.name} is unreachable (${runtime.stream.forward_host}:${runtime.stream.forward_port}).`
+					: `BurrowGate: origin for ${runtime.stream.name} recovered.`;
+				await notificationService.recordStreamEvent(
+					runtime.stream,
+					down ? "stream_origin_unhealthy" : "stream_origin_recovered",
+					down ? "critical" : "info",
+					summary,
+					{ incomingPort: runtime.stream.incoming_port, forwardHost: runtime.stream.forward_host, forwardPort: runtime.stream.forward_port },
+					Date.now(),
+				);
+			}
 		} catch (error) {
 			Logger.error("[BurrowGate] Unable to persist stream origin latency check", { streamId: runtime.stream.id, error });
 		} finally {

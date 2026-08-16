@@ -12,6 +12,7 @@ function stream(overrides: Partial<StreamRecord> = {}): StreamRecord {
 	const now = Date.now();
 	return {
 		id: `stream_${crypto.randomUUID()}`,
+		name: "Bandwidth ban stream",
 		incoming_port: 34567,
 		forward_host: "origin.test",
 		forward_port: 45678,

@@ -98,7 +98,7 @@ export class BurrowGateOpenMetrics {
 	private readonly originBackendHealthState: Gauge;
 	private readonly originHealthChecks: Counter;
 	private readonly originHealthDuration: Histogram;
-	private readonly healthAlerts: Counter;
+	private readonly notificationDeliveries: Counter;
 	private readonly connectivityPingChecks: Counter;
 	private readonly connectivityPingDuration: Histogram;
 	private readonly streamOriginHealthChecks: Counter;
@@ -298,9 +298,9 @@ export class BurrowGateOpenMetrics {
 			buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
 			registry: this.registry,
 		});
-		this.healthAlerts = new Counter({
-			name: "origin_health_alerts",
-			help: "Origin health alert delivery outcomes",
+		this.notificationDeliveries = new Counter({
+			name: "notification_deliveries",
+			help: "Notification-event webhook delivery outcomes",
 			labelNames: ["site_id", "outcome"],
 			registry: this.registry,
 		});
@@ -527,8 +527,8 @@ export class BurrowGateOpenMetrics {
 		this.streamOriginHealthDuration.labels({ stream_id: streamId }).observe(Math.max(0, durationMs) / 1_000);
 	}
 
-	recordHealthAlert(siteId: string, outcome: "delivered" | "retry" | "failed"): void {
-		if (this.enabled) this.healthAlerts.labels({ site_id: siteId, outcome }).inc();
+	recordNotificationDelivery(siteId: string, outcome: "delivered" | "retry" | "failed"): void {
+		if (this.enabled) this.notificationDeliveries.labels({ site_id: siteId, outcome }).inc();
 	}
 
 	beginScrape(): number {

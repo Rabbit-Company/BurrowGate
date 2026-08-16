@@ -41,7 +41,12 @@ import type {
 	StreamCountryRuleRecord,
 	OriginHealthStatusRecord,
 	OriginHealthEventRecord,
-	HealthAlertOutboxRecord,
+	NotificationEventRecord,
+	NotificationEventType,
+	NotificationOutboxRecord,
+	NotificationOutboxStatus,
+	NotificationEventWithDeliveryRecord,
+	PendingNotificationDeliveryRecord,
 	SiteOriginRecord,
 	OriginBackendHealthStatusRecord,
 	OriginBackendHealthEventRecord,
@@ -122,6 +127,28 @@ export interface StreamRuleQuery {
 	action?: StreamRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
+	sortDirection: SortDirection;
+}
+
+export interface NotificationQuery {
+	siteId: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	type?: NotificationEventType;
+	status?: NotificationOutboxStatus;
+	sortBy: "created_at" | "occurred_at" | "type" | "status";
+	sortDirection: SortDirection;
+}
+
+export interface StreamNotificationQuery {
+	streamId: string;
+	page: number;
+	pageSize: number;
+	search?: string;
+	type?: NotificationEventType;
+	status?: NotificationOutboxStatus;
+	sortBy: "created_at" | "occurred_at" | "type" | "status";
 	sortDirection: SortDirection;
 }
 
@@ -424,6 +451,8 @@ export const repository = {
 			await transaction`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM certificate_events WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM health_alert_outbox WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM notification_outbox WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM notification_events WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM origin_backend_health_events WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM origin_backend_health_status WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM origin_health_events WHERE site_id=${siteId}`;
@@ -481,16 +510,33 @@ export const repository = {
 	async originHealthEvents(siteId: string, limit = 50): Promise<OriginHealthEventRecord[]> {
 		return (await db`SELECT * FROM origin_health_events WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as OriginHealthEventRecord[];
 	},
-	async insertHealthAlert(alert: HealthAlertOutboxRecord): Promise<void> {
-		await db`INSERT INTO health_alert_outbox (id,site_id,event_id,event_type,payload_json,status,attempts,next_attempt_at,last_error,created_at,delivered_at) VALUES (${alert.id},${alert.site_id},${alert.event_id},${alert.event_type},${alert.payload_json},${alert.status},${alert.attempts},${alert.next_attempt_at},${alert.last_error},${alert.created_at},${alert.delivered_at})`;
+	async insertNotificationEvent(event: NotificationEventRecord): Promise<void> {
+		await db`INSERT INTO notification_events (id,site_id,stream_id,type,severity,summary,payload_json,occurred_at,created_at) VALUES (${event.id},${event.site_id},${event.stream_id},${event.type},${event.severity},${event.summary},${event.payload_json},${event.occurred_at},${event.created_at})`;
 	},
-	async pendingHealthAlerts(now: number, limit: number): Promise<HealthAlertOutboxRecord[]> {
-		return (await db`SELECT * FROM health_alert_outbox WHERE status='pending' AND next_attempt_at <= ${now} ORDER BY next_attempt_at ASC LIMIT ${limit}`) as HealthAlertOutboxRecord[];
+	async insertNotificationOutbox(outbox: NotificationOutboxRecord): Promise<void> {
+		await db`INSERT INTO notification_outbox (id,event_id,site_id,stream_id,status,attempts,next_attempt_at,last_error,created_at,delivered_at) VALUES (${outbox.id},${outbox.event_id},${outbox.site_id},${outbox.stream_id},${outbox.status},${outbox.attempts},${outbox.next_attempt_at},${outbox.last_error},${outbox.created_at},${outbox.delivered_at})`;
 	},
-	async healthAlerts(siteId: string, limit = 25): Promise<HealthAlertOutboxRecord[]> {
-		return (await db`SELECT * FROM health_alert_outbox WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as HealthAlertOutboxRecord[];
+	async pendingNotificationOutbox(now: number, limit: number): Promise<PendingNotificationDeliveryRecord[]> {
+		return (await db`
+			SELECT no.id, no.event_id, no.site_id, no.stream_id, no.status, no.attempts, no.next_attempt_at, no.last_error, no.created_at, no.delivered_at,
+				ne.type, ne.severity, ne.summary, ne.payload_json, ne.occurred_at
+			FROM notification_outbox no
+			JOIN notification_events ne ON ne.id = no.event_id
+			WHERE no.status='pending' AND no.next_attempt_at <= ${now}
+				AND no.id = (
+					SELECT oldest.id FROM notification_outbox oldest
+					WHERE oldest.status='pending'
+						AND (
+							(no.site_id IS NOT NULL AND oldest.site_id = no.site_id)
+							OR (no.stream_id IS NOT NULL AND oldest.stream_id = no.stream_id)
+						)
+					ORDER BY oldest.created_at ASC, oldest.id ASC
+					LIMIT 1
+				)
+			ORDER BY no.created_at ASC
+			LIMIT ${limit}`) as PendingNotificationDeliveryRecord[];
 	},
-	async updateHealthAlertDelivery(
+	async updateNotificationOutboxDelivery(
 		id: string,
 		status: "pending" | "delivered" | "failed",
 		attempts: number,
@@ -498,7 +544,57 @@ export const repository = {
 		error: string | null,
 		deliveredAt: number | null,
 	): Promise<void> {
-		await db`UPDATE health_alert_outbox SET status=${status}, attempts=${attempts}, next_attempt_at=${nextAttemptAt}, last_error=${error}, delivered_at=${deliveredAt} WHERE id=${id}`;
+		await db`UPDATE notification_outbox SET status=${status}, attempts=${attempts}, next_attempt_at=${nextAttemptAt}, last_error=${error}, delivered_at=${deliveredAt} WHERE id=${id}`;
+	},
+	async pagedNotificationsForSite(query: NotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
+		const pattern = searchPattern(query.search);
+		const searchFilter = pattern ? db`AND (LOWER(ne.summary) LIKE ${pattern} OR LOWER(ne.type) LIKE ${pattern})` : db``;
+		const typeFilter = query.type ? db`AND ne.type=${query.type}` : db``;
+		const statusFilter = query.status ? db`AND no.status=${query.status}` : db``;
+		const sortColumn =
+			query.sortBy === "type" ? "ne.type" : query.sortBy === "status" ? "no.status" : query.sortBy === "occurred_at" ? "ne.occurred_at" : "no.created_at";
+		const order = db.unsafe(`${sortColumn} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+			SELECT COUNT(*) AS count FROM notification_outbox no
+			JOIN notification_events ne ON ne.id = no.event_id
+			WHERE no.site_id=${query.siteId} ${searchFilter} ${typeFilter} ${statusFilter}
+		`) as Array<{ count: number | string }>;
+		const items = (await db`
+			SELECT ne.id, ne.site_id, ne.stream_id, ne.type, ne.severity, ne.summary, ne.payload_json, ne.occurred_at, ne.created_at,
+				no.status AS delivery_status, no.attempts AS delivery_attempts, no.last_error AS delivery_last_error, no.delivered_at
+			FROM notification_outbox no
+			JOIN notification_events ne ON ne.id = no.event_id
+			WHERE no.site_id=${query.siteId} ${searchFilter} ${typeFilter} ${statusFilter}
+			ORDER BY ${order}
+			LIMIT ${query.pageSize} OFFSET ${offset}
+		`) as NotificationEventWithDeliveryRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
+	},
+	async pagedNotificationsForStream(query: StreamNotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
+		const pattern = searchPattern(query.search);
+		const searchFilter = pattern ? db`AND (LOWER(ne.summary) LIKE ${pattern} OR LOWER(ne.type) LIKE ${pattern})` : db``;
+		const typeFilter = query.type ? db`AND ne.type=${query.type}` : db``;
+		const statusFilter = query.status ? db`AND no.status=${query.status}` : db``;
+		const sortColumn =
+			query.sortBy === "type" ? "ne.type" : query.sortBy === "status" ? "no.status" : query.sortBy === "occurred_at" ? "ne.occurred_at" : "no.created_at";
+		const order = db.unsafe(`${sortColumn} ${query.sortDirection.toUpperCase()}`);
+		const offset = (query.page - 1) * query.pageSize;
+		const [countRow] = (await db`
+			SELECT COUNT(*) AS count FROM notification_outbox no
+			JOIN notification_events ne ON ne.id = no.event_id
+			WHERE no.stream_id=${query.streamId} ${searchFilter} ${typeFilter} ${statusFilter}
+		`) as Array<{ count: number | string }>;
+		const items = (await db`
+			SELECT ne.id, ne.site_id, ne.stream_id, ne.type, ne.severity, ne.summary, ne.payload_json, ne.occurred_at, ne.created_at,
+				no.status AS delivery_status, no.attempts AS delivery_attempts, no.last_error AS delivery_last_error, no.delivered_at
+			FROM notification_outbox no
+			JOIN notification_events ne ON ne.id = no.event_id
+			WHERE no.stream_id=${query.streamId} ${searchFilter} ${typeFilter} ${statusFilter}
+			ORDER BY ${order}
+			LIMIT ${query.pageSize} OFFSET ${offset}
+		`) as NotificationEventWithDeliveryRecord[];
+		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async backendHealthStatus(originId: string): Promise<OriginBackendHealthStatusRecord | null> {
 		const rows = (await db`SELECT * FROM origin_backend_health_status WHERE origin_id=${originId} LIMIT 1`) as OriginBackendHealthStatusRecord[];
@@ -994,6 +1090,9 @@ export const repository = {
 	},
 	async updateStreamBandwidthPolicy(streamId: string, bandwidthPolicyJson: string, updatedAt: number): Promise<void> {
 		await db`UPDATE streams SET bandwidth_policy_json=${bandwidthPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+	},
+	async updateStreamNotificationPolicy(streamId: string, notificationPolicyJson: string, updatedAt: number): Promise<void> {
+		await db`UPDATE streams SET notification_policy_json=${notificationPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
 	},
 	async deleteExpiredStreamRulesBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
 		const rows =
@@ -2272,13 +2371,49 @@ export const repository = {
 		await db`DELETE FROM origin_backend_health_events WHERE id IN ${db(rows.map((row) => row.id))}`;
 		return rows.length;
 	},
-	async deleteHealthAlertsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+	async deleteNotificationOutboxBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
 		const rows =
-			(await db`SELECT id FROM health_alert_outbox WHERE site_id=${siteId} AND created_at < ${cutoff} AND status <> 'pending' ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+			(await db`SELECT id FROM notification_outbox WHERE site_id=${siteId} AND created_at < ${cutoff} AND status <> 'pending' ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
 				id: string;
 			}>;
 		if (rows.length === 0) return 0;
-		await db`DELETE FROM health_alert_outbox WHERE id IN ${db(rows.map((row) => row.id))}`;
+		await db`DELETE FROM notification_outbox WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteNotificationEventsBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM notification_events WHERE site_id=${siteId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM notification_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteGlobalNotificationEventsBeforeBatch(cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM notification_events WHERE site_id IS NULL AND stream_id IS NULL AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM notification_events WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteNotificationOutboxBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM notification_outbox WHERE stream_id=${streamId} AND created_at < ${cutoff} AND status <> 'pending' ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM notification_outbox WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
+	},
+	async deleteNotificationEventsBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		const rows =
+			(await db`SELECT id FROM notification_events WHERE stream_id=${streamId} AND created_at < ${cutoff} ORDER BY created_at ASC LIMIT ${limit}`) as Array<{
+				id: string;
+			}>;
+		if (rows.length === 0) return 0;
+		await db`DELETE FROM notification_events WHERE id IN ${db(rows.map((row) => row.id))}`;
 		return rows.length;
 	},
 	async deleteExpiredAdminSessionsBatch(now: number, limit: number): Promise<number> {
@@ -2299,9 +2434,9 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
 			if (existing) {
-				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},bandwidth_policy_json=${stream.bandwidth_policy_json},origin_health_check_enabled=${stream.origin_health_check_enabled},origin_health_check_interval_seconds=${stream.origin_health_check_interval_seconds},origin_health_check_timeout_ms=${stream.origin_health_check_timeout_ms},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+				await transaction`UPDATE streams SET name=${stream.name},incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},bandwidth_policy_json=${stream.bandwidth_policy_json},origin_health_check_enabled=${stream.origin_health_check_enabled},origin_health_check_interval_seconds=${stream.origin_health_check_interval_seconds},origin_health_check_timeout_ms=${stream.origin_health_check_timeout_ms},origin_health_check_failure_threshold=${stream.origin_health_check_failure_threshold},origin_health_check_recovery_threshold=${stream.origin_health_check_recovery_threshold},notification_policy_json=${stream.notification_policy_json},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
 			} else {
-				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,bandwidth_policy_json,origin_health_check_enabled,origin_health_check_interval_seconds,origin_health_check_timeout_ms,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.bandwidth_policy_json},${stream.origin_health_check_enabled},${stream.origin_health_check_interval_seconds},${stream.origin_health_check_timeout_ms},${stream.created_at},${stream.updated_at})`;
+				await transaction`INSERT INTO streams (id,name,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,bandwidth_policy_json,origin_health_check_enabled,origin_health_check_interval_seconds,origin_health_check_timeout_ms,origin_health_check_failure_threshold,origin_health_check_recovery_threshold,notification_policy_json,created_at,updated_at) VALUES (${stream.id},${stream.name},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.bandwidth_policy_json},${stream.origin_health_check_enabled},${stream.origin_health_check_interval_seconds},${stream.origin_health_check_timeout_ms},${stream.origin_health_check_failure_threshold},${stream.origin_health_check_recovery_threshold},${stream.notification_policy_json},${stream.created_at},${stream.updated_at})`;
 			}
 			if (stream.tcp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;
@@ -2320,6 +2455,8 @@ export const repository = {
 			await transaction`DELETE FROM stream_ip_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_country_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE stream_id=${id}`;
+			await transaction`DELETE FROM notification_outbox WHERE stream_id=${id}`;
+			await transaction`DELETE FROM notification_events WHERE stream_id=${id}`;
 			await transaction`DELETE FROM streams WHERE id=${id}`;
 		});
 	},

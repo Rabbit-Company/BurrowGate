@@ -118,6 +118,8 @@ export const config = {
 		intervalSeconds: envNumber("BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS", 10, 5, 3_600),
 		timeoutMs: envNumber("BG_CONNECTIVITY_MONITOR_TIMEOUT_MS", 2_000, 200, 30_000),
 		retentionDays: envNumber("BG_CONNECTIVITY_MONITOR_RETENTION_DAYS", 30, 1, 365),
+		failureThreshold: envNumber("BG_CONNECTIVITY_MONITOR_FAILURE_THRESHOLD", 3, 1, 20),
+		recoveryThreshold: envNumber("BG_CONNECTIVITY_MONITOR_RECOVERY_THRESHOLD", 2, 1, 20),
 	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),

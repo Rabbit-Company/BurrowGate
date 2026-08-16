@@ -1313,11 +1313,23 @@ function healthBadgeClass(state) {
 }
 
 function updateHealthControls() {
-	const clearingWebhook = byId("siteHealthClearWebhook").checked;
-	if (clearingWebhook) byId("siteHealthAlertsEnabled").checked = false;
 	byId("siteHealthSettings").classList.toggle("hidden", !byId("siteHealthEnabled").checked);
-	const webhookConfigured = !byId("siteHealthClearWebhookRow").classList.contains("hidden");
-	byId("siteHealthAlertSettings").classList.toggle("hidden", !byId("siteHealthAlertsEnabled").checked && !webhookConfigured && !clearingWebhook);
+	updateHealthDetectionNotice();
+}
+
+const HEALTH_DETECTION_WARNING_SECONDS = 15;
+
+function updateHealthDetectionNotice() {
+	const interval = Number(byId("siteHealthInterval").value);
+	const threshold = Number(byId("siteHealthFailureThreshold").value);
+	const notice = byId("siteHealthDetectionNotice");
+	const detectionSeconds = interval * threshold;
+	if (interval > 0 && threshold > 0 && detectionSeconds < HEALTH_DETECTION_WARNING_SECONDS) {
+		notice.textContent = `With this interval and failure threshold, an incident opens after only ${detectionSeconds}s of continuous failures - a brief network blip could trigger a false alert. Consider a higher failure threshold.`;
+		notice.classList.remove("hidden");
+	} else {
+		notice.classList.add("hidden");
+	}
 }
 
 function renderOriginHealthBanner(status) {
@@ -1365,23 +1377,11 @@ function applySiteHealthStatus(status, events = [], backendEvents = []) {
 		: '<p class="muted">No health state changes yet.</p>';
 }
 
-function applyHealthAlertDeliveries(alerts = []) {
-	byId("siteHealthAlertDeliveries").innerHTML = alerts.length
-		? alerts
-				.map(
-					(alert) =>
-						`<div class="health-event-item"><span>${formatDate(alert.createdAt)}</span><span class="badge ${alert.status === "delivered" ? "ok" : alert.status === "failed" ? "bad" : "warn"}">${escapeHtml(alert.status)}</span><span>${escapeHtml(alert.type)}${alert.attempts ? `, ${formatNumber(alert.attempts)} attempt${alert.attempts === 1 ? "" : "s"}` : ""}${alert.lastError ? `: ${escapeHtml(alert.lastError)}` : ""}</span></div>`,
-				)
-				.join("")
-		: '<p class="muted">No alerts have been queued.</p>';
-}
-
 async function loadSiteHealth(siteId) {
 	if (!siteId) return;
 	try {
 		const result = await api(`/sites/${encodeURIComponent(siteId)}/health`, {}, false);
 		applySiteHealthStatus(result.status, result.events ?? [], result.backendEvents ?? []);
-		applyHealthAlertDeliveries(result.alerts ?? []);
 		const site = sites.find((item) => item.id === siteId);
 		if (site) site.originHealth = result.status;
 		renderSites();
@@ -1670,17 +1670,8 @@ function resetSiteForm() {
 	byId("siteHealthFailureThreshold").value = "3";
 	byId("siteHealthRecoveryThreshold").value = "2";
 	byId("siteHealthFailureMode").value = "monitor";
-	byId("siteHealthAlertsEnabled").checked = false;
-	byId("siteHealthAlertProvider").value = "generic";
-	byId("siteHealthWebhookUrl").value = "";
-	byId("siteHealthWebhookSecret").value = "";
-	byId("siteHealthClearWebhook").checked = false;
-	byId("siteHealthClearWebhookRow").classList.add("hidden");
-	byId("siteHealthWebhookConfigured").textContent = "No webhook is configured.";
 	byId("siteHealthRuntime").classList.add("hidden");
-	byId("siteHealthAlertRuntime").classList.add("hidden");
 	applySiteHealthStatus({ state: "disabled" }, []);
-	applyHealthAlertDeliveries([]);
 	updateHealthControls();
 	byId("siteChallengePolicy").value = JSON.stringify(defaultChallengePolicy(), null, 2);
 	byId("siteErrorResponseMode").value = errorResponseDefaults.mode ?? "json";
@@ -1740,17 +1731,7 @@ function editSite(id) {
 	byId("siteHealthFailureThreshold").value = String(health.failureThreshold ?? 3);
 	byId("siteHealthRecoveryThreshold").value = String(health.recoveryThreshold ?? 2);
 	byId("siteHealthFailureMode").value = health.failureMode ?? "monitor";
-	byId("siteHealthAlertsEnabled").checked = Boolean(health.alerts?.enabled);
-	byId("siteHealthAlertProvider").value = health.alerts?.provider ?? "generic";
-	byId("siteHealthWebhookUrl").value = "";
-	byId("siteHealthWebhookSecret").value = "";
-	byId("siteHealthClearWebhook").checked = false;
-	byId("siteHealthClearWebhookRow").classList.toggle("hidden", !health.alerts?.webhookConfigured);
-	byId("siteHealthWebhookConfigured").textContent = health.alerts?.webhookConfigured
-		? "An encrypted webhook destination is configured. Leave the URL blank to keep it."
-		: "No webhook is configured.";
 	byId("siteHealthRuntime").classList.remove("hidden");
-	byId("siteHealthAlertRuntime").classList.remove("hidden");
 	updateHealthControls();
 	applySiteHealthStatus(site.originHealth ?? { state: health.enabled ? "unknown" : "disabled" }, []);
 	byId("siteSigningSecret").value = "";
@@ -1953,13 +1934,6 @@ async function saveSite(event) {
 			failureThreshold: Number(byId("siteHealthFailureThreshold").value),
 			recoveryThreshold: Number(byId("siteHealthRecoveryThreshold").value),
 			failureMode: byId("siteHealthFailureMode").value,
-			alerts: {
-				enabled: byId("siteHealthAlertsEnabled").checked,
-				provider: byId("siteHealthAlertProvider").value,
-				webhookUrl: byId("siteHealthWebhookUrl").value.trim(),
-				webhookSecret: byId("siteHealthWebhookSecret").value.trim(),
-				clearWebhook: byId("siteHealthClearWebhook").checked,
-			},
 		},
 		loadBalancer: {
 			algorithm: byId("siteLoadBalancingAlgorithm").value,
@@ -3881,7 +3855,7 @@ function openUserPermissions(userId) {
 	);
 	permissionsGrid(
 		"userStreamPermissions",
-		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.forwardHost}:${stream.forwardPort} (port ${stream.incomingPort})` })),
+		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.name} (port ${stream.incomingPort})` })),
 		user.streamPermissions,
 		"streamId",
 	);
@@ -4667,8 +4641,8 @@ function bindActions() {
 	});
 	byId("cancelOriginEdit").addEventListener("click", resetOriginForm);
 	byId("siteHealthEnabled").addEventListener("change", updateHealthControls);
-	byId("siteHealthAlertsEnabled").addEventListener("change", updateHealthControls);
-	byId("siteHealthClearWebhook").addEventListener("change", updateHealthControls);
+	byId("siteHealthInterval").addEventListener("input", updateHealthDetectionNotice);
+	byId("siteHealthFailureThreshold").addEventListener("input", updateHealthDetectionNotice);
 	byId("siteCheckOriginNow").addEventListener(
 		"click",
 		(event) => void runWithButton(event.currentTarget, () => checkOriginNow(editingSiteId)).catch((error) => showToast(error.message, "bad")),

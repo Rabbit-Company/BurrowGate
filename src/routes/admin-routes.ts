@@ -32,7 +32,16 @@ import { decryptSecret, encryptSecret } from "../services/secret-encryption-serv
 import { enrollmentUri, generateRecoveryCodes, generateSecret, normalizeRecoveryCode, qrSvg, verifyCode as verifyTotpCode } from "../services/totp-service.ts";
 import { buildAuthenticationOptions, buildRegistrationOptions, verifyAuthentication, verifyRegistration } from "../services/webauthn-service.ts";
 import { adminSessionTokens, createAdminSession, getAdminSession } from "../services/session-service.ts";
-import { createSite, parseDefaultNetworkAction, siteView, updateSite, type SiteInput } from "../services/site-service.ts";
+import {
+	createSite,
+	parseDefaultNetworkAction,
+	siteNotificationPolicy,
+	siteView,
+	updateSite,
+	updateSiteNotificationPolicy,
+	type SiteInput,
+} from "../services/site-service.ts";
+import { NOTIFICATION_EVENT_TYPES, NOTIFICATION_OUTBOX_STATUSES } from "../services/stream-notification-policy-service.ts";
 import {
 	createRoutePolicy,
 	deleteRoutePolicy,
@@ -156,6 +165,11 @@ function enumParam<T extends string>(url: URL, name: string, allowed: readonly T
 
 function sortDirection(url: URL): SortDirection {
 	return url.searchParams.get("sortDirection") === "asc" ? "asc" : "desc";
+}
+
+function notificationSortBy(url: URL): "created_at" | "occurred_at" | "type" | "status" {
+	const value = url.searchParams.get("sortBy");
+	return value === "occurred_at" || value === "type" || value === "status" ? value : "created_at";
 }
 
 function protectionMatches(value: string | null): unknown[] {
@@ -692,6 +706,41 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 	});
 
+	app.get("/_burrowgate/api/admin/sites/:id/notification-policy", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "view");
+		if ("error" in access) return access.error;
+		return jsonResponse(await siteNotificationPolicy(access.site.id));
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/sites/:id/notification-policy", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
+		if (denied) return denied;
+		try {
+			const body = await ctx.req.json();
+			const policy = await updateSiteNotificationPolicy(ctx.params.id, body);
+			await recordAdminAudit({
+				actor: user,
+				action: "site_notification_policy.update",
+				resourceType: "site",
+				resourceId: ctx.params.id,
+				summary: `Updated notification policy for site ${ctx.params.id}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(policy);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to update notification policy";
+			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
+		}
+	});
+
 	app.delete("/_burrowgate/api/admin/sites/:id", async (ctx: any) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
@@ -708,10 +757,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (certificate) {
 			const dependentStreams = await repository.streamsUsingCertificate(certificate.id);
 			if (dependentStreams.length > 0) {
-				const ports = dependentStreams.map((stream) => stream.incoming_port).join(", ");
+				const names = dependentStreams.map((stream) => `${stream.name} (port ${stream.incoming_port})`).join(", ");
 				return jsonResponse(
 					{
-						error: `This site's TLS certificate is used by Stream port${dependentStreams.length === 1 ? "" : "s"} ${ports}. Change or remove that certificate from the Stream before deleting the site.`,
+						error: `This site's TLS certificate is used by stream${dependentStreams.length === 1 ? "" : "s"} ${names}. Change or remove that certificate from the stream before deleting the site.`,
 					},
 					409,
 				);
@@ -768,14 +817,39 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...event,
 				originName: originNames.get(event.origin_id) ?? event.origin_id,
 			})),
-			alerts: (await repository.healthAlerts(site.id, 25)).map((alert) => ({
-				id: alert.id,
-				type: alert.event_type,
-				status: alert.status,
-				attempts: Number(alert.attempts),
-				lastError: alert.last_error,
-				createdAt: Number(alert.created_at),
-				deliveredAt: alert.delivered_at === null ? null : Number(alert.delivered_at),
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/sites/:id/notifications", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const access = await requireSiteAccess(ctx.params.id, user, "view");
+		if ("error" in access) return access.error;
+		const url = new URL(ctx.req.url);
+		const result = await repository.pagedNotificationsForSite({
+			siteId: access.site.id,
+			page: integerParam(url, "page", 1, 1, 1_000_000),
+			pageSize: integerParam(url, "pageSize", 25, 10, 200),
+			search: stringParam(url, "search"),
+			type: enumParam(url, "type", NOTIFICATION_EVENT_TYPES),
+			status: enumParam(url, "status", NOTIFICATION_OUTBOX_STATUSES),
+			sortBy: notificationSortBy(url),
+			sortDirection: sortDirection(url),
+		});
+		return jsonResponse({
+			...result,
+			items: result.items.map((event) => ({
+				id: event.id,
+				type: event.type,
+				severity: event.severity,
+				summary: event.summary,
+				status: event.delivery_status,
+				attempts: Number(event.delivery_attempts),
+				lastError: event.delivery_last_error,
+				occurredAt: Number(event.occurred_at),
+				createdAt: Number(event.created_at),
+				deliveredAt: event.delivered_at === null ? null : Number(event.delivered_at),
 			})),
 		});
 	});
@@ -2664,7 +2738,9 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const streams = await repository.streamsUsingCertificate(certificate.id);
 			if (streams.length) {
 				return jsonResponse(
-					{ error: `This certificate is used by stream port${streams.length === 1 ? "" : "s"} ${streams.map((stream) => stream.incoming_port).join(", ")}` },
+					{
+						error: `This certificate is used by stream${streams.length === 1 ? "" : "s"} ${streams.map((stream) => `${stream.name} (port ${stream.incoming_port})`).join(", ")}`,
+					},
 					409,
 				);
 			}
@@ -2870,6 +2946,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			sites: sites.map((site) => ({ id: site.id, name: site.name })),
 			streams: streams.map((stream) => ({
 				id: stream.id,
+				name: stream.name,
 				incomingPort: stream.incoming_port,
 				forwardHost: stream.forward_host,
 				forwardPort: stream.forward_port,

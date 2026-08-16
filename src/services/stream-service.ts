@@ -6,6 +6,7 @@ import { randomId } from "../utils/crypto.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
 
 export interface StreamInput {
+	name?: unknown;
 	incomingPort?: unknown;
 	forwardHost?: unknown;
 	forwardPort?: unknown;
@@ -26,6 +27,15 @@ export interface StreamInput {
 	originHealthCheckEnabled?: unknown;
 	originHealthCheckIntervalSeconds?: unknown;
 	originHealthCheckTimeoutMs?: unknown;
+	originHealthCheckFailureThreshold?: unknown;
+	originHealthCheckRecoveryThreshold?: unknown;
+}
+
+function requiredString(value: unknown, label: string, maximum: number): string {
+	const result = String(value ?? "").trim();
+	if (!result) throw new Error(`${label} is required`);
+	if (result.length > maximum) throw new Error(`${label} must be at most ${maximum} characters`);
+	return result;
 }
 
 function port(value: unknown, label: string): number {
@@ -112,6 +122,7 @@ async function certificateId(value: unknown, tcpEnabled: boolean): Promise<strin
 export function streamView(stream: StreamRecord) {
 	return {
 		id: stream.id,
+		name: stream.name,
 		incomingPort: Number(stream.incoming_port),
 		forwardHost: stream.forward_host,
 		forwardPort: Number(stream.forward_port),
@@ -137,6 +148,8 @@ export function streamView(stream: StreamRecord) {
 			enabled: stream.origin_health_check_enabled === 1,
 			intervalSeconds: Number(stream.origin_health_check_interval_seconds ?? 10),
 			timeoutMs: Number(stream.origin_health_check_timeout_ms ?? 3_000),
+			failureThreshold: Number(stream.origin_health_check_failure_threshold ?? 3),
+			recoveryThreshold: Number(stream.origin_health_check_recovery_threshold ?? 2),
 		},
 		protection: resolveStreamProtectionPolicy(stream),
 		createdAt: Number(stream.created_at),
@@ -154,6 +167,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 	const now = Date.now();
 	return {
 		id: existing?.id ?? randomId("stream"),
+		name: requiredString(input.name ?? existing?.name, "Stream name", 255),
 		incoming_port: incomingPort,
 		forward_host: forwardHost(input.forwardHost ?? existing?.forward_host),
 		forward_port: port(input.forwardPort ?? existing?.forward_port, "Forward port"),
@@ -208,7 +222,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			input.originHealthCheckIntervalSeconds,
 			"Origin health-check interval",
 			existing?.origin_health_check_interval_seconds ?? 10,
-			10,
+			3,
 			3_600,
 		),
 		origin_health_check_timeout_ms: integerValue(
@@ -218,8 +232,23 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			250,
 			60_000,
 		),
+		origin_health_check_failure_threshold: integerValue(
+			input.originHealthCheckFailureThreshold,
+			"Origin health-check failure threshold",
+			existing?.origin_health_check_failure_threshold ?? 3,
+			1,
+			20,
+		),
+		origin_health_check_recovery_threshold: integerValue(
+			input.originHealthCheckRecoveryThreshold,
+			"Origin health-check recovery threshold",
+			existing?.origin_health_check_recovery_threshold ?? 2,
+			1,
+			20,
+		),
 		protection_policy_json: existing?.protection_policy_json ?? null,
 		bandwidth_policy_json: existing?.bandwidth_policy_json ?? null,
+		notification_policy_json: existing?.notification_policy_json ?? null,
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

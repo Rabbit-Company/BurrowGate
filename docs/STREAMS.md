@@ -6,6 +6,7 @@ BurrowGate can proxy arbitrary TCP and UDP services independently from HTTP site
 
 Each stream contains:
 
+- a name, used throughout the admin dashboard instead of a bare port number;
 - an incoming port;
 - a forward host and port;
 - TCP, UDP, or both protocols;
@@ -47,17 +48,21 @@ Payload totals are accumulated in memory and persisted in one-minute buckets by 
 
 ## Origin health checks
 
-A TCP-enabled stream can opt into a periodic health check: BurrowGate opens, then immediately closes, a TCP connection to the stream's forward host and port on a timer and records the connect latency or a timeout. This is disabled by default - enabling it starts making connection attempts against your real backend (e.g. a game server) - and is configured per stream on the Streams dashboard's **Health** tab, alongside the check interval and timeout.
+A TCP-enabled stream can opt into a periodic health check: BurrowGate opens, then immediately closes, a TCP connection to the stream's forward host and port on a timer and records the connect latency or a timeout. This is disabled by default - enabling it starts making connection attempts against your real backend (e.g. a game server) - and is configured per stream on the Streams dashboard's **Health** tab, alongside the check interval (minimum 3 seconds), timeout, and consecutive failure/recovery thresholds used to decide when the origin is actually considered down or recovered.
 
 UDP-only streams cannot be health-checked this way. There is no generic UDP echo protocol to probe an arbitrary upstream with. Existing bandwidth and connection monitoring for UDP streams is unaffected.
 
 Results are aggregated into one-minute buckets (minimum, maximum, and average latency, plus a count of timed-out checks) and shown as a graph on the Health tab, so a network blip between BurrowGate and the origin - even a brief one - shows up in the data instead of only being visible as scattered connection failures. The per-stream retention value also governs this history.
+
+A state transition (origin becomes unhealthy, or recovers) can trigger a webhook - configured independently on the **Notifications** dashboard, alongside auto-ban notifications for this stream. See [`docs/NOTIFICATIONS.md`](NOTIFICATIONS.md).
 
 ## Bandwidth limit temp-bans
 
 Each stream can independently auto-ban a client IP that pushes more than a configured amount of bandwidth through its TCP side and/or its UDP side within a time window - useful since one stream can carry both protocols on the same port. Configure it on the Streams dashboard's **Protection** tab, per selected stream. It is disabled by default for both protocols.
 
 Both directions of traffic count toward the threshold, matching the existing live per-IP byte-rate tracking that feeds the `connection.bytes_per_second` protection field. Detection happens as bytes are already being forwarded, using a fixed-window counter kept separately from the WAF-facing counters described above, so it adds no extra I/O to the data path. Unlike the web bandwidth limit (see [BANDWIDTH.md](BANDWIDTH.md)), crossing the threshold both bans the IP - added to the stream's IP rules as a temporary `block`, the same mechanism managed stream-protection auto-bans use - and immediately closes the offending TCP connection or UDP peer session, since a single long-lived stream connection would otherwise keep flowing unchecked between admission checks.
+
+An auto-ban can also trigger a `stream_ip_banned` webhook naming the banned IP, configured on the **Notifications** dashboard. See [`docs/NOTIFICATIONS.md`](NOTIFICATIONS.md).
 
 ## Docker networking
 

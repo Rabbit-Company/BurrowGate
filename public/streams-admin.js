@@ -629,7 +629,7 @@ function streamChartCatalog(data, longLivedData) {
 function streamComparisonCatalog(comparison) {
 	const streamLabel = (id) => {
 		const stream = streams.find((item) => item.id === id);
-		return stream ? `Port ${stream.incomingPort} → ${stream.forwardHost}:${stream.forwardPort}` : id;
+		return stream ? `${stream.name} (port ${stream.incomingPort})` : id;
 	};
 	const byConnections = [...comparison].sort((a, b) => b.connections - a.connections).slice(0, 15);
 	const byBytes = [...comparison].sort((a, b) => b.bytes - a.bytes).slice(0, 15);
@@ -895,7 +895,7 @@ function statusBadge(value) {
 
 function renderStreamSelector() {
 	const selector = byId("streamSelector");
-	selector.innerHTML = `<option value="">All streams</option>${streams.map((stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`).join("")}`;
+	selector.innerHTML = `<option value="">All streams</option>${streams.map((stream) => `<option value="${escapeHtml(stream.id)}">${escapeHtml(stream.name)} (port ${stream.incomingPort})</option>`).join("")}`;
 	if (streams.some((stream) => stream.id === selectedStreamId)) selector.value = selectedStreamId;
 	else selectedStreamId = "";
 }
@@ -904,11 +904,7 @@ function renderRulesStreamSelector() {
 	const selector = byId("rulesStreamSelector");
 	if (!streams.some((stream) => stream.id === rulesStreamId)) rulesStreamId = selectedStreamId || streams[0]?.id || "";
 	selector.innerHTML = streams.length
-		? streams
-				.map(
-					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
-				)
-				.join("")
+		? streams.map((stream) => `<option value="${escapeHtml(stream.id)}">${escapeHtml(stream.name)} (port ${stream.incomingPort})</option>`).join("")
 		: '<option value="">No streams configured</option>';
 	selector.value = rulesStreamId;
 	selector.disabled = streams.length === 0;
@@ -918,11 +914,7 @@ function renderProtectionStreamSelector() {
 	const selector = byId("protectionStreamSelector");
 	if (!streams.some((stream) => stream.id === protectionStreamId)) protectionStreamId = selectedStreamId || streams[0]?.id || "";
 	selector.innerHTML = streams.length
-		? streams
-				.map(
-					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
-				)
-				.join("")
+		? streams.map((stream) => `<option value="${escapeHtml(stream.id)}">${escapeHtml(stream.name)} (port ${stream.incomingPort})</option>`).join("")
 		: '<option value="">No streams configured</option>';
 	selector.value = protectionStreamId;
 	selector.disabled = streams.length === 0;
@@ -932,11 +924,7 @@ function renderHealthStreamSelector() {
 	const selector = byId("healthStreamSelector");
 	if (!streams.some((stream) => stream.id === healthStreamId)) healthStreamId = selectedStreamId || streams[0]?.id || "";
 	selector.innerHTML = streams.length
-		? streams
-				.map(
-					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
-				)
-				.join("")
+		? streams.map((stream) => `<option value="${escapeHtml(stream.id)}">${escapeHtml(stream.name)} (port ${stream.incomingPort})</option>`).join("")
 		: '<option value="">No streams configured</option>';
 	selector.value = healthStreamId;
 	selector.disabled = streams.length === 0;
@@ -1112,7 +1100,7 @@ function openUserPermissions(userId) {
 	);
 	permissionsGrid(
 		"userStreamPermissions",
-		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.forwardHost}:${stream.forwardPort} (port ${stream.incomingPort})` })),
+		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.name} (port ${stream.incomingPort})` })),
 		user.streamPermissions,
 		"streamId",
 	);
@@ -1262,13 +1250,10 @@ function renderStreams() {
 	list.innerHTML = streams
 		.map((stream) => {
 			const status = statusFor(stream.id);
-			const protocols = [stream.tcpEnabled ? "TCP" : "", stream.udpEnabled ? "UDP" : ""].filter(Boolean).join(" + ");
 			const deleteButton = isAdministrator
 				? `<button class="button danger compact" type="button" data-delete-stream="${escapeHtml(stream.id)}">Delete</button>`
 				: "";
-			const transportLabel = stream.certificateId ? "TLS" : "Raw";
-			const proxyLabel = stream.proxyProtocol && stream.proxyProtocol !== "disabled" ? ` · PROXY ${stream.proxyProtocol}` : "";
-			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${protocols} :${stream.incomingPort}</strong><span>${transportLabel}${proxyLabel}</span></div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
+			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${escapeHtml(stream.name)}</strong></div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
 		})
 		.join("");
 }
@@ -1967,6 +1952,24 @@ function loadStreamHealth() {
 	byId("streamHealthEnabled").checked = Boolean(stream.originHealthCheck?.enabled);
 	byId("streamHealthInterval").value = String(stream.originHealthCheck?.intervalSeconds ?? 30);
 	byId("streamHealthTimeout").value = String(stream.originHealthCheck?.timeoutMs ?? 3_000);
+	byId("streamHealthFailureThreshold").value = String(stream.originHealthCheck?.failureThreshold ?? 3);
+	byId("streamHealthRecoveryThreshold").value = String(stream.originHealthCheck?.recoveryThreshold ?? 2);
+	updateStreamHealthDetectionNotice();
+}
+
+const HEALTH_DETECTION_WARNING_SECONDS = 15;
+
+function updateStreamHealthDetectionNotice() {
+	const interval = Number(byId("streamHealthInterval").value);
+	const threshold = Number(byId("streamHealthFailureThreshold").value);
+	const notice = byId("streamHealthDetectionNotice");
+	const detectionSeconds = interval * threshold;
+	if (interval > 0 && threshold > 0 && detectionSeconds < HEALTH_DETECTION_WARNING_SECONDS) {
+		notice.textContent = `With this interval and failure threshold, an incident opens after only ${detectionSeconds}s of continuous failures - a brief network blip could trigger a false alert. Consider a higher failure threshold.`;
+		notice.classList.remove("hidden");
+	} else {
+		notice.classList.add("hidden");
+	}
 }
 
 async function saveStreamHealth() {
@@ -1979,6 +1982,8 @@ async function saveStreamHealth() {
 				originHealthCheckEnabled: byId("streamHealthEnabled").checked,
 				originHealthCheckIntervalSeconds: Number(byId("streamHealthInterval").value),
 				originHealthCheckTimeoutMs: Number(byId("streamHealthTimeout").value),
+				originHealthCheckFailureThreshold: Number(byId("streamHealthFailureThreshold").value),
+				originHealthCheckRecoveryThreshold: Number(byId("streamHealthRecoveryThreshold").value),
 			}),
 		});
 		const index = streams.findIndex((stream) => stream.id === healthStreamId);
@@ -2167,6 +2172,7 @@ function editStream(id) {
 	const stream = streams.find((item) => item.id === id);
 	if (!stream) return;
 	byId("streamId").value = stream.id;
+	byId("streamName").value = stream.name ?? "";
 	byId("incomingPort").value = stream.incomingPort;
 	byId("forwardHost").value = stream.forwardHost;
 	byId("forwardPort").value = stream.forwardPort;
@@ -2185,7 +2191,7 @@ function editStream(id) {
 	byId("streamUdp").checked = stream.udpEnabled;
 	byId("streamProxyProtocol").value = stream.proxyProtocol ?? "disabled";
 	byId("streamCertificate").value = stream.certificateId || "";
-	byId("streamFormTitle").textContent = `Edit stream :${stream.incomingPort}`;
+	byId("streamFormTitle").textContent = `Edit ${stream.name}`;
 	byId("saveStream").textContent = "Save";
 	byId("cancelStreamEdit").classList.remove("hidden");
 	updateProtocolControls();
@@ -2195,6 +2201,7 @@ async function saveStream(event) {
 	event.preventDefault();
 	const id = byId("streamId").value;
 	const payload = {
+		name: byId("streamName").value.trim(),
 		incomingPort: Number(byId("incomingPort").value),
 		forwardHost: byId("forwardHost").value.trim(),
 		forwardPort: Number(byId("forwardPort").value),
@@ -2233,7 +2240,7 @@ async function deleteStream(id) {
 	if (
 		!stream ||
 		!confirm(
-			`Delete the ${stream.tcpEnabled && stream.udpEnabled ? "TCP/UDP" : stream.tcpEnabled ? "TCP" : "UDP"} stream on port ${stream.incomingPort}? Monitoring history for this stream will also be deleted.`,
+			`Delete the ${stream.tcpEnabled && stream.udpEnabled ? "TCP/UDP" : stream.tcpEnabled ? "TCP" : "UDP"} stream ${stream.name} (port ${stream.incomingPort})? Monitoring history for this stream will also be deleted.`,
 		)
 	)
 		return;
@@ -2437,6 +2444,8 @@ byId("healthStreamSelector").addEventListener("change", () => {
 	loadStreamHealth();
 });
 byId("saveStreamHealth").addEventListener("click", () => void saveStreamHealth());
+byId("streamHealthInterval").addEventListener("input", updateStreamHealthDetectionNotice);
+byId("streamHealthFailureThreshold").addEventListener("input", updateStreamHealthDetectionNotice);
 byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
 byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
 byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());

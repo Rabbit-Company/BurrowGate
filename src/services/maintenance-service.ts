@@ -112,10 +112,6 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 				run: async () => await repository.deleteOriginHealthEventsBeforeForSiteBatch(site.id, cutoff, batchSize),
 			},
 			{
-				name: `origin health alerts for ${site.id}`,
-				run: async () => await repository.deleteHealthAlertsBeforeForSiteBatch(site.id, cutoff, batchSize),
-			},
-			{
 				name: `origin backend health events for ${site.id}`,
 				run: async () => await repository.deleteBackendHealthEventsBeforeForSiteBatch(site.id, cutoff, batchSize),
 			},
@@ -123,11 +119,23 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 				name: `origin latency history for ${site.id}`,
 				run: async () => await repository.deleteOriginLatencyBeforeForSiteBatch(site.id, cutoff, batchSize),
 			},
+			{
+				name: `notification outbox for ${site.id}`,
+				run: async () => await repository.deleteNotificationOutboxBeforeForSiteBatch(site.id, cutoff, batchSize),
+			},
+			{
+				name: `notification events for ${site.id}`,
+				run: async () => await repository.deleteNotificationEventsBeforeForSiteBatch(site.id, cutoff, batchSize),
+			},
 		);
 	}
 	tasks.push({
 		name: "connectivity ping history",
 		run: async () => await repository.deleteConnectivityPingBeforeBatch(now - config.connectivityMonitor.retentionDays * DAY_MS, batchSize),
+	});
+	tasks.push({
+		name: "global notification events",
+		run: async () => await repository.deleteGlobalNotificationEventsBeforeBatch(now - config.eventRetentionDays * DAY_MS, batchSize),
 	});
 	for (const stream of await repository.allStreams()) {
 		const cutoff = now - Number(stream.event_retention_days) * DAY_MS;
@@ -151,6 +159,14 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 					if (count > 0) invalidateStreamNetworkPolicy(stream.id);
 					return count;
 				},
+			},
+			{
+				name: `notification outbox for stream ${stream.id}`,
+				run: async () => await repository.deleteNotificationOutboxBeforeForStreamBatch(stream.id, cutoff, batchSize),
+			},
+			{
+				name: `notification events for stream ${stream.id}`,
+				run: async () => await repository.deleteNotificationEventsBeforeForStreamBatch(stream.id, cutoff, batchSize),
 			},
 		);
 	}

@@ -30,6 +30,7 @@ function handshakePacket(nextState: number): Buffer {
 function record(): StreamRecord {
 	return {
 		id: "stream-test",
+		name: "Stream test",
 		incoming_port: 12345,
 		forward_host: "origin.test",
 		forward_port: 23456,

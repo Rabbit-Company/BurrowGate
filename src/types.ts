@@ -120,6 +120,7 @@ export interface SiteRecord {
 	load_balancing_affinity?: number;
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
+	notification_event_types_json?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -172,20 +173,67 @@ export interface OriginHealthEventRecord {
 	created_at: number;
 }
 
-export type HealthAlertOutboxStatus = "pending" | "delivered" | "failed";
+export type NotificationEventType =
+	| "origin_unhealthy"
+	| "origin_recovered"
+	| "pool_unhealthy"
+	| "pool_recovered"
+	| "internet_down"
+	| "internet_up"
+	| "ip_banned"
+	| "stream_origin_unhealthy"
+	| "stream_origin_recovered"
+	| "stream_ip_banned";
+export type NotificationSeverity = "info" | "warning" | "critical";
 
-export interface HealthAlertOutboxRecord {
+export interface NotificationEventRecord {
 	id: string;
-	site_id: string;
-	event_id: string;
-	event_type: "origin_unhealthy" | "origin_recovered" | "pool_unhealthy" | "pool_recovered";
+	site_id: string | null;
+	stream_id: string | null;
+	type: NotificationEventType;
+	severity: NotificationSeverity;
+	summary: string;
 	payload_json: string;
-	status: HealthAlertOutboxStatus;
+	occurred_at: number;
+	created_at: number;
+}
+
+export type NotificationOutboxStatus = "pending" | "delivered" | "failed";
+
+export interface NotificationOutboxRecord {
+	id: string;
+	event_id: string;
+	site_id: string | null;
+	stream_id: string | null;
+	status: NotificationOutboxStatus;
 	attempts: number;
 	next_attempt_at: number;
 	last_error: string | null;
 	created_at: number;
 	delivered_at: number | null;
+}
+
+export interface StreamNotificationPolicy {
+	enabled: boolean;
+	provider: HealthAlertProvider;
+	webhookUrl: string | null;
+	webhookSecret: string | null;
+	eventTypes: Record<NotificationEventType, boolean>;
+}
+
+export interface NotificationEventWithDeliveryRecord extends NotificationEventRecord {
+	delivery_status: NotificationOutboxStatus;
+	delivery_attempts: number;
+	delivery_last_error: string | null;
+	delivered_at: number | null;
+}
+
+export interface PendingNotificationDeliveryRecord extends NotificationOutboxRecord {
+	type: NotificationEventType;
+	severity: NotificationSeverity;
+	summary: string;
+	payload_json: string;
+	occurred_at: number;
 }
 
 export interface LatencyCheckResult {
@@ -357,6 +405,7 @@ export interface BandwidthMinuteRecord {
 
 export interface StreamRecord {
 	id: string;
+	name: string;
 	incoming_port: number;
 	forward_host: string;
 	forward_port: number;
@@ -381,6 +430,9 @@ export interface StreamRecord {
 	origin_health_check_enabled: number;
 	origin_health_check_interval_seconds: number;
 	origin_health_check_timeout_ms: number;
+	origin_health_check_failure_threshold?: number;
+	origin_health_check_recovery_threshold?: number;
+	notification_policy_json?: string | null;
 	created_at: number;
 	updated_at: number;
 }

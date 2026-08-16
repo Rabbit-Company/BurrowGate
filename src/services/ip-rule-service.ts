@@ -5,6 +5,7 @@ import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import type { BanDurationSeverity } from "./http-policy-service.ts";
 import type { ManagedProtectionMatch } from "./managed-protection-service.ts";
+import { notificationService } from "./notification-service.ts";
 
 interface CachedIpRule {
 	rule: IpRuleRecord;
@@ -189,7 +190,11 @@ export async function banIpForProtectionMatch(
 	const existing = await evaluateIp(site, ip);
 	if (existing.source === "ip-rule" && existing.action === "block") return null;
 	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching WAF rule ${match.ruleId} (${match.category}, ${match.severity}).`;
-	return await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000, match.ruleId);
+	const expiresAt = Date.now() + banSeconds * 1_000;
+	const rule = await addIpRule(site.id, ip, "block", reason, expiresAt, match.ruleId);
+	const summary = `IP ${ip} auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching WAF rule ${match.ruleId} (${match.category}, ${match.severity}).`;
+	await notificationService.recordSiteEvent(site, "ip_banned", "warning", summary, { ip, reason, ruleId: match.ruleId, expiresAt }, Date.now());
+	return rule;
 }
 
 function humanizeBytes(bytes: number): string {
@@ -209,7 +214,11 @@ export async function banIpForBandwidthLimit(
 	const existing = await evaluateIp(site, ip);
 	if (existing.source === "ip-rule" && existing.action === "block") return null;
 	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} in ${windowSeconds}s.`;
-	return await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
+	const expiresAt = Date.now() + banSeconds * 1_000;
+	const rule = await addIpRule(site.id, ip, "block", reason, expiresAt);
+	const summary = `IP ${ip} auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} in ${windowSeconds}s.`;
+	await notificationService.recordSiteEvent(site, "ip_banned", "warning", summary, { ip, reason, expiresAt }, Date.now());
+	return rule;
 }
 
 export async function addCountryRule(

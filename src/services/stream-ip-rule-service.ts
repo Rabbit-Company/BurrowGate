@@ -4,6 +4,7 @@ import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { countryCodeForStorage } from "./geoip-service.ts";
 import type { BanDurationSeverity } from "./http-policy-service.ts";
+import { notificationService } from "./notification-service.ts";
 import type { StreamProtectionMatch } from "./stream-protection-service.ts";
 
 interface CachedStreamIpRule {
@@ -175,7 +176,11 @@ export async function banStreamIpForProtectionMatch(
 	const existing = await evaluateStreamIp(stream, ip);
 	if (existing.source === "ip-rule" && existing.action === "block") return null;
 	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching ${match.rulesetId} rule ${match.ruleId} (${match.category}, ${match.severity}).`;
-	return await addStreamIpRule(stream.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
+	const expiresAt = Date.now() + banSeconds * 1_000;
+	const rule = await addStreamIpRule(stream.id, ip, "block", reason, expiresAt);
+	const summary = `IP ${ip} auto-banned for ${humanizeDurationSeconds(banSeconds)} after matching ${match.rulesetId} rule ${match.ruleId} (${match.category}, ${match.severity}).`;
+	await notificationService.recordStreamEvent(stream, "stream_ip_banned", "warning", summary, { ip, reason, ruleId: match.ruleId, expiresAt }, Date.now());
+	return rule;
 }
 
 function humanizeBytes(bytes: number): string {
@@ -196,7 +201,11 @@ export async function banStreamIpForBandwidthLimit(
 	const existing = await evaluateStreamIp(stream, ip);
 	if (existing.source === "ip-rule" && existing.action === "block") return null;
 	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} of ${protocol.toUpperCase()} traffic in ${windowSeconds}s.`;
-	return await addStreamIpRule(stream.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
+	const expiresAt = Date.now() + banSeconds * 1_000;
+	const rule = await addStreamIpRule(stream.id, ip, "block", reason, expiresAt);
+	const summary = `IP ${ip} auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} of ${protocol.toUpperCase()} traffic in ${windowSeconds}s.`;
+	await notificationService.recordStreamEvent(stream, "stream_ip_banned", "warning", summary, { ip, reason, expiresAt }, Date.now());
+	return rule;
 }
 
 export async function addStreamCountryRule(

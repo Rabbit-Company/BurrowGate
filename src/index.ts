@@ -42,10 +42,12 @@ import { recordBandwidthLimitBytes, startBandwidthLimitCleanup } from "./service
 import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
+import { registerNotificationAdminRoutes } from "./routes/notification-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
 import { streamHealthManager } from "./services/stream-health-service.ts";
 import { connectivityMonitor } from "./services/connectivity-monitor-service.ts";
+import { notificationService } from "./services/notification-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
 import { isBodyCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
 import { tapBodyForCapture, type CapturedBody } from "./services/body-capture-service.ts";
@@ -75,6 +77,7 @@ startMaintenance();
 originHealthManager.start();
 streamHealthManager.start();
 connectivityMonitor.start();
+notificationService.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
 startStreamMonitoring();
@@ -138,6 +141,7 @@ registerChallengeRoutes(app);
 registerAccessRoutes(app);
 registerAdminRoutes(app);
 registerStreamAdminRoutes(app);
+registerNotificationAdminRoutes(app);
 if (config.openMetrics.enabled) app.get(OPENMETRICS_PATH, (ctx) => openMetricsResponse(ctx.req));
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();

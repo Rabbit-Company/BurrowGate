@@ -10,6 +10,7 @@ import type {
 	OriginHealthFailureMode,
 	LoadBalancingAlgorithm,
 	IpExtractionPreset,
+	NotificationEventType,
 	SiteAccessMode,
 	SiteRecord,
 } from "../types.ts";
@@ -29,6 +30,7 @@ import { encryptSecret } from "./secret-encryption-service.ts";
 import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
 import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } from "./http-policy-service.ts";
 import { staticAssetCache } from "./static-cache-service.ts";
+import { NOTIFICATION_EVENT_TYPES } from "./stream-notification-policy-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -80,7 +82,7 @@ export interface SiteView {
 		failureThreshold: number;
 		recoveryThreshold: number;
 		failureMode: OriginHealthFailureMode;
-		alerts: { enabled: boolean; provider: HealthAlertProvider; webhookConfigured: boolean };
+		alerts: { enabled: boolean; provider: HealthAlertProvider; webhookConfigured: boolean; eventTypes: Record<NotificationEventType, boolean> };
 	};
 	loadBalancer: { algorithm: LoadBalancingAlgorithm; affinity: boolean };
 	websocket: SiteWebSocketPolicyView;
@@ -185,6 +187,7 @@ interface ParsedHealthCheck {
 	webhookUrl?: string;
 	webhookSecret?: string;
 	clearWebhook: boolean;
+	notificationEventTypes: Record<NotificationEventType, boolean>;
 }
 
 function boundedInteger(value: unknown, fallback: number, label: string, minimum: number, maximum: number): number {
@@ -250,6 +253,30 @@ function webhookValue(value: unknown, label: string): string | undefined {
 	return parsed.toString();
 }
 
+function existingNotificationEventTypes(existing?: SiteRecord): Record<NotificationEventType, boolean> {
+	const defaults = Object.fromEntries(NOTIFICATION_EVENT_TYPES.map((type) => [type, true])) as Record<NotificationEventType, boolean>;
+	if (!existing?.notification_event_types_json) return defaults;
+	try {
+		const stored = JSON.parse(existing.notification_event_types_json) as Record<string, unknown>;
+		for (const type of NOTIFICATION_EVENT_TYPES) if (stored[type] === false) defaults[type] = false;
+	} catch {
+		// fall through to defaults
+	}
+	return defaults;
+}
+
+function notificationEventTypes(value: unknown, existing?: SiteRecord): Record<NotificationEventType, boolean> {
+	if (value === undefined) return existingNotificationEventTypes(existing);
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Notification event-type settings must be an object");
+	const input = value as Record<string, unknown>;
+	for (const key of Object.keys(input)) {
+		if (!NOTIFICATION_EVENT_TYPES.includes(key as NotificationEventType)) throw new Error(`Unknown notification event type: ${key}`);
+	}
+	const result = existingNotificationEventTypes(existing);
+	for (const type of NOTIFICATION_EVENT_TYPES) if (type in input) result[type] = Boolean(input[type]);
+	return result;
+}
+
 function parseHealthCheck(value: unknown, existing?: SiteRecord): ParsedHealthCheck {
 	if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) throw new Error("Health-check settings must be an object");
 	const input = (value ?? {}) as Record<string, unknown>;
@@ -259,10 +286,12 @@ function parseHealthCheck(value: unknown, existing?: SiteRecord): ParsedHealthCh
 	const clearWebhook = enabledValue(alerts.clearWebhook, false);
 	const webhookSecret = String(alerts.webhookSecret ?? "").trim() || undefined;
 	if (webhookSecret && webhookSecret.length > 4_096) throw new Error("Health alert webhook signing secret must be at most 4096 characters");
+	const eventTypes = notificationEventTypes(alerts.eventTypes, existing);
 	return {
+		notificationEventTypes: eventTypes,
 		enabled: enabledValue(input.enabled, existing?.health_check_enabled === 1),
 		path: healthPath(input.path, existing?.health_check_path ?? "/health"),
-		intervalSeconds: boundedInteger(input.intervalSeconds, existing?.health_check_interval_seconds ?? 10, "Health-check interval", 10, 3_600),
+		intervalSeconds: boundedInteger(input.intervalSeconds, existing?.health_check_interval_seconds ?? 10, "Health-check interval", 3, 3_600),
 		timeoutMs: boundedInteger(input.timeoutMs, existing?.health_check_timeout_ms ?? 3_000, "Health-check timeout", 250, 60_000),
 		failureThreshold: boundedInteger(input.failureThreshold, existing?.health_check_failure_threshold ?? 3, "Health-check failure threshold", 1, 20),
 		recoveryThreshold: boundedInteger(input.recoveryThreshold, existing?.health_check_recovery_threshold ?? 2, "Health-check recovery threshold", 1, 20),
@@ -350,6 +379,7 @@ export function siteView(site: SiteRecord): SiteView {
 				enabled: site.health_alert_enabled === 1,
 				provider: site.health_alert_provider ?? "generic",
 				webhookConfigured: Boolean(site.health_alert_webhook_url),
+				eventTypes: existingNotificationEventTypes(site),
 			},
 		},
 		loadBalancer: {
@@ -402,6 +432,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		health_alert_provider: health.alertProvider,
 		health_alert_webhook_url: health.webhookUrl ? await encryptSecret(health.webhookUrl) : null,
 		health_alert_webhook_secret: health.webhookSecret ? await encryptSecret(health.webhookSecret) : null,
+		notification_event_types_json: JSON.stringify(health.notificationEventTypes),
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket),
@@ -472,6 +503,7 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 			: health.webhookSecret
 				? await encryptSecret(health.webhookSecret)
 				: existing.health_alert_webhook_secret,
+		notification_event_types_json: JSON.stringify(health.notificationEventTypes),
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket, existing.websocket_policy_json),
@@ -503,6 +535,56 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 		});
 	}
 	return updated;
+}
+
+export interface SiteNotificationPolicyView {
+	enabled: boolean;
+	provider: HealthAlertProvider;
+	webhookConfigured: boolean;
+	eventTypes: Record<NotificationEventType, boolean>;
+}
+
+function siteNotificationPolicyView(site: SiteRecord): SiteNotificationPolicyView {
+	return {
+		enabled: site.health_alert_enabled === 1,
+		provider: site.health_alert_provider ?? "generic",
+		webhookConfigured: Boolean(site.health_alert_webhook_url),
+		eventTypes: existingNotificationEventTypes(site),
+	};
+}
+
+export async function siteNotificationPolicy(id: string): Promise<SiteNotificationPolicyView> {
+	const site = await repository.siteById(id);
+	if (!site) throw new Error("Site not found");
+	return siteNotificationPolicyView(site);
+}
+
+/**
+ * Slim counterpart to updateSite that only touches the notification-related columns, so the
+ * dedicated Notifications admin page can save without re-submitting (or re-validating TLS/origin
+ * for) the rest of the site.
+ */
+export async function updateSiteNotificationPolicy(id: string, input: unknown): Promise<SiteNotificationPolicyView> {
+	const existing = await repository.siteById(id);
+	if (!existing) throw new Error("Site not found");
+	const health = parseHealthCheck({ alerts: input }, existing);
+	const encryptedWebhookUrl = health.clearWebhook ? null : health.webhookUrl ? await encryptSecret(health.webhookUrl) : existing.health_alert_webhook_url;
+	if (health.alertEnabled && !encryptedWebhookUrl) throw new Error("A webhook URL is required when notifications are enabled");
+	const updated: SiteRecord = {
+		...existing,
+		health_alert_enabled: health.alertEnabled ? 1 : 0,
+		health_alert_provider: health.alertProvider,
+		health_alert_webhook_url: encryptedWebhookUrl,
+		health_alert_webhook_secret: health.clearWebhook
+			? null
+			: health.webhookSecret
+				? await encryptSecret(health.webhookSecret)
+				: existing.health_alert_webhook_secret,
+		notification_event_types_json: JSON.stringify(health.notificationEventTypes),
+		updated_at: Date.now(),
+	};
+	await repository.updateSite(updated);
+	return siteNotificationPolicyView(updated);
 }
 
 export async function resolveSiteForHost(host: string): Promise<SiteRecord | null> {

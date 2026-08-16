@@ -165,7 +165,26 @@
 								<li>Per-origin health checks, thresholds, and automatic unhealthy-origin removal</li>
 								<li>Per-minute health-check latency graphs (min/average/max) with a timed-out-check percentage</li>
 								<li>Optional 503 maintenance mode with <code>Retry-After</code> when the whole pool is down</li>
-								<li>Webhook alerts: generic signed JSON, Slack, Discord, and ntfy with a durable retrying outbox</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M10 5a2 2 0 0 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6" />
+									<path d="M9 17v1a3 3 0 0 0 6 0v-1" />
+								</svg>
+							</div>
+							<h3>Notifications</h3>
+							<p>One dashboard for every site's and Stream's webhooks.</p>
+							<ul>
+								<li>Per-event-type subscriptions: origin up/down, pool up/down, host internet connectivity, and IP auto-bans</li>
+								<li>
+									ntfy, Slack, and Discord get rich, color-coded messages with structured fields and native timestamps. Anything else gets a signed generic JSON
+									webhook
+								</li>
+								<li>Durable outbox with ordered exponential retries, so a stuck event can't be overtaken by a newer one to the same destination</li>
+								<li>Paginated, filterable, sortable delivery log per site and per Stream, independent of whether delivery succeeded</li>
 							</ul>
 						</div>
 
@@ -198,12 +217,13 @@
 							<h3>TCP &amp; UDP streams</h3>
 							<p>Proxy more than HTTP from the same gateway.</p>
 							<ul>
+								<li>Named streams shown throughout the dashboard instead of a bare port number</li>
 								<li>Native TCP and UDP stream proxying independent of the HTTP path</li>
 								<li>Optional incoming TCP TLS termination, or raw passthrough</li>
 								<li>Live TCP connection lists and synthetic UDP peer sessions</li>
 								<li>Connect, disconnect, and error logs with GeoIP-enriched client country</li>
 								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
-								<li>Optional per-stream TCP origin health checks with a connect-latency graph</li>
+								<li>Optional per-stream TCP origin health checks with a connect-latency graph and webhook notifications</li>
 								<li>Per-stream TCP/UDP bandwidth-threshold auto-bans, applied live without restarting the listener</li>
 							</ul>
 						</div>

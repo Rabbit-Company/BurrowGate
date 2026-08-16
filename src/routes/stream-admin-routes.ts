@@ -12,8 +12,23 @@ import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } 
 import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
 import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
 import { resolveStreamBandwidthPolicy, serializeStreamBandwidthPolicy } from "../services/stream-bandwidth-policy-service.ts";
+import {
+	NOTIFICATION_EVENT_TYPES,
+	parseStreamNotificationPolicyInput,
+	resolveStreamNotificationPolicy,
+	storedStreamNotificationPolicy,
+} from "../services/stream-notification-policy-service.ts";
+import { encryptSecret } from "../services/secret-encryption-service.ts";
 import { streamRuleSetCatalog } from "../services/stream-protection-service.ts";
-import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
+import type {
+	NotificationEventType,
+	NotificationOutboxStatus,
+	StreamDefaultNetworkAction,
+	StreamEventType,
+	StreamProtocol,
+	StreamRecord,
+	StreamRuleAction,
+} from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
 import {
@@ -57,6 +72,21 @@ function stringParam(url: URL, name: string): string | undefined {
 function protocolParam(url: URL): StreamProtocol | undefined {
 	const value = stringParam(url, "protocol");
 	return value === "tcp" || value === "udp" ? value : undefined;
+}
+
+function notificationTypeParam(url: URL): NotificationEventType | undefined {
+	const value = stringParam(url, "type");
+	return value && (NOTIFICATION_EVENT_TYPES as string[]).includes(value) ? (value as NotificationEventType) : undefined;
+}
+
+function notificationStatusParam(url: URL): NotificationOutboxStatus | undefined {
+	const value = stringParam(url, "status");
+	return value === "pending" || value === "delivered" || value === "failed" ? value : undefined;
+}
+
+function notificationSortBy(url: URL): "created_at" | "occurred_at" | "type" | "status" {
+	const value = stringParam(url, "sortBy");
+	return value === "occurred_at" || value === "type" || value === "status" ? value : "created_at";
 }
 
 function eventTypeParam(url: URL): StreamEventType | undefined {
@@ -251,7 +281,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream.create",
 				resourceType: "stream",
 				resourceId: stream.id,
-				summary: `Created stream on port ${stream.incoming_port}`,
+				summary: `Created stream ${stream.name} (port ${stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() }, 201);
@@ -279,7 +309,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream.update",
 				resourceType: "stream",
 				resourceId: stream.id,
-				summary: `Updated stream on port ${stream.incoming_port}`,
+				summary: `Updated stream ${stream.name} (port ${stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() });
@@ -308,7 +338,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			action: "stream.delete",
 			resourceType: "stream",
 			resourceId: stream.id,
-			summary: `Deleted stream on port ${stream.incoming_port}`,
+			summary: `Deleted stream ${stream.name} (port ${stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });
@@ -547,7 +577,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream_network_policy.update",
 				resourceType: "stream",
 				resourceId: selection.stream.id,
-				summary: `Updated default network policy for stream on port ${selection.stream.incoming_port}`,
+				summary: `Updated default network policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse({ defaultIpAction, defaultCountryAction });
@@ -583,7 +613,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream_country_rule.create",
 				resourceType: "stream_country_rule",
 				resourceId: rule.id,
-				summary: `Added country rule (${rule.action}) for ${rule.country_code} on stream port ${selection.stream.incoming_port}`,
+				summary: `Added country rule (${rule.action}) for ${rule.country_code} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse(rule, 201);
@@ -610,7 +640,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			action: "stream_country_rule.delete",
 			resourceType: "stream_country_rule",
 			resourceId: ctx.params.id!,
-			summary: `Deleted a country rule on stream port ${selection.stream.incoming_port}`,
+			summary: `Deleted a country rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });
@@ -665,7 +695,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream_ip_rule.create",
 				resourceType: "stream_ip_rule",
 				resourceId: rule.id,
-				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on stream port ${selection.stream.incoming_port}`,
+				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse(rule, 201);
@@ -692,7 +722,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			action: "stream_ip_rule.delete",
 			resourceType: "stream_ip_rule",
 			resourceId: ctx.params.id!,
-			summary: `Deleted an IP rule on stream port ${selection.stream.incoming_port}`,
+			summary: `Deleted an IP rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });
@@ -719,7 +749,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			action: "stream_ip_rule.bulk_delete",
 			resourceType: "stream",
 			resourceId: selection.stream.id,
-			summary: `Deleted ${deleted} IP rule(s) on stream port ${selection.stream.incoming_port}`,
+			summary: `Deleted ${deleted} IP rule(s) on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted });
@@ -763,7 +793,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream_protection_policy.update",
 				resourceType: "stream",
 				resourceId: selection.stream.id,
-				summary: `Updated protection policy for stream on port ${selection.stream.incoming_port}`,
+				summary: `Updated protection policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson }));
@@ -803,12 +833,99 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				action: "stream_bandwidth_policy.update",
 				resourceType: "stream",
 				resourceId: selection.stream.id,
-				summary: `Updated bandwidth limit policy for stream on port ${selection.stream.incoming_port}`,
+				summary: `Updated bandwidth limit policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse(resolveStreamBandwidthPolicy({ ...selection.stream, bandwidth_policy_json: bandwidthPolicyJson }));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update bandwidth limit policy" }, 400);
 		}
+	});
+
+	app.get("/_burrowgate/api/admin/streams/notification-policy", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const policy = resolveStreamNotificationPolicy(selection.stream);
+		return jsonResponse({ enabled: policy.enabled, provider: policy.provider, webhookConfigured: Boolean(policy.webhookUrl), eventTypes: policy.eventTypes });
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/streams/notification-policy", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const notificationPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (notificationPolicyDenied) return notificationPolicyDenied;
+		try {
+			const body = await ctx.req.json();
+			const parsed = parseStreamNotificationPolicyInput(body, selection.stream.notification_policy_json);
+			const existingPolicy = storedStreamNotificationPolicy(selection.stream.notification_policy_json);
+			const webhookUrl = parsed.clearWebhook ? null : parsed.webhookUrl ? await encryptSecret(parsed.webhookUrl) : existingPolicy.webhookUrl;
+			if (parsed.enabled && !webhookUrl) throw new Error("A webhook URL is required when notifications are enabled");
+			const webhookSecret = parsed.clearWebhook ? null : parsed.webhookSecret ? await encryptSecret(parsed.webhookSecret) : existingPolicy.webhookSecret;
+			const notificationPolicyJson = JSON.stringify({
+				enabled: parsed.enabled,
+				provider: parsed.provider,
+				webhookUrl,
+				webhookSecret,
+				eventTypes: parsed.eventTypes,
+			});
+			await repository.updateStreamNotificationPolicy(selection.stream.id, notificationPolicyJson, Date.now());
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_notification_policy.update",
+				resourceType: "stream",
+				resourceId: selection.stream.id,
+				summary: `Updated notification policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			const policy = resolveStreamNotificationPolicy({ ...selection.stream, notification_policy_json: notificationPolicyJson });
+			return jsonResponse({ enabled: policy.enabled, provider: policy.provider, webhookConfigured: Boolean(policy.webhookUrl), eventTypes: policy.eventTypes });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update notification policy" }, 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/streams/notifications", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const selection = await selectedStream(url, user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const result = await repository.pagedNotificationsForStream({
+			streamId: selection.stream.id,
+			page: integerParam(url, "page", 1, 1, 1_000_000),
+			pageSize: integerParam(url, "pageSize", 25, 10, 200),
+			search: stringParam(url, "search"),
+			type: notificationTypeParam(url),
+			status: notificationStatusParam(url),
+			sortBy: notificationSortBy(url),
+			sortDirection: sortDirection(url),
+		});
+		return jsonResponse({
+			...result,
+			items: result.items.map((event) => ({
+				id: event.id,
+				type: event.type,
+				severity: event.severity,
+				summary: event.summary,
+				status: event.delivery_status,
+				attempts: Number(event.delivery_attempts),
+				lastError: event.delivery_last_error,
+				occurredAt: Number(event.occurred_at),
+				createdAt: Number(event.created_at),
+				deliveredAt: event.delivered_at === null ? null : Number(event.delivered_at),
+			})),
+		});
 	});
 }

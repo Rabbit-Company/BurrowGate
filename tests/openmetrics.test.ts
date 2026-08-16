@@ -23,7 +23,7 @@ describe("OpenMetrics exporter", () => {
 		metrics.setOriginHealth("site-1", "unhealthy");
 		metrics.setOriginBackendHealth("site-1", "origin-1", "unhealthy");
 		metrics.recordOriginHealthCheck("site-1", "origin-1", false, 125);
-		metrics.recordHealthAlert("site-1", "retry");
+		metrics.recordNotificationDelivery("site-1", "retry");
 
 		const output = metrics.metricsText();
 		expect(output).toContain('burrowgate_build_info{environment="test",version="test-version"} 1');
@@ -37,7 +37,7 @@ describe("OpenMetrics exporter", () => {
 		expect(output).toContain('burrowgate_origin_health_state{site_id="site-1",state="unhealthy"} 1');
 		expect(output).toContain('burrowgate_origin_backend_health_state{origin_id="origin-1",site_id="site-1",state="unhealthy"} 1');
 		expect(output).toContain('burrowgate_origin_health_checks_total{origin_id="origin-1",outcome="failure",site_id="site-1"} 1');
-		expect(output).toContain('burrowgate_origin_health_alerts_total{outcome="retry",site_id="site-1"} 1');
+		expect(output).toContain('burrowgate_notification_deliveries_total{outcome="retry",site_id="site-1"} 1');
 		expect(output).not.toContain("203.0.113.10");
 		expect(output).not.toContain('country="SI"');
 		expect(output.trimEnd().endsWith("# EOF")).toBe(true);

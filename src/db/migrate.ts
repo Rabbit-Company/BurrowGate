@@ -385,6 +385,7 @@ CREATE TABLE IF NOT EXISTS certificate_events (
 );
 CREATE TABLE IF NOT EXISTS streams (
   id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL DEFAULT '',
   incoming_port INTEGER NOT NULL,
   forward_host VARCHAR(255) NOT NULL,
   forward_port INTEGER NOT NULL,
@@ -544,6 +545,29 @@ CREATE TABLE IF NOT EXISTS health_alert_outbox (
   created_at BIGINT NOT NULL,
   delivered_at BIGINT NULL
 );
+CREATE TABLE IF NOT EXISTS notification_events (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NULL,
+  stream_id VARCHAR(64) NULL,
+  type VARCHAR(32) NOT NULL,
+  severity VARCHAR(16) NOT NULL,
+  summary TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  occurred_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notification_outbox (
+  id VARCHAR(64) PRIMARY KEY,
+  event_id VARCHAR(64) NOT NULL,
+  site_id VARCHAR(64) NULL,
+  stream_id VARCHAR(64) NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at BIGINT NOT NULL,
+  last_error TEXT NULL,
+  created_at BIGINT NOT NULL,
+  delivered_at BIGINT NULL
+);
 CREATE TABLE IF NOT EXISTS connectivity_ping_minutes (
   target VARCHAR(64) NOT NULL,
   bucket_start BIGINT NOT NULL,
@@ -646,6 +670,13 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_origin_health_events_site_created ON origin_health_events (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_due ON health_alert_outbox (status, next_attempt_at)",
 	"CREATE INDEX IF NOT EXISTS idx_health_alert_outbox_site_created ON health_alert_outbox (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_events_site_created ON notification_events (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_events_stream_created ON notification_events (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_events_type_created ON notification_events (type, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_due ON notification_outbox (status, next_attempt_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_site_created ON notification_outbox (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_stream_created ON notification_outbox (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_event ON notification_outbox (event_id)",
 	"CREATE INDEX IF NOT EXISTS idx_site_origins_site_priority ON site_origins (site_id, enabled, priority)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_site_state ON origin_backend_health_status (site_id, state)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_events_origin_created ON origin_backend_health_events (origin_id, created_at)",
@@ -704,6 +735,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN load_balancing_affinity INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN http_policy_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN notification_event_types_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -717,6 +749,7 @@ async function ensureSiteColumns(): Promise<void> {
 	await db`UPDATE sites SET error_html_template=${DEFAULT_ERROR_HTML_TEMPLATE} WHERE error_html_template IS NULL`;
 	await db`UPDATE sites SET error_json_fields_json=${JSON.stringify(DEFAULT_ERROR_JSON_FIELDS)} WHERE error_json_fields_json IS NULL`;
 	await db`UPDATE sites SET challenge_html_template=${DEFAULT_CHALLENGE_HTML_TEMPLATE} WHERE challenge_html_template IS NULL`;
+	await db`UPDATE sites SET notification_event_types_json='{}' WHERE notification_event_types_json IS NULL`;
 }
 
 async function ensureRoutePolicyColumns(): Promise<void> {
@@ -734,6 +767,65 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 	}
 }
 
+async function ensureNotificationSchema(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE notification_events ADD COLUMN stream_id VARCHAR(64) NULL");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
+	if (isMySql()) {
+		try {
+			await db.unsafe("ALTER TABLE notification_outbox MODIFY COLUMN site_id VARCHAR(64) NULL");
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+		try {
+			await db.unsafe("ALTER TABLE notification_outbox ADD COLUMN stream_id VARCHAR(64) NULL");
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+		return;
+	}
+	const sqlite = config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:";
+	if (!sqlite) {
+		try {
+			await db.unsafe("ALTER TABLE notification_outbox ALTER COLUMN site_id DROP NOT NULL");
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+		try {
+			await db.unsafe("ALTER TABLE notification_outbox ADD COLUMN stream_id VARCHAR(64) NULL");
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+		return;
+	}
+	const columns = (await db.unsafe("PRAGMA table_info(notification_outbox)")) as Array<{ name: string; notnull: number }>;
+	const siteIdColumn = columns.find((column) => column.name === "site_id");
+	if (siteIdColumn && siteIdColumn.notnull === 1) {
+		await db.unsafe(`CREATE TABLE notification_outbox_migrated (
+			  id VARCHAR(64) PRIMARY KEY,
+			  event_id VARCHAR(64) NOT NULL,
+			  site_id VARCHAR(64) NULL,
+			  stream_id VARCHAR(64) NULL,
+			  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+			  attempts INTEGER NOT NULL DEFAULT 0,
+			  next_attempt_at BIGINT NOT NULL,
+			  last_error TEXT NULL,
+			  created_at BIGINT NOT NULL,
+			  delivered_at BIGINT NULL
+			)`);
+		await db.unsafe(
+			`INSERT INTO notification_outbox_migrated (id,event_id,site_id,status,attempts,next_attempt_at,last_error,created_at,delivered_at)
+			SELECT id,event_id,site_id,status,attempts,next_attempt_at,last_error,created_at,delivered_at FROM notification_outbox`,
+		);
+		await db.unsafe("DROP TABLE notification_outbox");
+		await db.unsafe("ALTER TABLE notification_outbox_migrated RENAME TO notification_outbox");
+	} else if (!columns.some((column) => column.name === "stream_id")) {
+		await db.unsafe("ALTER TABLE notification_outbox ADD COLUMN stream_id VARCHAR(64) NULL");
+	}
+}
+
 async function ensureIpRuleColumns(): Promise<void> {
 	try {
 		await db.unsafe("ALTER TABLE ip_rules ADD COLUMN rule_id VARCHAR(128) NULL");
@@ -744,6 +836,7 @@ async function ensureIpRuleColumns(): Promise<void> {
 
 async function ensureStreamColumns(): Promise<void> {
 	const statements = [
+		"ALTER TABLE streams ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT ''",
 		"ALTER TABLE streams ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE streams ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE streams ADD COLUMN max_connections_per_ip INTEGER NOT NULL DEFAULT 0",
@@ -761,6 +854,9 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN origin_health_check_enabled INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN origin_health_check_interval_seconds INTEGER NOT NULL DEFAULT 10",
 		"ALTER TABLE streams ADD COLUMN origin_health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000",
+		"ALTER TABLE streams ADD COLUMN origin_health_check_failure_threshold INTEGER NOT NULL DEFAULT 3",
+		"ALTER TABLE streams ADD COLUMN origin_health_check_recovery_threshold INTEGER NOT NULL DEFAULT 2",
+		"ALTER TABLE streams ADD COLUMN notification_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -936,6 +1032,13 @@ async function ensurePrimaryOrigins(): Promise<void> {
 	}
 }
 
+async function ensureStreamNames(): Promise<void> {
+	const streams = (await db`SELECT id,incoming_port FROM streams WHERE name=''`) as Array<{ id: string; incoming_port: number }>;
+	for (const stream of streams) {
+		await db`UPDATE streams SET name=${`Stream on port ${stream.incoming_port}`} WHERE id=${stream.id}`;
+	}
+}
+
 function duplicateIndexError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 	return message.includes("already exists") || message.includes("duplicate key name") || message.includes("duplicate index");
@@ -968,7 +1071,9 @@ export async function migrate(): Promise<void> {
 	await ensureAdminSessionColumns();
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();
+	await ensureNotificationSchema();
 	await ensurePrimaryOrigins();
+	await ensureStreamNames();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 	}

@@ -126,7 +126,7 @@ export function adminPage(): string {
 		"Dashboard",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a href="/_burrowgate/admin/notifications">Notifications</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>
@@ -671,29 +671,19 @@ export function adminPage(): string {
             <label class="check-row"><input id="siteHealthEnabled" type="checkbox"><span><strong>Enable origin health checks</strong><small class="muted">Checks run directly against the origin and do not pass through visitor access policies.</small></span></label>
             <div id="siteHealthSettings" class="site-form-grid hidden">
               <label class="site-origin-field"><span>Health-check path</span><input id="siteHealthPath" class="input" maxlength="2048" value="/health" placeholder="/health"><small class="muted">A GET request must return a 2xx response. Redirects are treated as failures.</small></label>
-              <label><span>Check interval (seconds)</span><input id="siteHealthInterval" class="input" type="number" min="10" max="3600" value="10" required><small class="muted">Delay between scheduled probes of each enabled origin.</small></label>
+              <label><span>Check interval (seconds)</span><input id="siteHealthInterval" class="input" type="number" min="3" max="3600" value="10" required><small class="muted">Delay between scheduled probes of each enabled origin.</small></label>
               <label><span>Timeout (milliseconds)</span><input id="siteHealthTimeout" class="input" type="number" min="250" max="60000" value="3000" required><small class="muted">Maximum time allowed for one health-check response.</small></label>
               <label><span>Failures before unhealthy</span><input id="siteHealthFailureThreshold" class="input" type="number" min="1" max="20" value="3" required><small class="muted">Consecutive failed probes required to open an incident.</small></label>
               <label><span>Successes before recovery</span><input id="siteHealthRecoveryThreshold" class="input" type="number" min="1" max="20" value="2" required><small class="muted">Consecutive successful probes required to recover.</small></label>
               <label class="site-origin-field"><span>When unhealthy</span><select id="siteHealthFailureMode" class="select"><option value="monitor">Keep proxying and alert</option><option value="maintenance">Return the custom 503 maintenance page</option></select><small class="muted">Unknown and degraded states never block traffic.</small></label>
+              <p id="siteHealthDetectionNotice" class="notice muted site-origin-field hidden"></p>
             </div>
             <div id="siteHealthRuntime" class="health-runtime hidden">
               <div class="health-summary-grid"><div><span class="muted">Last checked</span><strong id="siteHealthLastChecked">Never</strong></div><div><span class="muted">Last healthy</span><strong id="siteHealthLastHealthy">Never</strong></div><div><span class="muted">Response</span><strong id="siteHealthLastResponse">-</strong></div><div><span class="muted">Consecutive failures</span><strong id="siteHealthFailures">0</strong></div></div>
               <div class="row between responsive"><p id="siteHealthError" class="notice muted">No health check has run yet.</p><button id="siteCheckOriginNow" class="button secondary compact" type="button">Check now</button></div>
-              <p class="muted">Latency and timed-out-check graphs are available from the chart selector on the Traffic tab, scoped to this site.</p>
+              <p class="muted">Latency and timed-out-check graphs are available from the chart selector on the Traffic tab, scoped to this site. Configure webhook alerts on the <a href="/_burrowgate/admin/notifications">Notifications</a> tab.</p>
               <div><strong>Recent state changes</strong><div id="siteHealthEvents" class="health-event-list"><p class="muted">No health state changes yet.</p></div></div>
             </div>
-          </section>
-          <section class="error-response-editor hidden" data-site-editor-panel="health">
-            <div class="section-heading error-response-heading"><div><h3>Health alerts</h3><p class="muted">Send one alert when an incident opens and one when it recovers. Failed deliveries retry with backoff.</p></div></div>
-            <label class="check-row"><input id="siteHealthAlertsEnabled" type="checkbox"><span><strong>Enable webhook alerts</strong><small id="siteHealthWebhookConfigured" class="muted">No webhook is configured.</small></span></label>
-            <div id="siteHealthAlertSettings" class="site-form-grid hidden">
-              <label><span>Webhook type</span><select id="siteHealthAlertProvider" class="select"><option value="generic">Generic JSON</option><option value="slack">Slack</option><option value="discord">Discord</option><option value="ntfy">ntfy</option></select><small class="muted">Formats alert payloads for the selected destination.</small></label>
-              <label><span>Webhook URL</span><input id="siteHealthWebhookUrl" class="input" type="url" autocomplete="off" placeholder="https://alerts.example/hooks/..."><small class="muted">Leave blank while editing to keep the encrypted destination.</small></label>
-              <label><span>Generic webhook signing secret</span><input id="siteHealthWebhookSecret" class="input" type="password" autocomplete="new-password" maxlength="4096" placeholder="Optional"><small class="muted">Adds an HMAC SHA-256 signature header. Leave blank to keep the current secret.</small></label>
-              <label id="siteHealthClearWebhookRow" class="check-row compact-check hidden"><input id="siteHealthClearWebhook" type="checkbox"><span><strong>Remove stored webhook</strong><small class="muted">Alerts will be disabled when this site is saved.</small></span></label>
-            </div>
-            <div id="siteHealthAlertRuntime" class="health-runtime hidden"><strong>Recent alert deliveries</strong><div id="siteHealthAlertDeliveries" class="health-event-list"><p class="muted">No alerts have been queued.</p></div></div>
           </section>
           <section class="error-response-editor hidden" data-site-editor-panel="responses">
             <div class="section-heading error-response-heading"><div><h3>Error responses</h3><p class="muted">Customize errors generated by BurrowGate for this site.</p></div></div>
