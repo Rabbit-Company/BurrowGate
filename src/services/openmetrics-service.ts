@@ -99,6 +99,10 @@ export class BurrowGateOpenMetrics {
 	private readonly originHealthChecks: Counter;
 	private readonly originHealthDuration: Histogram;
 	private readonly healthAlerts: Counter;
+	private readonly connectivityPingChecks: Counter;
+	private readonly connectivityPingDuration: Histogram;
+	private readonly streamOriginHealthChecks: Counter;
+	private readonly streamOriginHealthDuration: Histogram;
 	private readonly exporterScrapes: Counter;
 	private readonly exporterCollectionErrors: Counter;
 	private readonly exporterDuration: Histogram;
@@ -300,6 +304,34 @@ export class BurrowGateOpenMetrics {
 			labelNames: ["site_id", "outcome"],
 			registry: this.registry,
 		});
+		this.connectivityPingChecks = new Counter({
+			name: "connectivity_ping_checks",
+			help: "Internet connectivity ping checks by outcome",
+			labelNames: ["target", "outcome"],
+			registry: this.registry,
+		});
+		this.connectivityPingDuration = new Histogram({
+			name: "connectivity_ping_duration",
+			help: "Internet connectivity ping round-trip time",
+			unit: "seconds",
+			labelNames: ["target"],
+			buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+			registry: this.registry,
+		});
+		this.streamOriginHealthChecks = new Counter({
+			name: "stream_origin_health_checks",
+			help: "Stream origin TCP connect checks by outcome",
+			labelNames: ["stream_id", "outcome"],
+			registry: this.registry,
+		});
+		this.streamOriginHealthDuration = new Histogram({
+			name: "stream_origin_health_check_duration",
+			help: "Stream origin TCP connect check duration",
+			unit: "seconds",
+			labelNames: ["stream_id"],
+			buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+			registry: this.registry,
+		});
 		this.exporterScrapes = new Counter({ name: "openmetrics_scrapes", help: "OpenMetrics scrape requests served", registry: this.registry });
 		this.exporterCollectionErrors = new Counter({
 			name: "openmetrics_collection_errors",
@@ -481,6 +513,18 @@ export class BurrowGateOpenMetrics {
 		if (!this.enabled) return;
 		this.originHealthChecks.labels({ site_id: siteId, origin_id: originId, outcome: healthy ? "success" : "failure" }).inc();
 		this.originHealthDuration.labels({ site_id: siteId, origin_id: originId }).observe(Math.max(0, durationMs) / 1_000);
+	}
+
+	recordConnectivityPing(target: string, timedOut: boolean, durationMs: number): void {
+		if (!this.enabled) return;
+		this.connectivityPingChecks.labels({ target, outcome: timedOut ? "timeout" : "success" }).inc();
+		this.connectivityPingDuration.labels({ target }).observe(Math.max(0, durationMs) / 1_000);
+	}
+
+	recordStreamOriginHealthCheck(streamId: string, timedOut: boolean, durationMs: number): void {
+		if (!this.enabled) return;
+		this.streamOriginHealthChecks.labels({ stream_id: streamId, outcome: timedOut ? "timeout" : "success" }).inc();
+		this.streamOriginHealthDuration.labels({ stream_id: streamId }).observe(Math.max(0, durationMs) / 1_000);
 	}
 
 	recordHealthAlert(siteId: string, outcome: "delivered" | "retry" | "failed"): void {

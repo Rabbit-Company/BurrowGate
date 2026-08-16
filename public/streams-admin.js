@@ -25,6 +25,7 @@ let streamCountryRules = [];
 const selectedStreamRuleIds = new Set();
 let protectionStreamId = "";
 let protectionCatalog = [];
+let healthStreamId = "";
 let activeTab = "connections";
 let eventPage = 1;
 let bandwidthPage = 1;
@@ -517,9 +518,18 @@ function createStreamChart(canvasId, definition) {
 	return chart;
 }
 
+function formatLatencyMs(milliseconds) {
+	const value = Number(milliseconds ?? 0);
+	if (value < 1_000) return `${Math.round(value)} ms`;
+	if (value < 60_000) return `${(value / 1_000).toFixed(1)} s`;
+	return `${(value / 60_000).toFixed(1)} min`;
+}
+
 function streamValueFormatter(format) {
 	if (format === "bytes") return (value) => formatBytes(Number(value));
 	if (format === "bitrate") return (value) => formatBitrate(Number(value));
+	if (format === "duration") return (value) => formatLatencyMs(Number(value));
+	if (format === "percentage") return (value) => `${Number(value).toFixed(1)}%`;
 	return (value) => formatNumber(Math.round(Number(value)));
 }
 
@@ -688,6 +698,33 @@ function streamProtocolCatalog(protocolBreakdown) {
 	};
 }
 
+function streamHealthCatalog(healthSeries) {
+	return {
+		"health:primary": {
+			title: "Origin TCP connect latency",
+			subtitle: "Min / average / max connect time per interval",
+			timeSeries: true,
+			valueFormat: "duration",
+			emptyMessage: "No health-check latency in this range.",
+			datasets: [
+				{ key: "minLatencyMs", label: "Min" },
+				{ key: "avgLatencyMs", label: "Average" },
+				{ key: "maxLatencyMs", label: "Max" },
+			],
+			data: healthSeries,
+		},
+		"health:secondary": {
+			title: "Timed-out connect attempts",
+			subtitle: "Share of checks that never connected",
+			timeSeries: true,
+			valueFormat: "percentage",
+			emptyMessage: "No health checks in this range.",
+			datasets: [{ key: "timeoutPct", label: "Timeout %" }],
+			data: healthSeries,
+		},
+	};
+}
+
 function parseStreamChartViewKey(key) {
 	const [group, slot, bitrate] = key.split(":");
 	return { base: `${group}:${slot}`, isBitrate: bitrate === "bitrate" };
@@ -702,6 +739,7 @@ function renderStreamCharts() {
 		...streamComparisonCatalog(latestStreamMetrics.comparison ?? []),
 		...streamBlockReasonCatalog(latestStreamMetrics.blockReasons ?? []),
 		...streamProtocolCatalog(latestStreamMetrics.protocolBreakdown ?? []),
+		...streamHealthCatalog(latestStreamMetrics.healthSeries ?? []),
 	};
 	const { base, isBitrate } = parseStreamChartViewKey(streamChartViewSelection);
 	const definition = catalog[base] ?? catalog["connections:primary"];
@@ -887,6 +925,20 @@ function renderProtectionStreamSelector() {
 				.join("")
 		: '<option value="">No streams configured</option>';
 	selector.value = protectionStreamId;
+	selector.disabled = streams.length === 0;
+}
+
+function renderHealthStreamSelector() {
+	const selector = byId("healthStreamSelector");
+	if (!streams.some((stream) => stream.id === healthStreamId)) healthStreamId = selectedStreamId || streams[0]?.id || "";
+	selector.innerHTML = streams.length
+		? streams
+				.map(
+					(stream) => `<option value="${escapeHtml(stream.id)}">Port ${stream.incomingPort} → ${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</option>`,
+				)
+				.join("")
+		: '<option value="">No streams configured</option>';
+	selector.value = healthStreamId;
 	selector.disabled = streams.length === 0;
 }
 
@@ -1231,6 +1283,7 @@ async function loadStreams() {
 	renderStreamSelector();
 	renderRulesStreamSelector();
 	renderProtectionStreamSelector();
+	renderHealthStreamSelector();
 	renderCertificateOptions();
 	renderStreams();
 }
@@ -1900,6 +1953,42 @@ async function saveStreamProtection() {
 	}
 }
 
+function streamHealthOf(streamId) {
+	return streams.find((stream) => stream.id === streamId) ?? null;
+}
+
+function loadStreamHealth() {
+	const stream = streamHealthOf(healthStreamId);
+	const canCheck = Boolean(stream?.tcpEnabled);
+	byId("streamHealthTcpNotice").classList.toggle("hidden", !stream || canCheck);
+	byId("streamHealthSettings").classList.toggle("hidden", !canCheck);
+	byId("saveStreamHealth").disabled = !canCheck;
+	if (!stream) return;
+	byId("streamHealthEnabled").checked = Boolean(stream.originHealthCheck?.enabled);
+	byId("streamHealthInterval").value = String(stream.originHealthCheck?.intervalSeconds ?? 30);
+	byId("streamHealthTimeout").value = String(stream.originHealthCheck?.timeoutMs ?? 3_000);
+}
+
+async function saveStreamHealth() {
+	if (!healthStreamId) return;
+	try {
+		const updated = await api(`/streams/${encodeURIComponent(healthStreamId)}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				originHealthCheckEnabled: byId("streamHealthEnabled").checked,
+				originHealthCheckIntervalSeconds: Number(byId("streamHealthInterval").value),
+				originHealthCheckTimeoutMs: Number(byId("streamHealthTimeout").value),
+			}),
+		});
+		const index = streams.findIndex((stream) => stream.id === healthStreamId);
+		if (index >= 0) streams[index] = updated.stream;
+		showToast("Health-check settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
 function writeStreamBandwidthLimitProtocol(prefix, limit) {
 	byId(`streamBandwidthLimit${prefix}Enabled`).checked = !!limit?.enabled;
 	byId(`streamBandwidthLimit${prefix}MaxMiB`).value = String(bytesToMib(limit?.maxBytes ?? DEFAULT_BANDWIDTH_LIMIT.maxBytes));
@@ -2163,7 +2252,15 @@ function setActiveTab(name) {
 	document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
 	document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
 	byId(`panel-${name}`).classList.remove("hidden");
-	const geoMode = { connections: "active", events: "events", bandwidth: "bandwidth", rules: "blocked", protection: "blocked", streams: "active" }[name];
+	const geoMode = {
+		connections: "active",
+		events: "events",
+		bandwidth: "bandwidth",
+		rules: "blocked",
+		protection: "blocked",
+		health: "active",
+		streams: "active",
+	}[name];
 	byId("geoMetricMode").value = geoMode;
 	renderGeoMap();
 	streamChartViewSelection = {
@@ -2172,6 +2269,7 @@ function setActiveTab(name) {
 		bandwidth: "bandwidth:primary",
 		rules: "protection:primary",
 		protection: "protection:primary",
+		health: "health:primary",
 		streams: "connections:primary",
 	}[name];
 	byId("streamChartView").value = streamChartViewSelection;
@@ -2185,6 +2283,7 @@ function setActiveTab(name) {
 		void loadStreamProtection();
 		void loadStreamBandwidthLimit();
 	}
+	if (name === "health") loadStreamHealth();
 }
 
 async function refreshDashboard(updateLabel = "Updated") {
@@ -2333,6 +2432,11 @@ byId("protectionStreamSelector").addEventListener("change", () => {
 byId("refreshProtectionCatalog").addEventListener("click", () => void loadStreamProtection());
 byId("saveStreamProtection").addEventListener("click", () => void saveStreamProtection());
 byId("saveStreamBandwidthLimit").addEventListener("click", () => void saveStreamBandwidthLimit());
+byId("healthStreamSelector").addEventListener("change", () => {
+	healthStreamId = byId("healthStreamSelector").value;
+	loadStreamHealth();
+});
+byId("saveStreamHealth").addEventListener("click", () => void saveStreamHealth());
 byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
 byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
 byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());

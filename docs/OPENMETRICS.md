@@ -71,6 +71,8 @@ Define the referenced `otlp` exporter elsewhere in the Collector configuration.
 - `burrowgate_origin_health_state` for aggregate pool health and `burrowgate_origin_backend_health_state` for each configured origin
 - `burrowgate_origin_health_checks_total` and `burrowgate_origin_health_check_duration_seconds`, labeled by site and origin
 - `burrowgate_origin_health_alerts_total`
+- `burrowgate_connectivity_ping_checks_total` and `burrowgate_connectivity_ping_duration_seconds`, labeled by target
+- `burrowgate_stream_origin_health_checks_total` and `burrowgate_stream_origin_health_check_duration_seconds`, labeled by Stream
 - `burrowgate_monitoring_queue_records`, persistence failures, and dropped events
 - `burrowgate_retention_cleanup_*`
 - `burrowgate_database_up`, configured site and Stream counts, and GeoIP availability

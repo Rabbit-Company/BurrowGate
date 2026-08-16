@@ -45,6 +45,14 @@ UDP has no native connection lifecycle. BurrowGate therefore creates a peer sess
 
 Payload totals are accumulated in memory and persisted in one-minute buckets by stream, incoming port, IP, country, and protocol. The per-stream retention value removes both lifecycle events and bandwidth buckets. Lowering retention triggers immediate cleanup; regular maintenance performs subsequent cleanup.
 
+## Origin health checks
+
+A TCP-enabled stream can opt into a periodic health check: BurrowGate opens, then immediately closes, a TCP connection to the stream's forward host and port on a timer and records the connect latency or a timeout. This is disabled by default - enabling it starts making connection attempts against your real backend (e.g. a game server) - and is configured per stream on the Streams dashboard's **Health** tab, alongside the check interval and timeout.
+
+UDP-only streams cannot be health-checked this way. There is no generic UDP echo protocol to probe an arbitrary upstream with. Existing bandwidth and connection monitoring for UDP streams is unaffected.
+
+Results are aggregated into one-minute buckets (minimum, maximum, and average latency, plus a count of timed-out checks) and shown as a graph on the Health tab, so a network blip between BurrowGate and the origin - even a brief one - shows up in the data instead of only being visible as scattered connection failures. The per-stream retention value also governs this history.
+
 ## Bandwidth limit temp-bans
 
 Each stream can independently auto-ban a client IP that pushes more than a configured amount of bandwidth through its TCP side and/or its UDP side within a time window - useful since one stream can carry both protocols on the same port. Configure it on the Streams dashboard's **Protection** tab, per selected stream. It is disabled by default for both protocols.

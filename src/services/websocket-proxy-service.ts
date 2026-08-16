@@ -425,9 +425,9 @@ export async function handleWebSocketUpgrade(
 				error: "Protected origin is temporarily unavailable",
 				clientIp: ip,
 				reason: "BurrowGate is online, but the configured origin did not pass its health checks.",
-				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 10),
 			},
-			{ "retry-after": String(site.health_check_interval_seconds ?? 30), "x-burrowgate-error-code": "origin_unhealthy" },
+			{ "retry-after": String(site.health_check_interval_seconds ?? 10), "x-burrowgate-error-code": "origin_unhealthy" },
 		);
 	}
 
@@ -626,7 +626,7 @@ export async function handleWebSocketUpgrade(
 			error: "No WebSocket origin is available",
 			clientIp: ip,
 			reason: "Every configured origin is unhealthy, disabled, or draining.",
-			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 10),
 		});
 	}
 	let target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);

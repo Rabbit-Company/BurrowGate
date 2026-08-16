@@ -1711,13 +1711,17 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const url = new URL(ctx.req.url);
 		const section =
-			enumParam(url, "section", ["traffic", "bandwidth", "cache", "protection", "sessions", "rules", "routes", "access", "sites"] as const, "traffic") ??
-			"traffic";
+			enumParam(
+				url,
+				"section",
+				["traffic", "bandwidth", "cache", "protection", "sessions", "rules", "routes", "access", "sites", "connectivity", "health"] as const,
+				"traffic",
+			) ?? "traffic";
 		if (section === "sites") {
 			const forbidden = requireAdministrator(user);
 			if (forbidden) return forbidden;
 		}
-		const selection = section === "sites" ? { site: null, error: null } : await selectedSite(url, user);
+		const selection = section === "sites" || section === "connectivity" ? { site: null, error: null } : await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const scopeSiteId = metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
@@ -1735,6 +1739,66 @@ export function registerAdminRoutes(app: Web<any>): void {
 			bucketMs,
 			bucketCount,
 		};
+
+		if (section === "connectivity") {
+			const metrics = await repository.connectivityPingMetrics(config.connectivityMonitor.targets, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Internet connectivity latency",
+					subtitle: "Average ping round-trip time per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "duration",
+					emptyMessage: "No connectivity ping data in this range.",
+					datasets: metrics.targets.map((target) => ({ key: target, label: target })),
+					data: metrics.series.map((point) => ({ bucket: point.bucket, ...point.avg })),
+				},
+				secondary: {
+					title: "Timed-out pings",
+					subtitle: "Share of ping packets that never received a reply",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "percentage",
+					emptyMessage: "No connectivity ping data in this range.",
+					datasets: metrics.targets.map((target) => ({ key: target, label: target })),
+					data: metrics.series.map((point) => ({ bucket: point.bucket, ...point.timeoutPct })),
+				},
+				breakdown: metrics.summary.map((entry) => ({ label: entry.target, count: Math.round(entry.avgLatencyMs ?? 0) })),
+			});
+		}
+
+		if (section === "health") {
+			const metrics = await repository.originLatencyMetrics(scopeSiteId, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Origin health-check latency",
+					subtitle: "Min / average / max response time per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "duration",
+					emptyMessage: "No health-check latency in this range.",
+					datasets: [
+						{ key: "minLatencyMs", label: "Min" },
+						{ key: "avgLatencyMs", label: "Average" },
+						{ key: "maxLatencyMs", label: "Max" },
+					],
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Timed-out health checks",
+					subtitle: "Share of checks that never received a response",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "percentage",
+					emptyMessage: "No health checks in this range.",
+					datasets: [{ key: "timeoutPct", label: "Timeout %" }],
+					data: metrics.series,
+				},
+				breakdown: [],
+			});
+		}
 
 		if (section === "cache") {
 			const metrics = await repository.cacheMetrics(scopeSiteId, since, until, bucketMs);

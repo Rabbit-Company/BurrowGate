@@ -31,7 +31,7 @@ export function streamsAdminPage(): string {
 </section>
 
 <section class="grid charts-grid">
-  <article class="card chart-card"><div class="pad row between responsive"><div><h2 id="primaryChartTitle">Stream traffic volume</h2><p id="primaryChartSubtitle" class="muted">Connections, disconnections, and proxy errors</p></div><select id="streamChartView" class="select select-small"><option value="connections:primary">Stream traffic volume</option><option value="connections:filtered">Stream traffic volume (open ≥10s)</option><option value="connections:secondary">Stream data volume</option><option value="connections:secondary:bitrate">Stream data volume (bitrate)</option><option value="bandwidth:primary">Client to origin bandwidth</option><option value="bandwidth:primary:bitrate">Client to origin bandwidth (bitrate)</option><option value="bandwidth:secondary">Origin to client bandwidth</option><option value="bandwidth:secondary:bitrate">Origin to client bandwidth (bitrate)</option><option value="compare:primary">Connections by stream</option><option value="compare:secondary">Bandwidth by stream</option><option value="protection:primary">Blocked connections by reason</option><option value="protocol:primary">Connections by protocol</option><option value="protocol:secondary">Bandwidth by protocol</option></select></div><div class="chart-layout"><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="streamTrafficChart"></canvas></div><div id="streamTrafficEmpty" class="empty-state hidden">No data in this range.</div></div><aside id="streamPrimarySummary" class="chart-sidebar"></aside></div></article>
+  <article class="card chart-card"><div class="pad row between responsive"><div><h2 id="primaryChartTitle">Stream traffic volume</h2><p id="primaryChartSubtitle" class="muted">Connections, disconnections, and proxy errors</p></div><select id="streamChartView" class="select select-small"><option value="connections:primary">Stream traffic volume</option><option value="connections:filtered">Stream traffic volume (open ≥10s)</option><option value="connections:secondary">Stream data volume</option><option value="connections:secondary:bitrate">Stream data volume (bitrate)</option><option value="bandwidth:primary">Client to origin bandwidth</option><option value="bandwidth:primary:bitrate">Client to origin bandwidth (bitrate)</option><option value="bandwidth:secondary">Origin to client bandwidth</option><option value="bandwidth:secondary:bitrate">Origin to client bandwidth (bitrate)</option><option value="compare:primary">Connections by stream</option><option value="compare:secondary">Bandwidth by stream</option><option value="protection:primary">Blocked connections by reason</option><option value="protocol:primary">Connections by protocol</option><option value="protocol:secondary">Bandwidth by protocol</option><option value="health:primary">Origin TCP connect latency</option><option value="health:secondary">Timed-out connect attempts</option></select></div><div class="chart-layout"><div class="chart-wrap"><div class="chart-canvas-container"><canvas id="streamTrafficChart"></canvas></div><div id="streamTrafficEmpty" class="empty-state hidden">No data in this range.</div></div><aside id="streamPrimarySummary" class="chart-sidebar"></aside></div></article>
 </section>
 
 <section class="card geo-card">
@@ -47,7 +47,7 @@ export function streamsAdminPage(): string {
   <div id="streamRefererList" class="geo-country-list"><p class="muted">No blocked connections in this range.</p></div>
 </section>
 
-<nav class="tabs" aria-label="Stream dashboard sections"><button class="tab active" data-tab="connections" type="button">Active connections</button><button class="tab" data-tab="events" type="button">Traffic log</button><button class="tab" data-tab="bandwidth" type="button">Bandwidth</button><button class="tab" data-tab="rules" type="button">Network rules</button><button class="tab" data-tab="protection" type="button">Protection</button><button class="tab" data-tab="streams" type="button">Streams</button></nav>
+<nav class="tabs" aria-label="Stream dashboard sections"><button class="tab active" data-tab="connections" type="button">Active connections</button><button class="tab" data-tab="events" type="button">Traffic log</button><button class="tab" data-tab="bandwidth" type="button">Bandwidth</button><button class="tab" data-tab="rules" type="button">Network rules</button><button class="tab" data-tab="protection" type="button">Protection</button><button class="tab" data-tab="health" type="button">Health</button><button class="tab" data-tab="streams" type="button">Streams</button></nav>
 
 <section id="panel-connections" class="tab-panel"><article class="card"><div class="pad section-heading"><div><h2>Live TCP connections and UDP peers</h2><p id="udpPeerNotice" class="muted">UDP peers disconnect after the configured idle timeout.</p></div><div id="connectionsHeaderActions" class="row"><button id="refreshConnections" class="button secondary" type="button">Refresh</button></div></div><div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Protocol", "protocol")}</th><th>${sortButton("Incoming port", "incomingPort")}</th><th>${sortButton("Client", "clientIp")}</th><th data-column="connections:country">${sortButton("Country", "countryCode")}</th><th data-column="connections:connected">${sortButton("Connected", "connectedAt")}</th><th data-column="connections:lastActivity">${sortButton("Last activity", "lastActivityAt")}</th><th data-column="connections:toOrigin">${sortButton("To origin", "clientToUpstreamBytes")}</th><th data-column="connections:toClient">${sortButton("To client", "upstreamToClientBytes")}</th></tr></thead><tbody id="activeConnections"><tr><td colspan="8" class="empty-cell">Loading...</td></tr></tbody></table></div></article></section>
 
@@ -131,6 +131,22 @@ export function streamsAdminPage(): string {
         <label><span>Ban duration (seconds)</span><input id="streamBandwidthLimitUdpBanSeconds" class="input" type="number" min="0" max="2592000" step="1" value="3600" required></label>
       </div>
     </div>
+  </article>
+</section>
+
+<section id="panel-health" class="tab-panel hidden">
+  <article class="card rules-stream-card">
+    <div class="pad section-heading"><div><h2>Stream</h2><p class="muted">TCP connect health checks measure how long it takes to open a TCP connection to this stream's forward host and port. UDP-only streams cannot be checked - there is no generic UDP echo protocol to probe with.</p></div><label class="site-picker"><span>Stream</span><select id="healthStreamSelector" class="select"><option value="">No streams configured</option></select></label></div>
+  </article>
+  <article class="card">
+    <div class="pad section-heading"><div><h2>Origin health check</h2><p class="muted">Periodically opens, then immediately closes, a TCP connection to the forward host and port, recording connect latency or a timeout. Off by default.</p></div><button id="saveStreamHealth" class="button" type="button">Save</button></div>
+    <p id="streamHealthTcpNotice" class="notice muted pad pad-topless hidden">This stream has TCP disabled, so it cannot be health-checked.</p>
+    <div id="streamHealthSettings" class="pad pad-topless site-form-grid">
+      <label class="check-row compact-check"><input id="streamHealthEnabled" type="checkbox"><span><strong>Enable health checks</strong><small class="muted">Starts periodic TCP connection attempts against this stream's origin.</small></span></label>
+      <label><span>Check interval (seconds)</span><input id="streamHealthInterval" class="input" type="number" min="10" max="3600" value="10" required></label>
+      <label><span>Timeout (milliseconds)</span><input id="streamHealthTimeout" class="input" type="number" min="250" max="60000" value="3000" required></label>
+    </div>
+    <p class="muted pad pad-topless">Latency and timed-out-check graphs are available from the chart selector above, scoped to the stream selected at the top of the dashboard.</p>
   </article>
 </section>
 

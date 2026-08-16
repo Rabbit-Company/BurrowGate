@@ -262,7 +262,7 @@ function parseHealthCheck(value: unknown, existing?: SiteRecord): ParsedHealthCh
 	return {
 		enabled: enabledValue(input.enabled, existing?.health_check_enabled === 1),
 		path: healthPath(input.path, existing?.health_check_path ?? "/health"),
-		intervalSeconds: boundedInteger(input.intervalSeconds, existing?.health_check_interval_seconds ?? 30, "Health-check interval", 10, 3_600),
+		intervalSeconds: boundedInteger(input.intervalSeconds, existing?.health_check_interval_seconds ?? 10, "Health-check interval", 10, 3_600),
 		timeoutMs: boundedInteger(input.timeoutMs, existing?.health_check_timeout_ms ?? 3_000, "Health-check timeout", 250, 60_000),
 		failureThreshold: boundedInteger(input.failureThreshold, existing?.health_check_failure_threshold ?? 3, "Health-check failure threshold", 1, 20),
 		recoveryThreshold: boundedInteger(input.recoveryThreshold, existing?.health_check_recovery_threshold ?? 2, "Health-check recovery threshold", 1, 20),
@@ -341,7 +341,7 @@ export function siteView(site: SiteRecord): SiteView {
 		healthCheck: {
 			enabled: site.health_check_enabled === 1,
 			path: site.health_check_path ?? "/health",
-			intervalSeconds: Number(site.health_check_interval_seconds ?? 30),
+			intervalSeconds: Number(site.health_check_interval_seconds ?? 10),
 			timeoutMs: Number(site.health_check_timeout_ms ?? 3_000),
 			failureThreshold: Number(site.health_check_failure_threshold ?? 3),
 			recoveryThreshold: Number(site.health_check_recovery_threshold ?? 2),

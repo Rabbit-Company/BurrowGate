@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS sites (
 	challenge_html_template TEXT NULL,
   health_check_enabled INTEGER NOT NULL DEFAULT 0,
   health_check_path VARCHAR(2048) NOT NULL DEFAULT '/health',
-  health_check_interval_seconds INTEGER NOT NULL DEFAULT 30,
+  health_check_interval_seconds INTEGER NOT NULL DEFAULT 10,
   health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000,
   health_check_failure_threshold INTEGER NOT NULL DEFAULT 3,
   health_check_recovery_threshold INTEGER NOT NULL DEFAULT 2,
@@ -544,6 +544,37 @@ CREATE TABLE IF NOT EXISTS health_alert_outbox (
   created_at BIGINT NOT NULL,
   delivered_at BIGINT NULL
 );
+CREATE TABLE IF NOT EXISTS connectivity_ping_minutes (
+  target VARCHAR(64) NOT NULL,
+  bucket_start BIGINT NOT NULL,
+  min_latency_ms INTEGER NULL,
+  max_latency_ms INTEGER NULL,
+  sum_latency_ms BIGINT NOT NULL DEFAULT 0,
+  total_count INTEGER NOT NULL DEFAULT 0,
+  timeout_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (target, bucket_start)
+);
+CREATE TABLE IF NOT EXISTS stream_origin_latency_minutes (
+  stream_id VARCHAR(64) NOT NULL,
+  bucket_start BIGINT NOT NULL,
+  min_latency_ms INTEGER NULL,
+  max_latency_ms INTEGER NULL,
+  sum_latency_ms BIGINT NOT NULL DEFAULT 0,
+  total_count INTEGER NOT NULL DEFAULT 0,
+  timeout_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (stream_id, bucket_start)
+);
+CREATE TABLE IF NOT EXISTS origin_latency_minutes (
+  origin_id VARCHAR(64) NOT NULL,
+  site_id VARCHAR(64) NOT NULL,
+  bucket_start BIGINT NOT NULL,
+  min_latency_ms INTEGER NULL,
+  max_latency_ms INTEGER NULL,
+  sum_latency_ms BIGINT NOT NULL DEFAULT 0,
+  total_count INTEGER NOT NULL DEFAULT 0,
+  timeout_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (origin_id, bucket_start)
+);
 `;
 
 const indexes = [
@@ -633,6 +664,9 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_admin_webauthn_user ON admin_webauthn_credentials (user_id)",
 	"CREATE INDEX IF NOT EXISTS idx_access_webauthn_user_site ON access_webauthn_credentials (user_id, site_id)",
 	"CREATE INDEX IF NOT EXISTS idx_access_webauthn_site ON access_webauthn_credentials (site_id)",
+	"CREATE INDEX IF NOT EXISTS idx_connectivity_ping_bucket ON connectivity_ping_minutes (bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_origin_latency_stream_bucket ON stream_origin_latency_minutes (stream_id, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_origin_latency_site_bucket ON origin_latency_minutes (site_id, bucket_start)",
 ];
 
 function isMySql(): boolean {
@@ -657,7 +691,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN challenge_html_template TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN health_check_enabled INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE sites ADD COLUMN health_check_path VARCHAR(2048) NOT NULL DEFAULT '/health'",
-		"ALTER TABLE sites ADD COLUMN health_check_interval_seconds INTEGER NOT NULL DEFAULT 30",
+		"ALTER TABLE sites ADD COLUMN health_check_interval_seconds INTEGER NOT NULL DEFAULT 10",
 		"ALTER TABLE sites ADD COLUMN health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000",
 		"ALTER TABLE sites ADD COLUMN health_check_failure_threshold INTEGER NOT NULL DEFAULT 3",
 		"ALTER TABLE sites ADD COLUMN health_check_recovery_threshold INTEGER NOT NULL DEFAULT 2",
@@ -724,6 +758,9 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled'",
 		"ALTER TABLE streams ADD COLUMN bandwidth_policy_json TEXT NULL",
+		"ALTER TABLE streams ADD COLUMN origin_health_check_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE streams ADD COLUMN origin_health_check_interval_seconds INTEGER NOT NULL DEFAULT 10",
+		"ALTER TABLE streams ADD COLUMN origin_health_check_timeout_ms INTEGER NOT NULL DEFAULT 3000",
 	];
 	for (const statement of statements) {
 		try {

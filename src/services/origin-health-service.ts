@@ -370,6 +370,14 @@ export class OriginHealthManager {
 			const backendTransitioned = previousBackend.state !== nextBackend.state;
 			openMetrics.recordOriginHealthCheck(runtime.site.id, runtime.origin.id, result.healthy, result.latencyMs);
 			openMetrics.setOriginBackendHealth(runtime.site.id, runtime.origin.id, nextBackend.state);
+			// A non-2xx HTTP status is still a reply (network path is fine). Only a missing status means the
+			// request never completed (network error or timeout), which is what the latency graph should count.
+			const timedOut = result.status === null;
+			const bucketStart = Math.floor(result.checkedAt / 60_000) * 60_000;
+			await repository.addOriginLatencyResult(runtime.origin.id, runtime.site.id, bucketStart, {
+				latencyMs: timedOut ? null : result.latencyMs,
+				timedOut,
+			});
 			if (backendTransitioned || result.checkedAt - runtime.lastPersistedAt >= STATUS_PERSIST_INTERVAL_MS) {
 				await repository.saveBackendHealthStatus(nextBackend);
 				runtime.lastPersistedAt = result.checkedAt;
@@ -400,7 +408,7 @@ export class OriginHealthManager {
 		} finally {
 			runtime.running = false;
 			this.activeChecks = Math.max(0, this.activeChecks - 1);
-			runtime.nextCheckAt = Date.now() + jitter(Number(runtime.site.health_check_interval_seconds ?? 30) * 1_000);
+			runtime.nextCheckAt = Date.now() + jitter(Number(runtime.site.health_check_interval_seconds ?? 10) * 1_000);
 		}
 	}
 

@@ -45,6 +45,7 @@ import type {
 	SiteOriginRecord,
 	OriginBackendHealthStatusRecord,
 	OriginBackendHealthEventRecord,
+	LatencyCheckResult,
 } from "../types.ts";
 
 export type SortDirection = "asc" | "desc";
@@ -271,6 +272,53 @@ function toNumber(value: unknown): number {
 	return Number.isFinite(converted) ? converted : 0;
 }
 
+interface LatencyMinuteRow {
+	bucket: number | string;
+	min_latency_ms: number | string | null;
+	max_latency_ms: number | string | null;
+	sum_latency_ms: number | string;
+	total_count: number | string;
+	timeout_count: number | string;
+}
+
+interface LatencySeriesPoint {
+	bucket: number;
+	minLatencyMs: number | null;
+	maxLatencyMs: number | null;
+	avgLatencyMs: number | null;
+	totalCount: number;
+	timeoutCount: number;
+	timeoutPct: number;
+}
+
+/** Merges pre-aggregated min/max/sum/count rows (already grouped by display bucket) onto a zero-filled bucket skeleton. */
+function latencySeriesFromRows(since: number, until: number, bucketMs: number, rows: LatencyMinuteRow[]): LatencySeriesPoint[] {
+	const points = emptyMetricPoints<LatencySeriesPoint>(since, until, bucketMs, (value) => ({
+		bucket: value,
+		minLatencyMs: null,
+		maxLatencyMs: null,
+		avgLatencyMs: null,
+		totalCount: 0,
+		timeoutCount: 0,
+		timeoutPct: 0,
+	}));
+	const byBucket = new Map(points.map((point) => [point.bucket, point]));
+	for (const row of rows) {
+		const point = byBucket.get(toNumber(row.bucket));
+		if (!point) continue;
+		const totalCount = toNumber(row.total_count);
+		const timeoutCount = toNumber(row.timeout_count);
+		const successCount = totalCount - timeoutCount;
+		point.minLatencyMs = row.min_latency_ms === null ? null : toNumber(row.min_latency_ms);
+		point.maxLatencyMs = row.max_latency_ms === null ? null : toNumber(row.max_latency_ms);
+		point.avgLatencyMs = successCount > 0 ? toNumber(row.sum_latency_ms) / successCount : null;
+		point.totalCount = totalCount;
+		point.timeoutCount = timeoutCount;
+		point.timeoutPct = totalCount > 0 ? (timeoutCount / totalCount) * 100 : 0;
+	}
+	return points;
+}
+
 function isMySqlDatabase(): boolean {
 	return config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://");
 }
@@ -472,6 +520,78 @@ export const repository = {
 	},
 	async backendHealthEvents(siteId: string, limit = 100): Promise<OriginBackendHealthEventRecord[]> {
 		return (await db`SELECT * FROM origin_backend_health_events WHERE site_id=${siteId} ORDER BY created_at DESC LIMIT ${limit}`) as OriginBackendHealthEventRecord[];
+	},
+	async addOriginLatencyResult(originId: string, siteId: string, bucketStart: number, result: LatencyCheckResult): Promise<void> {
+		const latency = result.timedOut ? null : Math.max(0, Math.round(result.latencyMs ?? 0));
+		const sum = result.timedOut ? 0 : (latency ?? 0);
+		const timeout = result.timedOut ? 1 : 0;
+		if (isMySqlDatabase()) {
+			await db`INSERT INTO origin_latency_minutes (origin_id,site_id,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+				VALUES (${originId},${siteId},${bucketStart},${latency},${latency},${sum},1,${timeout})
+				ON DUPLICATE KEY UPDATE
+				min_latency_ms = CASE WHEN min_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN min_latency_ms WHEN min_latency_ms <= ${latency} THEN min_latency_ms ELSE ${latency} END,
+				max_latency_ms = CASE WHEN max_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN max_latency_ms WHEN max_latency_ms >= ${latency} THEN max_latency_ms ELSE ${latency} END,
+				sum_latency_ms = sum_latency_ms + ${sum},
+				total_count = total_count + 1,
+				timeout_count = timeout_count + ${timeout}`;
+			return;
+		}
+		await db`INSERT INTO origin_latency_minutes (origin_id,site_id,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+			VALUES (${originId},${siteId},${bucketStart},${latency},${latency},${sum},1,${timeout})
+			ON CONFLICT (origin_id,bucket_start) DO UPDATE SET
+			min_latency_ms = CASE WHEN origin_latency_minutes.min_latency_ms IS NULL THEN excluded.min_latency_ms WHEN excluded.min_latency_ms IS NULL THEN origin_latency_minutes.min_latency_ms WHEN origin_latency_minutes.min_latency_ms <= excluded.min_latency_ms THEN origin_latency_minutes.min_latency_ms ELSE excluded.min_latency_ms END,
+			max_latency_ms = CASE WHEN origin_latency_minutes.max_latency_ms IS NULL THEN excluded.max_latency_ms WHEN excluded.max_latency_ms IS NULL THEN origin_latency_minutes.max_latency_ms WHEN origin_latency_minutes.max_latency_ms >= excluded.max_latency_ms THEN origin_latency_minutes.max_latency_ms ELSE excluded.max_latency_ms END,
+			sum_latency_ms = origin_latency_minutes.sum_latency_ms + excluded.sum_latency_ms,
+			total_count = origin_latency_minutes.total_count + excluded.total_count,
+			timeout_count = origin_latency_minutes.timeout_count + excluded.timeout_count`;
+	},
+	async originLatencyMetrics(
+		siteId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{
+			bucket: number;
+			minLatencyMs: number | null;
+			maxLatencyMs: number | null;
+			avgLatencyMs: number | null;
+			totalCount: number;
+			timeoutCount: number;
+			timeoutPct: number;
+		}>;
+	}> {
+		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const bucket = metricBucketExpression("bucket_start", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        MIN(min_latency_ms) AS min_latency_ms,
+        MAX(max_latency_ms) AS max_latency_ms,
+        COALESCE(SUM(sum_latency_ms),0) AS sum_latency_ms,
+        COALESCE(SUM(total_count),0) AS total_count,
+        COALESCE(SUM(timeout_count),0) AS timeout_count
+      FROM origin_latency_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${siteFilter}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as LatencyMinuteRow[];
+		return { series: latencySeriesFromRows(since, until, bucketMs, rows) };
+	},
+	async deleteOriginLatencyBeforeForSiteBatch(siteId: string, cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM origin_latency_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`,
+			);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM origin_latency_minutes WHERE rowid IN (SELECT rowid FROM origin_latency_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM origin_latency_minutes WHERE ctid IN (SELECT ctid FROM origin_latency_minutes WHERE site_id=${siteId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
 	},
 	async assignSessionOrigin(sessionId: string, siteId: string, originId: string | null): Promise<void> {
 		await db`UPDATE access_sessions SET origin_id=${originId} WHERE id=${sessionId} AND site_id=${siteId}`;
@@ -914,6 +1034,117 @@ export const repository = {
 				}
 			}
 		});
+	},
+	async addConnectivityPingResult(target: string, bucketStart: number, result: LatencyCheckResult): Promise<void> {
+		const latency = result.timedOut ? null : Math.max(0, Math.round(result.latencyMs ?? 0));
+		const sum = result.timedOut ? 0 : (latency ?? 0);
+		const timeout = result.timedOut ? 1 : 0;
+		if (isMySqlDatabase()) {
+			await db`INSERT INTO connectivity_ping_minutes (target,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+				VALUES (${target},${bucketStart},${latency},${latency},${sum},1,${timeout})
+				ON DUPLICATE KEY UPDATE
+				min_latency_ms = CASE WHEN min_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN min_latency_ms WHEN min_latency_ms <= ${latency} THEN min_latency_ms ELSE ${latency} END,
+				max_latency_ms = CASE WHEN max_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN max_latency_ms WHEN max_latency_ms >= ${latency} THEN max_latency_ms ELSE ${latency} END,
+				sum_latency_ms = sum_latency_ms + ${sum},
+				total_count = total_count + 1,
+				timeout_count = timeout_count + ${timeout}`;
+			return;
+		}
+		await db`INSERT INTO connectivity_ping_minutes (target,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+			VALUES (${target},${bucketStart},${latency},${latency},${sum},1,${timeout})
+			ON CONFLICT (target,bucket_start) DO UPDATE SET
+			min_latency_ms = CASE WHEN connectivity_ping_minutes.min_latency_ms IS NULL THEN excluded.min_latency_ms WHEN excluded.min_latency_ms IS NULL THEN connectivity_ping_minutes.min_latency_ms WHEN connectivity_ping_minutes.min_latency_ms <= excluded.min_latency_ms THEN connectivity_ping_minutes.min_latency_ms ELSE excluded.min_latency_ms END,
+			max_latency_ms = CASE WHEN connectivity_ping_minutes.max_latency_ms IS NULL THEN excluded.max_latency_ms WHEN excluded.max_latency_ms IS NULL THEN connectivity_ping_minutes.max_latency_ms WHEN connectivity_ping_minutes.max_latency_ms >= excluded.max_latency_ms THEN connectivity_ping_minutes.max_latency_ms ELSE excluded.max_latency_ms END,
+			sum_latency_ms = connectivity_ping_minutes.sum_latency_ms + excluded.sum_latency_ms,
+			total_count = connectivity_ping_minutes.total_count + excluded.total_count,
+			timeout_count = connectivity_ping_minutes.timeout_count + excluded.timeout_count`;
+	},
+	async connectivityPingMetrics(
+		targets: string[],
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		targets: string[];
+		series: Array<{ bucket: number; avg: Record<string, number | null>; timeoutPct: Record<string, number> }>;
+		summary: Array<{
+			target: string;
+			minLatencyMs: number | null;
+			maxLatencyMs: number | null;
+			avgLatencyMs: number | null;
+			totalCount: number;
+			timeoutCount: number;
+			timeoutPct: number;
+		}>;
+	}> {
+		if (targets.length === 0) return { targets: [], series: [], summary: [] };
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const bucket = metricBucketExpression("bucket_start", bucketMs);
+		const rows = (await db`
+      SELECT target, ${bucket} * ${bucketMs} AS bucket,
+        MIN(min_latency_ms) AS min_latency_ms,
+        MAX(max_latency_ms) AS max_latency_ms,
+        COALESCE(SUM(sum_latency_ms),0) AS sum_latency_ms,
+        COALESCE(SUM(total_count),0) AS total_count,
+        COALESCE(SUM(timeout_count),0) AS timeout_count
+      FROM connectivity_ping_minutes
+      WHERE target IN ${db(targets)} AND bucket_start >= ${minuteSince} AND bucket_start <= ${until}
+      GROUP BY target, ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<LatencyMinuteRow & { target: string }>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			avg: Object.fromEntries(targets.map((target) => [target, null as number | null])),
+			timeoutPct: Object.fromEntries(targets.map((target) => [target, 0])),
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		const totals = new Map(targets.map((target) => [target, { min: null as number | null, max: null as number | null, sum: 0, total: 0, timeout: 0 }]));
+		for (const row of rows) {
+			const totalCount = toNumber(row.total_count);
+			const timeoutCount = toNumber(row.timeout_count);
+			const successCount = totalCount - timeoutCount;
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) {
+				point.avg[row.target] = successCount > 0 ? toNumber(row.sum_latency_ms) / successCount : null;
+				point.timeoutPct[row.target] = totalCount > 0 ? (timeoutCount / totalCount) * 100 : 0;
+			}
+			const total = totals.get(row.target);
+			if (!total) continue;
+			const rowMin = row.min_latency_ms === null ? null : toNumber(row.min_latency_ms);
+			const rowMax = row.max_latency_ms === null ? null : toNumber(row.max_latency_ms);
+			total.min = rowMin === null ? total.min : total.min === null ? rowMin : Math.min(total.min, rowMin);
+			total.max = rowMax === null ? total.max : total.max === null ? rowMax : Math.max(total.max, rowMax);
+			total.sum += toNumber(row.sum_latency_ms);
+			total.total += totalCount;
+			total.timeout += timeoutCount;
+		}
+		const summary = targets.map((target) => {
+			const total = totals.get(target)!;
+			const successCount = total.total - total.timeout;
+			return {
+				target,
+				minLatencyMs: total.min,
+				maxLatencyMs: total.max,
+				avgLatencyMs: successCount > 0 ? total.sum / successCount : null,
+				totalCount: total.total,
+				timeoutCount: total.timeout,
+				timeoutPct: total.total > 0 ? (total.timeout / total.total) * 100 : 0,
+			};
+		});
+		return { targets, series: points, summary };
+	},
+	async deleteConnectivityPingBeforeBatch(cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(await db`DELETE FROM connectivity_ping_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM connectivity_ping_minutes WHERE rowid IN (SELECT rowid FROM connectivity_ping_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM connectivity_ping_minutes WHERE ctid IN (SELECT ctid FROM connectivity_ping_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
 	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
 		const pattern = searchPattern(query.search);
@@ -2068,9 +2299,9 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
 			if (existing) {
-				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},bandwidth_policy_json=${stream.bandwidth_policy_json},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+				await transaction`UPDATE streams SET incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},bandwidth_policy_json=${stream.bandwidth_policy_json},origin_health_check_enabled=${stream.origin_health_check_enabled},origin_health_check_interval_seconds=${stream.origin_health_check_interval_seconds},origin_health_check_timeout_ms=${stream.origin_health_check_timeout_ms},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
 			} else {
-				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,bandwidth_policy_json,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.bandwidth_policy_json},${stream.created_at},${stream.updated_at})`;
+				await transaction`INSERT INTO streams (id,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,bandwidth_policy_json,origin_health_check_enabled,origin_health_check_interval_seconds,origin_health_check_timeout_ms,created_at,updated_at) VALUES (${stream.id},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.bandwidth_policy_json},${stream.origin_health_check_enabled},${stream.origin_health_check_interval_seconds},${stream.origin_health_check_timeout_ms},${stream.created_at},${stream.updated_at})`;
 			}
 			if (stream.tcp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;
@@ -2085,6 +2316,7 @@ export const repository = {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_events WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_bandwidth_minutes WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_origin_latency_minutes WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_ip_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_country_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE stream_id=${id}`;
@@ -2123,6 +2355,78 @@ export const repository = {
 				}
 			}
 		});
+	},
+	async addStreamOriginLatencyResult(streamId: string, bucketStart: number, result: LatencyCheckResult): Promise<void> {
+		const latency = result.timedOut ? null : Math.max(0, Math.round(result.latencyMs ?? 0));
+		const sum = result.timedOut ? 0 : (latency ?? 0);
+		const timeout = result.timedOut ? 1 : 0;
+		if (isMySqlDatabase()) {
+			await db`INSERT INTO stream_origin_latency_minutes (stream_id,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+				VALUES (${streamId},${bucketStart},${latency},${latency},${sum},1,${timeout})
+				ON DUPLICATE KEY UPDATE
+				min_latency_ms = CASE WHEN min_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN min_latency_ms WHEN min_latency_ms <= ${latency} THEN min_latency_ms ELSE ${latency} END,
+				max_latency_ms = CASE WHEN max_latency_ms IS NULL THEN ${latency} WHEN ${latency} IS NULL THEN max_latency_ms WHEN max_latency_ms >= ${latency} THEN max_latency_ms ELSE ${latency} END,
+				sum_latency_ms = sum_latency_ms + ${sum},
+				total_count = total_count + 1,
+				timeout_count = timeout_count + ${timeout}`;
+			return;
+		}
+		await db`INSERT INTO stream_origin_latency_minutes (stream_id,bucket_start,min_latency_ms,max_latency_ms,sum_latency_ms,total_count,timeout_count)
+			VALUES (${streamId},${bucketStart},${latency},${latency},${sum},1,${timeout})
+			ON CONFLICT (stream_id,bucket_start) DO UPDATE SET
+			min_latency_ms = CASE WHEN stream_origin_latency_minutes.min_latency_ms IS NULL THEN excluded.min_latency_ms WHEN excluded.min_latency_ms IS NULL THEN stream_origin_latency_minutes.min_latency_ms WHEN stream_origin_latency_minutes.min_latency_ms <= excluded.min_latency_ms THEN stream_origin_latency_minutes.min_latency_ms ELSE excluded.min_latency_ms END,
+			max_latency_ms = CASE WHEN stream_origin_latency_minutes.max_latency_ms IS NULL THEN excluded.max_latency_ms WHEN excluded.max_latency_ms IS NULL THEN stream_origin_latency_minutes.max_latency_ms WHEN stream_origin_latency_minutes.max_latency_ms >= excluded.max_latency_ms THEN stream_origin_latency_minutes.max_latency_ms ELSE excluded.max_latency_ms END,
+			sum_latency_ms = stream_origin_latency_minutes.sum_latency_ms + excluded.sum_latency_ms,
+			total_count = stream_origin_latency_minutes.total_count + excluded.total_count,
+			timeout_count = stream_origin_latency_minutes.timeout_count + excluded.timeout_count`;
+	},
+	async streamOriginLatencyMetrics(
+		streamId: string | undefined,
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{
+			bucket: number;
+			minLatencyMs: number | null;
+			maxLatencyMs: number | null;
+			avgLatencyMs: number | null;
+			totalCount: number;
+			timeoutCount: number;
+			timeoutPct: number;
+		}>;
+	}> {
+		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const bucket = metricBucketExpression("bucket_start", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        MIN(min_latency_ms) AS min_latency_ms,
+        MAX(max_latency_ms) AS max_latency_ms,
+        COALESCE(SUM(sum_latency_ms),0) AS sum_latency_ms,
+        COALESCE(SUM(total_count),0) AS total_count,
+        COALESCE(SUM(timeout_count),0) AS timeout_count
+      FROM stream_origin_latency_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until} ${streamFilter}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as LatencyMinuteRow[];
+		return { series: latencySeriesFromRows(since, until, bucketMs, rows) };
+	},
+	async deleteStreamOriginLatencyBeforeBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM stream_origin_latency_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`,
+			);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM stream_origin_latency_minutes WHERE rowid IN (SELECT rowid FROM stream_origin_latency_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM stream_origin_latency_minutes WHERE ctid IN (SELECT ctid FROM stream_origin_latency_minutes WHERE stream_id=${streamId} AND bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
 	},
 	async pagedStreamEvents(query: StreamEventQuery): Promise<PageResult<StreamEventRecord>> {
 		const pattern = searchPattern(query.search);

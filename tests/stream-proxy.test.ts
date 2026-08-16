@@ -51,6 +51,9 @@ function record(): StreamRecord {
 		udp_amplification_max_ratio: 0,
 		protection_policy_json: null,
 		bandwidth_policy_json: null,
+		origin_health_check_enabled: 0,
+		origin_health_check_interval_seconds: 10,
+		origin_health_check_timeout_ms: 3_000,
 		created_at: Date.now(),
 		updated_at: Date.now(),
 	};

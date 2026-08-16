@@ -119,8 +119,16 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 				name: `origin backend health events for ${site.id}`,
 				run: async () => await repository.deleteBackendHealthEventsBeforeForSiteBatch(site.id, cutoff, batchSize),
 			},
+			{
+				name: `origin latency history for ${site.id}`,
+				run: async () => await repository.deleteOriginLatencyBeforeForSiteBatch(site.id, cutoff, batchSize),
+			},
 		);
 	}
+	tasks.push({
+		name: "connectivity ping history",
+		run: async () => await repository.deleteConnectivityPingBeforeBatch(now - config.connectivityMonitor.retentionDays * DAY_MS, batchSize),
+	});
 	for (const stream of await repository.allStreams()) {
 		const cutoff = now - Number(stream.event_retention_days) * DAY_MS;
 		tasks.push(
@@ -131,6 +139,10 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 			{
 				name: `stream bandwidth for ${stream.id}`,
 				run: async () => await repository.deleteStreamBandwidthBeforeBatch(stream.id, cutoff, batchSize),
+			},
+			{
+				name: `stream origin latency for ${stream.id}`,
+				run: async () => await repository.deleteStreamOriginLatencyBeforeBatch(stream.id, cutoff, batchSize),
 			},
 			{
 				name: `expired network rules for stream ${stream.id}`,

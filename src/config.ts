@@ -109,6 +109,16 @@ export const config = {
 		maxPendingEvents: envNumber("BG_STREAM_MAX_PENDING_EVENTS", 100_000, 100, 1_000_000),
 		udpAmplificationGraceBytes: envNumber("BG_STREAM_UDP_AMPLIFICATION_GRACE_BYTES", 512, 0, 1_048_576),
 	},
+	connectivityMonitor: {
+		enabled: envBoolean("BG_CONNECTIVITY_MONITOR_ENABLED", true),
+		targets: (process.env.BG_CONNECTIVITY_MONITOR_TARGETS?.trim() || "1.1.1.1,8.8.8.8")
+			.split(",")
+			.map((target) => target.trim())
+			.filter((target) => target.length > 0),
+		intervalSeconds: envNumber("BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS", 10, 5, 3_600),
+		timeoutMs: envNumber("BG_CONNECTIVITY_MONITOR_TIMEOUT_MS", 2_000, 200, 30_000),
+		retentionDays: envNumber("BG_CONNECTIVITY_MONITOR_RETENTION_DAYS", 30, 1, 365),
+	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
 		databasePath: process.env.BG_GEOIP_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-Country.mmdb`,

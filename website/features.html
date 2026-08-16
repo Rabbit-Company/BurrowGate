@@ -163,6 +163,7 @@
 								<li>Priority failover, round robin, and smooth weighted round robin</li>
 								<li>Session affinity with deterministic client-IP fallback for sessionless requests</li>
 								<li>Per-origin health checks, thresholds, and automatic unhealthy-origin removal</li>
+								<li>Per-minute health-check latency graphs (min/average/max) with a timed-out-check percentage</li>
 								<li>Optional 503 maintenance mode with <code>Retry-After</code> when the whole pool is down</li>
 								<li>Webhook alerts: generic signed JSON, Slack, Discord, and ntfy with a durable retrying outbox</li>
 							</ul>
@@ -202,6 +203,7 @@
 								<li>Live TCP connection lists and synthetic UDP peer sessions</li>
 								<li>Connect, disconnect, and error logs with GeoIP-enriched client country</li>
 								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
+								<li>Optional per-stream TCP origin health checks with a connect-latency graph</li>
 								<li>Per-stream TCP/UDP bandwidth-threshold auto-bans, applied live without restarting the listener</li>
 							</ul>
 						</div>
@@ -222,6 +224,7 @@
 								<li>Click any Recent Traffic row for full request detail, including captured bodies when enabled</li>
 								<li>Optional per-site/per-route body capture, bounded by size and content type with a self-expiring window</li>
 								<li>Bandwidth split between client-side and upstream, by site, IP, protocol, and country</li>
+								<li>Internet connectivity graph - pings public DNS resolvers directly from the host to tell a network blip from an origin problem</li>
 								<li>Interactive GeoIP world map for requests and new sessions</li>
 								<li>Exact date-time range selection and drag-to-select directly on graphs</li>
 								<li>Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint</li>

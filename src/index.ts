@@ -44,6 +44,8 @@ import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
+import { streamHealthManager } from "./services/stream-health-service.ts";
+import { connectivityMonitor } from "./services/connectivity-monitor-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
 import { isBodyCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
 import { tapBodyForCapture, type CapturedBody } from "./services/body-capture-service.ts";
@@ -67,9 +69,12 @@ await loadManagedRuleSets();
 await loadStreamRuleSets();
 await loadBalancer.initialize();
 await originHealthManager.initialize();
+await streamHealthManager.initialize();
 await runMaintenance();
 startMaintenance();
 originHealthManager.start();
+streamHealthManager.start();
+connectivityMonitor.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
 startStreamMonitoring();
@@ -209,9 +214,9 @@ async function gateway(ctx: any): Promise<Response> {
 				error: "Protected origin is temporarily unavailable",
 				clientIp: ip,
 				reason: "BurrowGate is online, but the configured origin did not pass its health checks.",
-				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+				retryAfterSeconds: Number(site.health_check_interval_seconds ?? 10),
 			},
-			{ "retry-after": String(site.health_check_interval_seconds ?? 30), "x-burrowgate-error-code": "origin_unhealthy" },
+			{ "retry-after": String(site.health_check_interval_seconds ?? 10), "x-burrowgate-error-code": "origin_unhealthy" },
 		);
 	}
 
@@ -499,7 +504,7 @@ async function gateway(ctx: any): Promise<Response> {
 			error: "No origin is available",
 			clientIp: ip,
 			reason: "Every configured origin is unhealthy, disabled, or draining.",
-			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 30),
+			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 10),
 		});
 	}
 

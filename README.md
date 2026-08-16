@@ -372,6 +372,8 @@ Unhealthy origins are removed from normal selection while another usable origin 
 
 Alerts support generic signed JSON webhooks, Slack, Discord, and ntfy. BurrowGate reports individual origin transitions while the pool remains available, and reports pool-down and pool-recovery transitions when availability changes. Deliveries use a durable outbox with exponential retry. Webhook URLs and signing secrets are encrypted at rest.
 
+Every health-check result also feeds a per-minute latency graph (minimum, average, and maximum response time, plus a timed-out-checks percentage) shown on the site's Health tab, so a transient network issue between BurrowGate and an origin is visible in the data rather than only inferred from state transitions.
+
 ## Load Balancing
 
 Every site keeps its original URL as the primary origin and can add more origins from the site editor. Available algorithms are priority failover, round robin, and smooth weighted round robin. Priority failover chooses the lowest healthy priority number; weight controls proportional selection in weighted mode. An origin can be drained to keep existing sticky sessions while preventing new assignments.
@@ -498,10 +500,12 @@ The dashboard includes:
 - exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions
 - drag-to-select time ranges directly on time-series graphs
 - click-through detail on every Recent Traffic row, including captured request/response bodies when body capture is enabled
+- internet connectivity latency, pinging public DNS resolvers directly from the BurrowGate host to help distinguish an origin problem from a network problem
+- origin and Stream health-check latency graphs (minimum, average, maximum, and timed-out-check percentage)
 
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 
-Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and alert delivery, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP status, and process memory. It deliberately excludes paths, client IPs, countries, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
+Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and alert delivery, connectivity ping checks, Stream origin health checks, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP status, and process memory. It deliberately excludes paths, client IPs, countries, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
 
 Managed request protection defaults to monitor mode and can be configured per site or overridden per route. Its dashboard separates clean, would-block, and blocked traffic and records versioned rule metadata without storing matching input values. See [`docs/MANAGED_PROTECTION.md`](docs/MANAGED_PROTECTION.md).
 

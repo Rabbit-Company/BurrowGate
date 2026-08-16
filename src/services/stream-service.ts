@@ -23,6 +23,9 @@ export interface StreamInput {
 	connectionRateLimitRefillIntervalMs?: unknown;
 	connectionRateLimitPrecisionMs?: unknown;
 	udpAmplificationMaxRatio?: unknown;
+	originHealthCheckEnabled?: unknown;
+	originHealthCheckIntervalSeconds?: unknown;
+	originHealthCheckTimeoutMs?: unknown;
 }
 
 function port(value: unknown, label: string): number {
@@ -130,6 +133,11 @@ export function streamView(stream: StreamRecord) {
 			precisionMs: Number(stream.connection_rate_limit_precision_ms ?? 100),
 		},
 		udpAmplificationMaxRatio: Number(stream.udp_amplification_max_ratio ?? 0),
+		originHealthCheck: {
+			enabled: stream.origin_health_check_enabled === 1,
+			intervalSeconds: Number(stream.origin_health_check_interval_seconds ?? 10),
+			timeoutMs: Number(stream.origin_health_check_timeout_ms ?? 3_000),
+		},
 		protection: resolveStreamProtectionPolicy(stream),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
@@ -195,6 +203,21 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			60_000,
 		),
 		udp_amplification_max_ratio: udpAmplificationMaxRatio(input.udpAmplificationMaxRatio, existing?.udp_amplification_max_ratio ?? 0),
+		origin_health_check_enabled: booleanValue(input.originHealthCheckEnabled, existing?.origin_health_check_enabled === 1) ? 1 : 0,
+		origin_health_check_interval_seconds: integerValue(
+			input.originHealthCheckIntervalSeconds,
+			"Origin health-check interval",
+			existing?.origin_health_check_interval_seconds ?? 10,
+			10,
+			3_600,
+		),
+		origin_health_check_timeout_ms: integerValue(
+			input.originHealthCheckTimeoutMs,
+			"Origin health-check timeout",
+			existing?.origin_health_check_timeout_ms ?? 3_000,
+			250,
+			60_000,
+		),
 		protection_policy_json: existing?.protection_policy_json ?? null,
 		bandwidth_policy_json: existing?.bandwidth_policy_json ?? null,
 		created_at: existing?.created_at ?? now,

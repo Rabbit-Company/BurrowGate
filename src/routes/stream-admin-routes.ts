@@ -4,6 +4,7 @@ import { repository } from "../db/repository.ts";
 import { config } from "../config.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { buildStream, streamView, type StreamInput } from "../services/stream-service.ts";
+import { streamHealthManager } from "../services/stream-health-service.ts";
 import { streamProxyManager } from "../services/stream-proxy-service.ts";
 import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
@@ -200,6 +201,7 @@ async function saveAndActivate(stream: StreamRecord, previous?: StreamRecord): P
 		else await repository.deleteStream(stream.id);
 		throw error;
 	}
+	await streamHealthManager.refresh(stream.id);
 }
 
 function mutationError(error: unknown, fallback: string): Response {
@@ -299,6 +301,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		await streamProxyManager.remove(stream.id);
 		await flushStreamMonitoring();
 		await repository.deleteStream(stream.id);
+		streamHealthManager.remove(stream.id);
 		invalidateStreamRateLimiter(stream.id);
 		await recordAdminAudit({
 			actor: user,
@@ -372,6 +375,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			bucketMs,
 			STREAM_LONG_LIVED_MIN_DURATION_MS,
 		);
+		const health = await repository.streamOriginLatencyMetrics(scopeStreamId, selectedRange.since, selectedRange.until, bucketMs);
 		// Duration is only known once a connection closes, so long-running connections that are
 		// still open are invisible to the DB query above until they eventually disconnect. Fold
 		// still-open connections that already exceed the threshold into the current bucket so the
@@ -391,6 +395,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			blockReasons,
 			protocolBreakdown,
 			longLivedSeries: longLived.series,
+			healthSeries: health.series,
 			rangeFrom: selectedRange.since,
 			rangeTo: selectedRange.until,
 			rangeDurationMs: durationMs,

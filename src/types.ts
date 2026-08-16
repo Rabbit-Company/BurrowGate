@@ -188,6 +188,42 @@ export interface HealthAlertOutboxRecord {
 	delivered_at: number | null;
 }
 
+export interface LatencyCheckResult {
+	latencyMs: number | null;
+	timedOut: boolean;
+}
+
+export interface ConnectivityPingMinuteRecord {
+	target: string;
+	bucket_start: number;
+	min_latency_ms: number | null;
+	max_latency_ms: number | null;
+	sum_latency_ms: number;
+	total_count: number;
+	timeout_count: number;
+}
+
+export interface StreamOriginLatencyMinuteRecord {
+	stream_id: string;
+	bucket_start: number;
+	min_latency_ms: number | null;
+	max_latency_ms: number | null;
+	sum_latency_ms: number;
+	total_count: number;
+	timeout_count: number;
+}
+
+export interface OriginLatencyMinuteRecord {
+	origin_id: string;
+	site_id: string;
+	bucket_start: number;
+	min_latency_ms: number | null;
+	max_latency_ms: number | null;
+	sum_latency_ms: number;
+	total_count: number;
+	timeout_count: number;
+}
+
 export interface RoutePolicyRecord {
 	id: string;
 	site_id: string;
@@ -342,6 +378,9 @@ export interface StreamRecord {
 	udp_amplification_max_ratio: number;
 	protection_policy_json: string | null;
 	bandwidth_policy_json: string | null;
+	origin_health_check_enabled: number;
+	origin_health_check_interval_seconds: number;
+	origin_health_check_timeout_ms: number;
 	created_at: number;
 	updated_at: number;
 }
