@@ -58,6 +58,8 @@ interface TcpConnection {
 	protectionDecodeTimer: ReturnType<typeof setTimeout> | null;
 	/** True once a verdict has been reached and evaluateProtectionAndProceed is running; further bytes just accumulate until it flushes them. */
 	protectionDecodeAwaitingVerdict: boolean;
+	/** Username extracted by a protocol decoder (e.g. Minecraft login-start), once known. */
+	username: string | null;
 }
 
 interface TcpRuntime {
@@ -125,6 +127,7 @@ export interface ActiveStreamConnection {
 	lastActivityAt: number;
 	clientToUpstreamBytes: number;
 	upstreamToClientBytes: number;
+	username: string | null;
 }
 
 interface StreamProxyDependencies {
@@ -151,13 +154,14 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 	return result;
 }
 
-type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protection_rule_id" | "duration_ms"> & {
+type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protection_rule_id" | "duration_ms" | "username"> & {
 	protection_rule_id?: string | null;
 	duration_ms?: number | null;
+	username?: string | null;
 };
 
 function event(input: StreamEventInput): StreamEventRecord {
-	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, duration_ms: null, ...input };
+	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, duration_ms: null, username: null, ...input };
 }
 
 function runtimeError(error: unknown): string {
@@ -543,6 +547,7 @@ export class StreamProxyManager {
 				error: error.message,
 				client_to_upstream_bytes: connection.clientToUpstreamBytes,
 				upstream_to_client_bytes: connection.upstreamToClientBytes,
+				username: connection.username,
 			});
 		}
 		this.monitorEvent({
@@ -559,6 +564,7 @@ export class StreamProxyManager {
 			client_to_upstream_bytes: connection.clientToUpstreamBytes,
 			upstream_to_client_bytes: connection.upstreamToClientBytes,
 			duration_ms: durationMs,
+			username: connection.username,
 		});
 		this.updateCounts(connection.record.id);
 	}
@@ -691,6 +697,7 @@ export class StreamProxyManager {
 		const policy = resolveStreamProtectionPolicy(record);
 		const metrics = streamConnectionMetrics(record.id, connection.clientIp, "tcp");
 		const result = inspectStreamConnection({ fields: { ...metrics, ...decodedFields } }, policy);
+		if (typeof decodedFields.username === "string" && decodedFields.username) connection.username = decodedFields.username;
 		if (result.status === "blocked" && result.primaryMatch) {
 			await this.tryBanStreamIp(record, connection.clientIp, result.primaryMatch, policy.banDurations);
 			if (connection.closed) return;
@@ -709,6 +716,7 @@ export class StreamProxyManager {
 				protection_rule_id: result.primaryMatch.ruleId,
 				client_to_upstream_bytes: connection.clientToUpstreamBytes,
 				upstream_to_client_bytes: connection.upstreamToClientBytes,
+				username: connection.username,
 			});
 			this.finishTcp(connection, reason);
 			return;
@@ -728,6 +736,7 @@ export class StreamProxyManager {
 				protection_rule_id: result.primaryMatch.ruleId,
 				client_to_upstream_bytes: connection.clientToUpstreamBytes,
 				upstream_to_client_bytes: connection.upstreamToClientBytes,
+				username: connection.username,
 			});
 		}
 		if (connection.protectionDecodeProtocol !== null || connection.protectionDecodeChunks.length > 0) {
@@ -860,6 +869,7 @@ export class StreamProxyManager {
 						protectionDecodeMaxBytes: 0,
 						protectionDecodeTimer: null,
 						protectionDecodeAwaitingVerdict: false,
+						username: null,
 					};
 					client.data = connection;
 					client.timeout(config.streams.idleTimeoutSeconds);
@@ -1282,6 +1292,7 @@ export class StreamProxyManager {
 				lastActivityAt: connection.lastActivityAt,
 				clientToUpstreamBytes: connection.clientToUpstreamBytes,
 				upstreamToClientBytes: connection.upstreamToClientBytes,
+				username: connection.username,
 			}));
 		const udp: ActiveStreamConnection[] = [...this.udpRuntimes.values()].flatMap((runtime) =>
 			[...runtime.peers.values()].map((peer) => ({
@@ -1296,6 +1307,7 @@ export class StreamProxyManager {
 				lastActivityAt: peer.lastActivityAt,
 				clientToUpstreamBytes: peer.clientToUpstreamBytes,
 				upstreamToClientBytes: peer.upstreamToClientBytes,
+				username: null,
 			})),
 		);
 		return [...tcp, ...udp].sort((a, b) => b.connectedAt - a.connectedAt);

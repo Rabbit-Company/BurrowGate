@@ -453,6 +453,7 @@ export interface StreamEventRecord {
 	client_to_upstream_bytes: number;
 	upstream_to_client_bytes: number;
 	duration_ms: number | null;
+	username: string | null;
 	created_at: number;
 }
 

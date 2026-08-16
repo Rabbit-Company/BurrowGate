@@ -1321,7 +1321,7 @@ function renderActive(items) {
 					(item) => `<tr>
           <td><span class="badge info">${item.protocol.toUpperCase()}</span></td>
           <td><code>${item.incomingPort}</code></td>
-          <td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code></td>
+          <td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
           ${isColumnVisible("connections", "country") ? `<td>${countryBadge(item.countryCode)}</td>` : ""}
           ${isColumnVisible("connections", "connected") ? `<td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td>` : ""}
           ${isColumnVisible("connections", "lastActivity") ? `<td>${escapeHtml(formatDate(item.lastActivityAt))}</td>` : ""}
@@ -1674,7 +1674,7 @@ async function loadEvents() {
 				.map(
 					(item) => `<tr>
           <td>${escapeHtml(formatDate(item.created_at))}</td>
-          <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code></td>
+          <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
           ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
           ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" || item.event_type === "monitored" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
           <td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td>

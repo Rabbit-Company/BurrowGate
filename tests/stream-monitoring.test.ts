@@ -58,6 +58,7 @@ describe("stream monitoring", () => {
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
 			duration_ms: null,
+			username: null,
 			created_at: Date.now(),
 		};
 		accumulator.recordEvent(event);
@@ -93,6 +94,7 @@ describe("stream monitoring", () => {
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
 			duration_ms: null,
+			username: null,
 			created_at: Date.now(),
 		});
 		accumulator.recordEvent(event("event-a"));
@@ -136,6 +138,7 @@ describe("stream monitoring", () => {
 			client_to_upstream_bytes: 0,
 			upstream_to_client_bytes: 0,
 			duration_ms: null,
+			username: null,
 			created_at: Date.now(),
 		});
 		accumulator.recordEvent(event("event-a"));

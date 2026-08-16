@@ -432,6 +432,7 @@ CREATE TABLE IF NOT EXISTS stream_events (
   client_to_upstream_bytes BIGINT NOT NULL DEFAULT 0,
   upstream_to_client_bytes BIGINT NOT NULL DEFAULT 0,
   duration_ms BIGINT NULL,
+  username VARCHAR(255) NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stream_bandwidth_minutes (
@@ -977,6 +978,7 @@ async function ensureStreamEventColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL",
 		"ALTER TABLE stream_events ADD COLUMN duration_ms BIGINT NULL",
+		"ALTER TABLE stream_events ADD COLUMN username VARCHAR(255) NULL",
 	]) {
 		try {
 			await db.unsafe(statement);

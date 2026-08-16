@@ -27,6 +27,11 @@ function handshakePacket(nextState: number): Buffer {
 	return Buffer.from([...varint(payload.length), ...payload]);
 }
 
+function loginStartPacket(username: string): Buffer {
+	const payload = [0x00, ...mcString(username)];
+	return Buffer.from([...varint(payload.length), ...payload]);
+}
+
 function record(): StreamRecord {
 	return {
 		id: "stream-test",
@@ -461,6 +466,36 @@ describe("Stream protection rulesets", () => {
 		expect(client.terminated).toBe(false);
 		expect(Buffer.concat(upstream.writes).toString("hex")).toBe(packet.toString("hex"));
 		await manager.remove("stream-mc-ping-block-test");
+	});
+
+	test("captures the Minecraft username from a login-start packet onto the connection", async () => {
+		let listenOptions: any;
+		let connectOptions: any;
+		const client = fakeSocket("203.0.113.44", 45678);
+		const upstream = fakeSocket("192.0.2.10", 23456);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				connectOptions = options;
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		await manager.apply({ ...record(), id: "stream-mc-username-test", protection_policy_json: protectionPolicy(["minecraft-java"], "monitor") });
+		await listenOptions.socket.open(client);
+		listenOptions.socket.data(client, handshakePacket(2)); // login state
+		listenOptions.socket.data(client, loginStartPacket("Notch"));
+		await flushMicrotasks(20);
+		await waitUntil(() => connectOptions !== undefined);
+		await flushMicrotasks();
+
+		expect(manager.activeConnections()).toMatchObject([{ username: "Notch" }]);
+		await manager.remove("stream-mc-username-test");
 	});
 
 	test("blocking a connection mid protection-decode does not poison the next connection as a zero-byte scan", async () => {
