@@ -178,6 +178,27 @@ export async function banStreamIpForProtectionMatch(
 	return await addStreamIpRule(stream.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
 }
 
+function humanizeBytes(bytes: number): string {
+	if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024)} KiB`;
+	if (bytes < 1_024 * 1_024 * 1_024) return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
+	return `${(bytes / (1_024 * 1_024 * 1_024)).toFixed(1)} GiB`;
+}
+
+export async function banStreamIpForBandwidthLimit(
+	stream: StreamRecord,
+	ip: string,
+	protocol: "tcp" | "udp",
+	maxBytes: number,
+	windowSeconds: number,
+	banSeconds: number,
+): Promise<StreamIpRuleRecord | null> {
+	if (ip === "unknown" || !banSeconds || banSeconds <= 0) return null;
+	const existing = await evaluateStreamIp(stream, ip);
+	if (existing.source === "ip-rule" && existing.action === "block") return null;
+	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} of ${protocol.toUpperCase()} traffic in ${windowSeconds}s.`;
+	return await addStreamIpRule(stream.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
+}
+
 export async function addStreamCountryRule(
 	streamId: string,
 	countryCodeInput: string,

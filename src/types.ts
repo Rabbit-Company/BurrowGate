@@ -341,6 +341,7 @@ export interface StreamRecord {
 	connection_rate_limit_precision_ms: number;
 	udp_amplification_max_ratio: number;
 	protection_policy_json: string | null;
+	bandwidth_policy_json: string | null;
 	created_at: number;
 	updated_at: number;
 }

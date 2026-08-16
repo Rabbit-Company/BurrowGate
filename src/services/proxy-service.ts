@@ -8,6 +8,7 @@ import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { resolveRequestId, siteErrorResponse } from "./error-response-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
+import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
 import { applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
@@ -174,6 +175,9 @@ async function upstreamRequestBody(
 	request: Request,
 	headers: Headers,
 	bandwidth: BandwidthContext,
+	site: SiteRecord,
+	ip: string,
+	bandwidthLimit: ResolvedHttpPolicy["bandwidthLimit"],
 	maxBodyBytes: number,
 	captureMaxBytes: number,
 	captureContentTypes: readonly string[],
@@ -191,6 +195,7 @@ async function upstreamRequestBody(
 		const body = new Uint8Array(await request.arrayBuffer());
 		if (maxBodyBytes > 0 && body.byteLength > maxBodyBytes) {
 			recordBandwidth(bandwidth, { clientReceivedBytes: body.byteLength });
+			recordBandwidthLimitBytes(bandwidthLimit, site, ip, body.byteLength);
 			throw new RequestBodyTooLargeError(maxBodyBytes);
 		}
 		headers.set("content-length", String(body.byteLength));
@@ -208,6 +213,7 @@ async function upstreamRequestBody(
 			transform(chunk, controller) {
 				receivedBytes += chunk.byteLength;
 				recordBandwidth(bandwidth, { clientReceivedBytes: chunk.byteLength });
+				recordBandwidthLimitBytes(bandwidthLimit, site, ip, chunk.byteLength);
 				if (maxBodyBytes > 0 && receivedBytes > maxBodyBytes) {
 					limitState.exceeded = true;
 					controller.error(new RequestBodyTooLargeError(maxBodyBytes));
@@ -269,6 +275,9 @@ export async function proxyRequest(
 		request,
 		headers,
 		bandwidth,
+		site,
+		ip,
+		httpPolicy.bandwidthLimit,
 		httpPolicy.limits.maxBodyBytes,
 		bodyCaptureActive ? httpPolicy.bodyCapture.maxRequestBytes : 0,
 		httpPolicy.bodyCapture.contentTypes,
@@ -299,6 +308,7 @@ export async function proxyRequest(
 			clientReceivedBytes: requestBody.bufferedBytes,
 			upstreamSentBytes: requestBody.bufferedBytes,
 		});
+		recordBandwidthLimitBytes(httpPolicy.bandwidthLimit, site, ip, requestBody.bufferedBytes);
 	}
 
 	const { body: tappedBody, captured: capturedResponseBody } = tapBodyForCapture(
@@ -308,7 +318,15 @@ export async function proxyRequest(
 		response.headers.get("content-encoding"),
 		httpPolicy.bodyCapture.contentTypes,
 	);
-	const responseBody = meteredBody(tappedBody, bandwidth, (bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }));
+	const responseBody = meteredBody(
+		tappedBody,
+		bandwidth,
+		(bytes) => ({ upstreamReceivedBytes: bytes, clientSentBytes: bytes }),
+		(context, delta) => {
+			recordBandwidth(context, delta);
+			recordBandwidthLimitBytes(httpPolicy.bandwidthLimit, site, ip, delta.clientSentBytes ?? 0);
+		},
+	);
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
 	return {

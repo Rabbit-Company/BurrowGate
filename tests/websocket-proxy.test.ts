@@ -186,6 +186,7 @@ describe("WebSocket reverse proxy", () => {
 		} as unknown as WebSocket;
 		const bridge: WebSocketBridgeData = {
 			id: "bridge_payload_limit",
+			site,
 			siteId: site.id,
 			sessionId: null,
 			clientIp: "203.0.113.10",
@@ -208,6 +209,7 @@ describe("WebSocket reverse proxy", () => {
 				preOpenQueueBytes: 1_024,
 				upstreamBufferBytes: 1_024,
 			},
+			bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600, scopeId: site.id },
 		};
 		const downstream = {
 			data: bridge,

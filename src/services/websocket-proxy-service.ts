@@ -24,6 +24,8 @@ import { resolveSiteForHost } from "./site-service.ts";
 import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
 import { recordBandwidth } from "./bandwidth-service.ts";
+import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
+import type { ResolvedHttpPolicy } from "./http-policy-service.ts";
 import { originHealthManager } from "./origin-health-service.ts";
 import { loadBalancer } from "./load-balancer-service.ts";
 import type { ResolvedWebSocketPolicy } from "./websocket-policy-service.ts";
@@ -38,6 +40,7 @@ export type ProxiedWebSocketMessage = string | ArrayBuffer | Uint8Array;
 
 export interface WebSocketBridgeData {
 	id: string;
+	site: SiteRecord;
 	siteId: string;
 	sessionId: string | null;
 	clientIp: string;
@@ -53,6 +56,7 @@ export interface WebSocketBridgeData {
 	sessionExpiryTimer: ReturnType<typeof setTimeout> | null;
 	idleTimer: ReturnType<typeof setTimeout> | null;
 	websocketPolicy: ResolvedWebSocketPolicy;
+	bandwidthLimit: ResolvedHttpPolicy["bandwidthLimit"];
 }
 
 export interface WebSocketUpgradeServer {
@@ -193,10 +197,9 @@ function forwardToDownstream(bridge: WebSocketBridgeData, message: ProxiedWebSoc
 	// message was accepted but backpressure is active, so it must not be resent.
 	if (result === 0) closeBridge(bridge, 1011, "WebSocket downstream send failed", "proxy");
 	else {
-		recordBandwidth(
-			{ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" },
-			{ clientSentBytes: messageByteLength(message) },
-		);
+		const size = messageByteLength(message);
+		recordBandwidth({ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" }, { clientSentBytes: size });
+		recordBandwidthLimitBytes(bridge.bandwidthLimit, bridge.site, bridge.clientIp, size);
 	}
 }
 
@@ -671,6 +674,7 @@ export async function handleWebSocketUpgrade(
 
 		const bridge: WebSocketBridgeData = {
 			id: crypto.randomUUID(),
+			site,
 			siteId: site.id,
 			sessionId: session?.id ?? null,
 			clientIp: ip,
@@ -686,6 +690,7 @@ export async function handleWebSocketUpgrade(
 			sessionExpiryTimer: null,
 			idleTimer: null,
 			websocketPolicy: route.websocket,
+			bandwidthLimit: route.http.bandwidthLimit,
 		};
 		attachUpstreamBridgeEvents(bridge);
 
@@ -800,6 +805,7 @@ export const websocketProxyHandler: Bun.WebSocketHandler<WebSocketBridgeData> = 
 		}
 		touchBridgeActivity(bridge);
 		recordBandwidth({ siteId: bridge.siteId, ip: bridge.clientIp, countryCode: bridge.countryCode, protocol: "websocket" }, { clientReceivedBytes: size });
+		recordBandwidthLimitBytes(bridge.bandwidthLimit, bridge.site, bridge.clientIp, size);
 		if (bridge.upstream.bufferedAmount + size > bridge.websocketPolicy.upstreamBufferBytes) {
 			closeBridge(bridge, 1013, "WebSocket origin is receiving data too slowly", "proxy");
 			return;

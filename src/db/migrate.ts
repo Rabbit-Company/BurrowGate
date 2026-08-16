@@ -723,6 +723,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled'",
+		"ALTER TABLE streams ADD COLUMN bandwidth_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {

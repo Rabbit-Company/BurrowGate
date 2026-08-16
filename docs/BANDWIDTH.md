@@ -33,3 +33,18 @@ Bandwidth buckets use the same per-site retention period as request traffic even
 ## Multiple BurrowGate instances
 
 Each process aggregates its own live counters, while the database upserts safely add deltas from every instance. Reporting is shared when instances use the same database. The pending-key ceiling applies independently to each process.
+
+## Bandwidth limit temp-bans
+
+Independent of the reporting above, a site (with optional per-route override) can auto-ban a client IP that pushes more than a configured amount of bandwidth through in a time window. It is disabled by default. Configure it on the site's or route's **Protection** panel, next to Auto temp-ban durations:
+
+- **Enforcement**: off by default.
+- **Threshold**: bytes (entered in MiB) allowed per window before a ban triggers.
+- **Window**: the fixed time window the threshold applies to, up to 3,600 seconds.
+- **Ban duration**: how long the IP is added to the site's IP rules as a temporary `block`, the same mechanism used by managed protection auto-bans.
+
+Detection uses a lightweight in-memory counter, separate from the reporting counters above, keyed per route (or the site when no route override applies) and IP. It is checked inline as request/response and WebSocket message bytes are already being counted, so it adds no extra I/O to the request path. Both directions count toward the threshold (bytes an IP sends to BurrowGate and bytes BurrowGate sends back to it), including cached responses (so an attacker cannot dodge the limit by requesting a large file in a loop instead of uploading). Because the counter is a fixed window checked per process, detection is not instantaneous and, like BurrowGate's other in-memory rate limiters, is not shared across multiple instances. Each process tracks its own traffic independently. The current request or connection that crosses the threshold is allowed to finish. The ban only affects subsequent requests, which are rejected by the same IP-rule check described in [NETWORK_POLICIES.md](NETWORK_POLICIES.md).
+
+Use the per-route override to raise or disable the limit for routes that are expected to carry heavy legitimate traffic, such as a download API or a path pattern like `/assets/**`, without loosening the default everywhere else.
+
+The equivalent setting for TCP/UDP streams is documented in [STREAMS.md](STREAMS.md).

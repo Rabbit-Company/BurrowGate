@@ -37,7 +37,8 @@ import { TlsListenerManager } from "./services/tls-listener-service.ts";
 import type { GatewayState } from "./types.ts";
 import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
-import { meteredBody, startBandwidthMetrics } from "./services/bandwidth-service.ts";
+import { meteredBody, recordBandwidth, startBandwidthMetrics } from "./services/bandwidth-service.ts";
+import { recordBandwidthLimitBytes, startBandwidthLimitCleanup } from "./services/bandwidth-limit-service.ts";
 import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
@@ -70,6 +71,7 @@ await runMaintenance();
 startMaintenance();
 originHealthManager.start();
 startBandwidthMetrics();
+startBandwidthLimitCleanup();
 startStreamMonitoring();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
@@ -447,9 +449,15 @@ async function gateway(ctx: any): Promise<Response> {
 			cached.headers.get("content-encoding"),
 			route.http.bodyCapture.contentTypes,
 		);
-		const cachedBody = meteredBody(tappedCachedBody, { siteId: site.id, ip, countryCode: eventBase.countryCode ?? null, protocol: "http" }, (bytes) => ({
-			clientSentBytes: bytes,
-		}));
+		const cachedBody = meteredBody(
+			tappedCachedBody,
+			{ siteId: site.id, ip, countryCode: eventBase.countryCode ?? null, protocol: "http" },
+			(bytes) => ({ clientSentBytes: bytes }),
+			(context, delta) => {
+				recordBandwidth(context, delta);
+				recordBandwidthLimitBytes(route.http.bandwidthLimit, site, ip, delta.clientSentBytes ?? 0);
+			},
+		);
 		let response = new Response(cachedBody, { status: cached.status, statusText: cached.statusText, headers: cached.headers });
 		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
 			response = appendSetCookies(response, await accessIdentitySetCookies(request, site, session, accessUser.username));

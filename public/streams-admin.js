@@ -3,6 +3,15 @@ const mutationHeaders = { "x-burrowgate-admin": "1" };
 const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
 const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
 const byId = (id) => document.getElementById(id);
+const DEFAULT_BANDWIDTH_LIMIT = { enabled: false, maxBytes: 50 * 1024 * 1024, windowSeconds: 60, banSeconds: 3600 };
+
+function mibToBytes(mib) {
+	return mib === null || mib === undefined ? null : Math.round(mib * 1024 * 1024);
+}
+
+function bytesToMib(bytes) {
+	return bytes === null || bytes === undefined ? null : bytes / (1024 * 1024);
+}
 
 let streams = [];
 let currentAdmin = null;
@@ -1891,6 +1900,50 @@ async function saveStreamProtection() {
 	}
 }
 
+function writeStreamBandwidthLimitProtocol(prefix, limit) {
+	byId(`streamBandwidthLimit${prefix}Enabled`).checked = !!limit?.enabled;
+	byId(`streamBandwidthLimit${prefix}MaxMiB`).value = String(bytesToMib(limit?.maxBytes ?? DEFAULT_BANDWIDTH_LIMIT.maxBytes));
+	byId(`streamBandwidthLimit${prefix}WindowSeconds`).value = String(limit?.windowSeconds ?? DEFAULT_BANDWIDTH_LIMIT.windowSeconds);
+	byId(`streamBandwidthLimit${prefix}BanSeconds`).value = String(limit?.banSeconds ?? DEFAULT_BANDWIDTH_LIMIT.banSeconds);
+}
+
+function readStreamBandwidthLimitProtocol(prefix) {
+	return {
+		enabled: byId(`streamBandwidthLimit${prefix}Enabled`).checked,
+		maxBytes: mibToBytes(Number(byId(`streamBandwidthLimit${prefix}MaxMiB`).value)),
+		windowSeconds: Number(byId(`streamBandwidthLimit${prefix}WindowSeconds`).value),
+		banSeconds: Number(byId(`streamBandwidthLimit${prefix}BanSeconds`).value),
+	};
+}
+
+async function loadStreamBandwidthLimit() {
+	if (!protectionStreamId) {
+		byId("saveStreamBandwidthLimit").disabled = true;
+		return;
+	}
+	byId("saveStreamBandwidthLimit").disabled = false;
+	const policy = await api(`/streams/bandwidth-limit-policy?${queryString({ streamId: protectionStreamId })}`);
+	writeStreamBandwidthLimitProtocol("Tcp", policy.tcp);
+	writeStreamBandwidthLimitProtocol("Udp", policy.udp);
+}
+
+async function saveStreamBandwidthLimit() {
+	if (!protectionStreamId) return;
+	try {
+		await api(`/streams/bandwidth-limit-policy?${queryString({ streamId: protectionStreamId })}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				tcp: readStreamBandwidthLimitProtocol("Tcp"),
+				udp: readStreamBandwidthLimitProtocol("Udp"),
+			}),
+		});
+		showToast("Bandwidth limit settings saved.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
 async function addStreamIpRule(event) {
 	event.preventDefault();
 	if (!rulesStreamId) return;
@@ -2128,7 +2181,10 @@ function setActiveTab(name) {
 	if (name === "connections") void loadConnections();
 	if (name === "streams") void loadStreams();
 	if (name === "rules") void loadStreamRules();
-	if (name === "protection") void loadStreamProtection();
+	if (name === "protection") {
+		void loadStreamProtection();
+		void loadStreamBandwidthLimit();
+	}
 }
 
 async function refreshDashboard(updateLabel = "Updated") {
@@ -2272,9 +2328,11 @@ byId("saveStreamNetworkDefaults").addEventListener("click", () => void saveStrea
 byId("protectionStreamSelector").addEventListener("change", () => {
 	protectionStreamId = byId("protectionStreamSelector").value;
 	void loadStreamProtection();
+	void loadStreamBandwidthLimit();
 });
 byId("refreshProtectionCatalog").addEventListener("click", () => void loadStreamProtection());
 byId("saveStreamProtection").addEventListener("click", () => void saveStreamProtection());
+byId("saveStreamBandwidthLimit").addEventListener("click", () => void saveStreamBandwidthLimit());
 byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
 byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
 byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());

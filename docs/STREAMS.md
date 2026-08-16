@@ -45,6 +45,12 @@ UDP has no native connection lifecycle. BurrowGate therefore creates a peer sess
 
 Payload totals are accumulated in memory and persisted in one-minute buckets by stream, incoming port, IP, country, and protocol. The per-stream retention value removes both lifecycle events and bandwidth buckets. Lowering retention triggers immediate cleanup; regular maintenance performs subsequent cleanup.
 
+## Bandwidth limit temp-bans
+
+Each stream can independently auto-ban a client IP that pushes more than a configured amount of bandwidth through its TCP side and/or its UDP side within a time window - useful since one stream can carry both protocols on the same port. Configure it on the Streams dashboard's **Protection** tab, per selected stream. It is disabled by default for both protocols.
+
+Both directions of traffic count toward the threshold, matching the existing live per-IP byte-rate tracking that feeds the `connection.bytes_per_second` protection field. Detection happens as bytes are already being forwarded, using a fixed-window counter kept separately from the WAF-facing counters described above, so it adds no extra I/O to the data path. Unlike the web bandwidth limit (see [BANDWIDTH.md](BANDWIDTH.md)), crossing the threshold both bans the IP - added to the stream's IP rules as a temporary `block`, the same mechanism managed stream-protection auto-bans use - and immediately closes the offending TCP connection or UDP peer session, since a single long-lived stream connection would otherwise keep flowing unchecked between admission checks.
+
 ## Docker networking
 
 The default Compose file uses `network_mode: host`, so every port a stream binds on the host is immediately reachable with no Compose changes or container restart. Firewall the host to only expose the ports you intend to publish.

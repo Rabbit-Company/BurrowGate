@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { StreamProxyManager } from "../src/services/stream-proxy-service.ts";
 import { registerBundledStreamRuleSets } from "../src/services/stream-ruleset-defaults.ts";
+import { serializeStreamBandwidthPolicy } from "../src/services/stream-bandwidth-policy-service.ts";
+import { evaluateStreamIp } from "../src/services/stream-ip-rule-service.ts";
 import type { StreamRecord } from "../src/types.ts";
 
 function varint(value: number): number[] {
@@ -48,6 +50,7 @@ function record(): StreamRecord {
 		connection_rate_limit_precision_ms: 100,
 		udp_amplification_max_ratio: 0,
 		protection_policy_json: null,
+		bandwidth_policy_json: null,
 		created_at: Date.now(),
 		updated_at: Date.now(),
 	};
@@ -496,5 +499,78 @@ describe("Stream protection rulesets", () => {
 
 		expect(clientB.terminated).toBe(false);
 		await manager.remove("stream-mc-gen020-test");
+	});
+});
+
+describe("Bandwidth limit live updates", () => {
+	test("enabling the TCP bandwidth limit via refreshRecord bans and closes an already-open connection", async () => {
+		let listenOptions: any;
+		const client = fakeSocket("203.0.113.60", 45678);
+		const upstream = fakeSocket("192.0.2.10", 23456);
+		const manager = new StreamProxyManager({
+			listen(options) {
+				listenOptions = options;
+				return { port: options.port, hostname: options.hostname, data: undefined, stop() {}, ref() {}, unref() {}, reload() {}, [Symbol.dispose]() {} } as any;
+			},
+			async connect(options) {
+				upstream.data = options.data;
+				await options.socket.open?.(upstream as any);
+				return upstream as any;
+			},
+		});
+
+		const initial = record();
+		await manager.apply(initial);
+		await listenOptions.socket.open(client);
+		await Promise.resolve();
+		listenOptions.socket.data(client, Buffer.from("hello")); // 5 bytes while the limit is disabled - must not count against anything
+		expect(client.terminated).toBe(false);
+
+		// Enabling the limit does not restart the TCP listener (the port/host/cert fingerprint
+		// is unchanged), so this must apply to the connection already open above, not just to
+		// connections accepted afterward.
+		manager.refreshRecord({
+			...initial,
+			bandwidth_policy_json: serializeStreamBandwidthPolicy({ tcp: { enabled: true, maxBytes: 8, windowSeconds: 60, banSeconds: 900 } }),
+		});
+		// Bytes sent while the limit was disabled were never counted, so this write alone must
+		// exceed the cap on its own (it does not accumulate on top of the earlier "hello").
+		listenOptions.socket.data(client, Buffer.from("well over eight bytes"));
+		await waitUntil(() => client.terminated);
+
+		expect(client.terminated).toBe(true);
+		const decision = await evaluateStreamIp(initial, "203.0.113.60");
+		expect(decision.action).toBe("block");
+		await manager.remove("stream-test");
+	});
+
+	test("enabling the UDP bandwidth limit via refreshRecord bans and closes an already-open peer", async () => {
+		let listenerOptions: any;
+		const manager = new StreamProxyManager({
+			resolveHost: async () => "192.0.2.10",
+			udpSocket: (async (options: any) => {
+				if (options.connect) return { send: () => true, close() {} } as any;
+				listenerOptions = options;
+				return { address: { address: "192.0.2.20", port: 19_132, family: "IPv4" }, send: () => true, close() {} } as any;
+			}) as any,
+		});
+
+		const initial = { ...record(), id: "stream-udp-live-test", tcp_enabled: 0, udp_enabled: 1, incoming_port: 19_132 };
+		await manager.apply(initial);
+		listenerOptions.socket.data(undefined, Buffer.alloc(5), 40_000, "203.0.113.61", { truncated: false });
+		await waitUntil(() => manager.activeConnections().length === 1);
+
+		manager.refreshRecord({
+			...initial,
+			bandwidth_policy_json: serializeStreamBandwidthPolicy({ udp: { enabled: true, maxBytes: 8, windowSeconds: 60, banSeconds: 900 } }),
+		});
+		// Bytes sent while the limit was disabled were never counted, so this datagram alone
+		// must exceed the cap on its own (10 bytes against an 8 byte cap).
+		listenerOptions.socket.data(undefined, Buffer.alloc(10), 40_000, "203.0.113.61", { truncated: false });
+		await waitUntil(() => manager.activeConnections().length === 0);
+
+		const decision = await evaluateStreamIp(initial, "203.0.113.61");
+		expect(decision.action).toBe("block");
+		await manager.remove("stream-udp-live-test");
 	});
 });

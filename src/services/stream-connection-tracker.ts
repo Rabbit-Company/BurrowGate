@@ -150,3 +150,68 @@ export function pruneStaleStreamConnectionEntries(maxAgeMs = 600_000): void {
 export function clearStreamConnectionTracker(): void {
 	entries.clear();
 }
+
+/**
+ * Fixed-window per-(stream, protocol, ip) byte counter used only to detect a
+ * bandwidth-abuse ban trigger. Kept separate from the TrackerEntry map above,
+ * whose bytesSinceSweep is intentionally protocol-mixed for WAF signals - TCP
+ * and UDP bandwidth limits must be tracked and configured independently.
+ */
+interface BandwidthLimitEntry {
+	windowStart: number;
+	bytes: number;
+	banned: boolean;
+}
+
+const BANDWIDTH_LIMIT_STALE_MS = 2 * 60 * 60 * 1_000;
+
+const bandwidthLimitEntries = new Map<string, BandwidthLimitEntry>();
+
+function bandwidthLimitKey(streamId: string, protocol: "tcp" | "udp", ip: string): string {
+	return `${streamId} ${protocol} ${ip}`;
+}
+
+/**
+ * Records bytes and reports whether this call just pushed the current window
+ * over maxBytes (returns true exactly once per violation window), so the
+ * caller can ban and close the connection. No-ops (returns false) when the
+ * limit is disabled.
+ */
+export function recordStreamBandwidthLimitBytes(
+	streamId: string,
+	protocol: "tcp" | "udp",
+	ip: string,
+	bytes: number,
+	policy: { enabled: boolean; maxBytes: number; windowSeconds: number },
+	now = Date.now(),
+): boolean {
+	if (!policy.enabled || ip === "unknown" || bytes <= 0) return false;
+	const windowMs = policy.windowSeconds * 1_000;
+	const windowStart = Math.floor(now / windowMs) * windowMs;
+	const mapKey = bandwidthLimitKey(streamId, protocol, ip);
+	let entry = bandwidthLimitEntries.get(mapKey);
+	if (!entry || entry.windowStart !== windowStart) {
+		entry = { windowStart, bytes: 0, banned: false };
+		bandwidthLimitEntries.set(mapKey, entry);
+	}
+	entry.bytes += bytes;
+	if (!entry.banned && entry.bytes > policy.maxBytes) {
+		entry.banned = true;
+		return true;
+	}
+	return false;
+}
+
+export function pruneStaleStreamBandwidthLimitEntries(now = Date.now()): void {
+	for (const [mapKey, entry] of bandwidthLimitEntries) {
+		if (now - entry.windowStart > BANDWIDTH_LIMIT_STALE_MS) bandwidthLimitEntries.delete(mapKey);
+	}
+}
+
+export function clearStreamBandwidthLimitTracker(): void {
+	bandwidthLimitEntries.clear();
+}
+
+export function streamBandwidthLimitEntryCount(): number {
+	return bandwidthLimitEntries.size;
+}

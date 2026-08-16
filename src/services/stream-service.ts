@@ -196,6 +196,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		),
 		udp_amplification_max_ratio: udpAmplificationMaxRatio(input.udpAmplificationMaxRatio, existing?.udp_amplification_max_ratio ?? 0),
 		protection_policy_json: existing?.protection_policy_json ?? null,
+		bandwidth_policy_json: existing?.bandwidth_policy_json ?? null,
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};

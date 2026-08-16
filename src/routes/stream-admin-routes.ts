@@ -10,6 +10,7 @@ import { geoIpStatus } from "../services/geoip-service.ts";
 import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
 import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
 import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
+import { resolveStreamBandwidthPolicy, serializeStreamBandwidthPolicy } from "../services/stream-bandwidth-policy-service.ts";
 import { streamRuleSetCatalog } from "../services/stream-protection-service.ts";
 import type { StreamDefaultNetworkAction, StreamEventType, StreamProtocol, StreamRecord, StreamRuleAction } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
@@ -763,6 +764,46 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			return jsonResponse(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson }));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update protection policy" }, 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/streams/bandwidth-limit-policy", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		return jsonResponse(resolveStreamBandwidthPolicy(selection.stream));
+	});
+
+	app.addRoute("PUT", "/_burrowgate/api/admin/streams/bandwidth-limit-policy", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const bandwidthPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (bandwidthPolicyDenied) return bandwidthPolicyDenied;
+		try {
+			const body = await ctx.req.json();
+			const bandwidthPolicyJson = serializeStreamBandwidthPolicy(body, selection.stream.bandwidth_policy_json);
+			await repository.updateStreamBandwidthPolicy(selection.stream.id, bandwidthPolicyJson, Date.now());
+			streamProxyManager.refreshRecord({ ...selection.stream, bandwidth_policy_json: bandwidthPolicyJson });
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_bandwidth_policy.update",
+				resourceType: "stream",
+				resourceId: selection.stream.id,
+				summary: `Updated bandwidth limit policy for stream on port ${selection.stream.incoming_port}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(resolveStreamBandwidthPolicy({ ...selection.stream, bandwidth_policy_json: bandwidthPolicyJson }));
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update bandwidth limit policy" }, 400);
 		}
 	});
 }

@@ -76,6 +76,7 @@ describe("HTTP header and request-limit policies", () => {
 			cache,
 			protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 			banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
+			bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600 },
 			bodyCapture,
 		});
 	});
@@ -89,6 +90,16 @@ describe("HTTP header and request-limit policies", () => {
 			excludedRuleIds: ["BG-CORE-1001", "BG-CORE-2002"],
 		});
 		expect(() => serializeSiteHttpPolicy({ protection: { mode: "enforce" } })).toThrow("Managed protection mode");
+	});
+
+	test("bandwidth limit falls back to site values and uses the route policy ID as scope", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ bandwidthLimit: { enabled: true, maxBytes: 1_000, windowSeconds: 30, banSeconds: 900 } });
+		const resolvedSiteOnly = resolveHttpPolicy(site(sitePolicy), null);
+		expect(resolvedSiteOnly.bandwidthLimit).toEqual({ enabled: true, maxBytes: 1_000, windowSeconds: 30, banSeconds: 900, scopeId: "site_http_policy" });
+
+		const routePolicy = serializeRouteHttpPolicy({ bandwidthLimit: { maxBytes: 2_000 } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.bandwidthLimit).toEqual({ enabled: true, maxBytes: 2_000, windowSeconds: 30, banSeconds: 900, scopeId: "route_http_policy" });
 	});
 
 	test("inherits cache defaults while allowing safe route overrides", () => {

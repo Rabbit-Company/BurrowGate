@@ -6,18 +6,21 @@ import type { StreamEventRecord, StreamProtocol, StreamRecord } from "../types.t
 import { randomId } from "../utils/crypto.ts";
 import { streamCertificateTlsOption } from "./certificate-service.ts";
 import { lookupCountryCode } from "./geoip-service.ts";
-import { banStreamIpForProtectionMatch, evaluateStreamIp } from "./stream-ip-rule-service.ts";
+import { banStreamIpForBandwidthLimit, banStreamIpForProtectionMatch, evaluateStreamIp } from "./stream-ip-rule-service.ts";
 import { checkStreamConnectionRate } from "./stream-rate-limit-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
 import { registerTlsReloadHandler } from "./tls-listener-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
+import { resolveStreamBandwidthPolicy, type StreamBandwidthLimitPolicy } from "./stream-bandwidth-policy-service.ts";
 import { inspectStreamConnection, streamDecodeConfigFor, streamDecodeProtocols, type StreamRuleFieldValue } from "./stream-protection-service.ts";
 import { streamProtocolDecoder } from "./stream-protocol-decoders/index.ts";
 import { proxyProtocolDatagram, proxyProtocolHeader } from "./stream-proxy-protocol.ts";
 import {
 	computeStreamLiveRates,
+	pruneStaleStreamBandwidthLimitEntries,
 	pruneStaleStreamConnectionEntries,
+	recordStreamBandwidthLimitBytes,
 	recordStreamBytes,
 	recordStreamConnectionAttempt,
 	recordStreamDisconnect,
@@ -194,6 +197,7 @@ export class StreamProxyManager {
 	private async runRuntimeProtectionSweep(intervalSeconds: number): Promise<void> {
 		computeStreamLiveRates(intervalSeconds);
 		pruneStaleStreamConnectionEntries();
+		pruneStaleStreamBandwidthLimitEntries();
 		for (const connection of [...this.tcpConnections.values()]) {
 			if (connection.closed || connection.protectionDecodeProtocol) continue;
 			const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
@@ -425,6 +429,37 @@ export class StreamProxyManager {
 			},
 			direction === "upstream" ? { clientToUpstreamBytes: count } : { upstreamToClientBytes: count },
 		);
+		const record = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
+		const bandwidthPolicy = resolveStreamBandwidthPolicy(record).tcp;
+		if (recordStreamBandwidthLimitBytes(record.id, "tcp", connection.clientIp, count, bandwidthPolicy)) {
+			void this.banAndCloseTcpForBandwidthLimit(connection, record, bandwidthPolicy);
+		}
+	}
+
+	private async banAndCloseTcpForBandwidthLimit(connection: TcpConnection, record: StreamRecord, policy: StreamBandwidthLimitPolicy): Promise<void> {
+		try {
+			await banStreamIpForBandwidthLimit(record, connection.clientIp, "tcp", policy.maxBytes, policy.windowSeconds, policy.banSeconds);
+		} catch (error) {
+			Logger.error(`[BurrowGate] Unable to auto-ban ${connection.clientIp} for stream bandwidth limit ${record.id}`, { error });
+		}
+		if (connection.closed) return;
+		const reason = "Exceeded configured TCP bandwidth limit";
+		this.monitorEvent({
+			stream_id: record.id,
+			incoming_port: record.incoming_port,
+			connection_id: connection.id,
+			protocol: "tcp",
+			event_type: "blocked",
+			client_ip: connection.clientIp,
+			client_port: connection.clientPort,
+			country_code: connection.countryCode,
+			reason,
+			error: null,
+			protection_rule_id: null,
+			client_to_upstream_bytes: connection.clientToUpstreamBytes,
+			upstream_to_client_bytes: connection.upstreamToClientBytes,
+		});
+		this.finishTcp(connection, reason);
 	}
 
 	private writeTcp(connection: TcpConnection, direction: "upstream" | "client", data: Uint8Array): void {
@@ -906,12 +941,12 @@ export class StreamProxyManager {
 					if (flags.truncated) return this.closeUdpPeer(runtime, peer, "truncated upstream datagram", new Error("UDP datagram was truncated"));
 					if (this.isAmplificationThrottled(runtime, peer, data.byteLength)) return;
 					const sent = runtime.socket.send(data, peer.clientPort, peer.clientIp);
-					if (sent) this.recordUdpBytes(peer, "client", data.byteLength);
+					if (sent) this.recordUdpBytes(runtime, peer, "client", data.byteLength);
 					else if (runtime.pendingReplies.length < config.streams.maxPendingDatagrams) runtime.pendingReplies.push({ peer, data: copyChunk(data) });
 					else this.closeUdpPeer(runtime, peer, "UDP reply queue exceeded", new Error("UDP reply queue limit exceeded"));
 				},
 				drain: () => {
-					if (peer) this.flushUdpUpstream(peer);
+					if (peer) this.flushUdpUpstream(runtime, peer);
 				},
 				error: (_socket, error) => {
 					if (peer) this.closeUdpPeer(runtime, peer, "upstream UDP error", error);
@@ -968,7 +1003,7 @@ export class StreamProxyManager {
 		return await pending;
 	}
 
-	private recordUdpBytes(peer: UdpPeer, direction: "upstream" | "client", count: number): void {
+	private recordUdpBytes(runtime: UdpRuntime, peer: UdpPeer, direction: "upstream" | "client", count: number): void {
 		if (direction === "upstream") peer.clientToUpstreamBytes += count;
 		else peer.upstreamToClientBytes += count;
 		recordStreamBytes(peer.record.id, peer.clientIp, count);
@@ -976,6 +1011,37 @@ export class StreamProxyManager {
 			{ streamId: peer.record.id, incomingPort: peer.record.incoming_port, ip: peer.clientIp, countryCode: peer.countryCode, protocol: "udp" },
 			direction === "upstream" ? { clientToUpstreamBytes: count } : { upstreamToClientBytes: count },
 		);
+		if (count <= 0) return;
+		const bandwidthPolicy = resolveStreamBandwidthPolicy(runtime.record).udp;
+		if (recordStreamBandwidthLimitBytes(runtime.record.id, "udp", peer.clientIp, count, bandwidthPolicy)) {
+			void this.banAndCloseUdpForBandwidthLimit(runtime, peer, bandwidthPolicy);
+		}
+	}
+
+	private async banAndCloseUdpForBandwidthLimit(runtime: UdpRuntime, peer: UdpPeer, policy: StreamBandwidthLimitPolicy): Promise<void> {
+		try {
+			await banStreamIpForBandwidthLimit(runtime.record, peer.clientIp, "udp", policy.maxBytes, policy.windowSeconds, policy.banSeconds);
+		} catch (error) {
+			Logger.error(`[BurrowGate] Unable to auto-ban ${peer.clientIp} for stream bandwidth limit ${runtime.record.id}`, { error });
+		}
+		if (peer.closed) return;
+		const reason = "Exceeded configured UDP bandwidth limit";
+		this.monitorEvent({
+			stream_id: runtime.record.id,
+			incoming_port: runtime.record.incoming_port,
+			connection_id: peer.id,
+			protocol: "udp",
+			event_type: "blocked",
+			client_ip: peer.clientIp,
+			client_port: peer.clientPort,
+			country_code: peer.countryCode,
+			reason,
+			error: null,
+			protection_rule_id: null,
+			client_to_upstream_bytes: peer.clientToUpstreamBytes,
+			upstream_to_client_bytes: peer.upstreamToClientBytes,
+		});
+		this.closeUdpPeer(runtime, peer, reason);
 	}
 
 	private udpUpstreamDatagram(runtime: UdpRuntime, data: Uint8Array, clientIp: string, clientPort: number): UdpPendingDatagram {
@@ -1071,7 +1137,7 @@ export class StreamProxyManager {
 			if (truncated) return this.closeUdpPeer(runtime, peer, "truncated client datagram", new Error("UDP datagram was truncated"));
 			const datagram = this.udpUpstreamDatagram(runtime, data, clientIp, clientPort);
 			const sent = peer.upstream.send(datagram.wireData);
-			if (sent) this.recordUdpBytes(peer, "upstream", datagram.payloadBytes);
+			if (sent) this.recordUdpBytes(runtime, peer, "upstream", datagram.payloadBytes);
 			else if (peer.pendingUpstream.length < config.streams.maxPendingDatagrams) {
 				peer.pendingUpstream.push({ wireData: copyChunk(datagram.wireData), payloadBytes: datagram.payloadBytes });
 			} else this.closeUdpPeer(runtime, peer, "UDP upstream queue exceeded", new Error("UDP upstream queue limit exceeded"));
@@ -1081,12 +1147,12 @@ export class StreamProxyManager {
 		}
 	}
 
-	private flushUdpUpstream(peer: UdpPeer): void {
+	private flushUdpUpstream(runtime: UdpRuntime, peer: UdpPeer): void {
 		while (!peer.closed && peer.pendingUpstream.length) {
 			const datagram = peer.pendingUpstream[0]!;
 			if (!peer.upstream.send(datagram.wireData)) return;
 			peer.pendingUpstream.shift();
-			this.recordUdpBytes(peer, "upstream", datagram.payloadBytes);
+			this.recordUdpBytes(runtime, peer, "upstream", datagram.payloadBytes);
 		}
 	}
 
@@ -1099,7 +1165,7 @@ export class StreamProxyManager {
 			}
 			if (!runtime.socket.send(reply.data, reply.peer.clientPort, reply.peer.clientIp)) return;
 			runtime.pendingReplies.shift();
-			this.recordUdpBytes(reply.peer, "client", reply.data.byteLength);
+			this.recordUdpBytes(runtime, reply.peer, "client", reply.data.byteLength);
 		}
 	}
 

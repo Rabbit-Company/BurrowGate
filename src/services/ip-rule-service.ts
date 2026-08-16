@@ -192,6 +192,26 @@ export async function banIpForProtectionMatch(
 	return await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000, match.ruleId);
 }
 
+function humanizeBytes(bytes: number): string {
+	if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024)} KiB`;
+	if (bytes < 1_024 * 1_024 * 1_024) return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
+	return `${(bytes / (1_024 * 1_024 * 1_024)).toFixed(1)} GiB`;
+}
+
+export async function banIpForBandwidthLimit(
+	site: SiteRecord,
+	ip: string,
+	maxBytes: number,
+	windowSeconds: number,
+	banSeconds: number,
+): Promise<IpRuleRecord | null> {
+	if (ip === "unknown" || !banSeconds || banSeconds <= 0) return null;
+	const existing = await evaluateIp(site, ip);
+	if (existing.source === "ip-rule" && existing.action === "block") return null;
+	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after exceeding ${humanizeBytes(maxBytes)} in ${windowSeconds}s.`;
+	return await addIpRule(site.id, ip, "block", reason, Date.now() + banSeconds * 1_000);
+}
+
 export async function addCountryRule(
 	siteId: string,
 	countryCodeInput: string,

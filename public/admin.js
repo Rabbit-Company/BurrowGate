@@ -5,6 +5,7 @@ const mutationHeaders = { "x-burrowgate-admin": "1" };
 const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
 const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
 const DEFAULT_BAN_DURATIONS = { low: 0, medium: 600, high: 3600, critical: 86400 };
+const DEFAULT_BANDWIDTH_LIMIT = { enabled: false, maxBytes: 50 * 1024 * 1024, windowSeconds: 60, banSeconds: 3600 };
 
 const tableState = {
 	traffic: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
@@ -331,6 +332,14 @@ function optionalNumberInput(id) {
 	return value ? Number(value) : null;
 }
 
+function mibToBytes(mib) {
+	return mib === null || mib === undefined ? null : Math.round(mib * 1024 * 1024);
+}
+
+function bytesToMib(bytes) {
+	return bytes === null || bytes === undefined ? null : bytes / (1024 * 1024);
+}
+
 function parseHeaderAssignments(id, label) {
 	return byId(id)
 		.value.split(/\r?\n/u)
@@ -436,6 +445,19 @@ function readHttpPolicy(prefix, routeOverrides) {
 			high: routeOverrides ? optionalNumberInput(`${prefix}BanDurationHigh`) : Number(byId(`${prefix}BanDurationHigh`).value),
 			critical: routeOverrides ? optionalNumberInput(`${prefix}BanDurationCritical`) : Number(byId(`${prefix}BanDurationCritical`).value),
 		},
+		bandwidthLimit: routeOverrides
+			? {
+					enabled: byId(`${prefix}BandwidthLimitEnabled`).value === "" ? null : byId(`${prefix}BandwidthLimitEnabled`).value === "true",
+					maxBytes: mibToBytes(optionalNumberInput(`${prefix}BandwidthLimitMaxMiB`)),
+					windowSeconds: optionalNumberInput(`${prefix}BandwidthLimitWindowSeconds`),
+					banSeconds: optionalNumberInput(`${prefix}BandwidthLimitBanSeconds`),
+				}
+			: {
+					enabled: byId(`${prefix}BandwidthLimitEnabled`).checked,
+					maxBytes: mibToBytes(Number(byId(`${prefix}BandwidthLimitMaxMiB`).value)),
+					windowSeconds: Number(byId(`${prefix}BandwidthLimitWindowSeconds`).value),
+					banSeconds: Number(byId(`${prefix}BandwidthLimitBanSeconds`).value),
+				},
 		bodyCapture: {
 			mode: routeOverrides ? byId(`${prefix}BodyCaptureMode`).value : byId(`${prefix}BodyCaptureEnabled`).checked ? "enabled" : "disabled",
 			maxRequestBytes: routeOverrides ? optionalNumberInput(`${prefix}BodyCaptureMaxRequest`) : Number(byId(`${prefix}BodyCaptureMaxRequest`).value),
@@ -482,6 +504,20 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 		const value = banDurations[key];
 		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? DEFAULT_BAN_DURATIONS[key]);
 	}
+	const bandwidthLimit =
+		http.bandwidthLimit ?? (routeOverrides ? { enabled: null, maxBytes: null, windowSeconds: null, banSeconds: null } : DEFAULT_BANDWIDTH_LIMIT);
+	if (routeOverrides) {
+		byId(`${prefix}BandwidthLimitEnabled`).value =
+			bandwidthLimit.enabled === null || bandwidthLimit.enabled === undefined ? "" : String(bandwidthLimit.enabled);
+	} else {
+		byId(`${prefix}BandwidthLimitEnabled`).checked = !!bandwidthLimit.enabled;
+	}
+	byId(`${prefix}BandwidthLimitMaxMiB`).value =
+		routeOverrides && bandwidthLimit.maxBytes == null ? "" : String(bytesToMib(bandwidthLimit.maxBytes ?? DEFAULT_BANDWIDTH_LIMIT.maxBytes));
+	byId(`${prefix}BandwidthLimitWindowSeconds`).value =
+		routeOverrides && bandwidthLimit.windowSeconds == null ? "" : String(bandwidthLimit.windowSeconds ?? DEFAULT_BANDWIDTH_LIMIT.windowSeconds);
+	byId(`${prefix}BandwidthLimitBanSeconds`).value =
+		routeOverrides && bandwidthLimit.banSeconds == null ? "" : String(bandwidthLimit.banSeconds ?? DEFAULT_BANDWIDTH_LIMIT.banSeconds);
 	const bodyCapture =
 		http.bodyCapture ??
 		(routeOverrides ? { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null } : bodyCaptureDefaults);

@@ -90,6 +90,28 @@ export interface RouteBanDurationsPolicy {
 	critical: number | null;
 }
 
+export interface SiteBandwidthLimitPolicy {
+	enabled: boolean;
+	maxBytes: number;
+	windowSeconds: number;
+	banSeconds: number;
+}
+
+export interface RouteBandwidthLimitPolicy {
+	enabled: boolean | null;
+	maxBytes: number | null;
+	windowSeconds: number | null;
+	banSeconds: number | null;
+}
+
+export interface ResolvedBandwidthLimitPolicy {
+	enabled: boolean;
+	maxBytes: number;
+	windowSeconds: number;
+	banSeconds: number;
+	scopeId: string;
+}
+
 export const DEFAULT_STATIC_CACHE_EXTENSIONS = [
 	".css",
 	".js",
@@ -130,6 +152,7 @@ export interface SiteHttpPolicyView {
 	cache: SiteStaticCachePolicy;
 	protection: SiteManagedProtectionPolicy;
 	banDurations: SiteBanDurationsPolicy;
+	bandwidthLimit: SiteBandwidthLimitPolicy;
 	bodyCapture: SiteBodyCapturePolicy;
 }
 
@@ -140,11 +163,13 @@ export interface RouteHttpPolicyView {
 	cache: RouteStaticCachePolicy;
 	protection: RouteManagedProtectionPolicy;
 	banDurations: RouteBanDurationsPolicy;
+	bandwidthLimit: RouteBandwidthLimitPolicy;
 	bodyCapture: RouteBodyCapturePolicy;
 }
 
-export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection"> {
+export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection" | "bandwidthLimit"> {
 	protection: ResolvedManagedProtectionPolicy;
+	bandwidthLimit: ResolvedBandwidthLimitPolicy;
 }
 
 export type RequestLimitViolation = {
@@ -219,6 +244,7 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 	},
 	protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 	banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
+	bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600 },
 	bodyCapture: {
 		mode: "disabled",
 		maxRequestBytes: 4_096,
@@ -235,6 +261,7 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
 	protection: { mode: "inherit", excludedRuleIds: [] },
 	banDurations: { low: null, medium: null, high: null, critical: null },
+	bandwidthLimit: { enabled: null, maxBytes: null, windowSeconds: null, banSeconds: null },
 	bodyCapture: { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null },
 });
 
@@ -306,6 +333,43 @@ function parseRouteBanDurations(value: unknown): RouteBanDurationsPolicy {
 		medium: cacheInteger(input.medium, "Medium severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
 		high: cacheInteger(input.high, "High severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
 		critical: cacheInteger(input.critical, "Critical severity ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
+	};
+}
+
+const MAX_BANDWIDTH_LIMIT_BYTES = 1_099_511_627_776; // 1 TiB
+const MAX_BANDWIDTH_LIMIT_WINDOW_SECONDS = 3_600;
+
+function bandwidthLimitBoolean(value: unknown, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value === "boolean") return value;
+	if (value === "true" || value === "1" || value === 1) return true;
+	if (value === "false" || value === "0" || value === 0 || value === "") return false;
+	throw new Error("Bandwidth limit enabled must be a boolean");
+}
+
+function routeBandwidthLimitBoolean(value: unknown): boolean | null {
+	if (value === undefined || value === null || value === "") return null;
+	return bandwidthLimitBoolean(value, false);
+}
+
+function parseSiteBandwidthLimit(value: unknown): SiteBandwidthLimitPolicy {
+	const defaults = defaultSitePolicy().bandwidthLimit;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		enabled: bandwidthLimitBoolean(input.enabled, defaults.enabled),
+		maxBytes: cacheInteger(input.maxBytes, "Bandwidth limit threshold", defaults.maxBytes, 1, MAX_BANDWIDTH_LIMIT_BYTES, false)!,
+		windowSeconds: cacheInteger(input.windowSeconds, "Bandwidth limit window", defaults.windowSeconds, 1, MAX_BANDWIDTH_LIMIT_WINDOW_SECONDS, false)!,
+		banSeconds: cacheInteger(input.banSeconds, "Bandwidth limit ban duration", defaults.banSeconds, 0, MAX_BAN_DURATION_SECONDS, false)!,
+	};
+}
+
+function parseRouteBandwidthLimit(value: unknown): RouteBandwidthLimitPolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		enabled: routeBandwidthLimitBoolean(input.enabled),
+		maxBytes: cacheInteger(input.maxBytes, "Route bandwidth limit threshold", null, 1, MAX_BANDWIDTH_LIMIT_BYTES, true),
+		windowSeconds: cacheInteger(input.windowSeconds, "Route bandwidth limit window", null, 1, MAX_BANDWIDTH_LIMIT_WINDOW_SECONDS, true),
+		banSeconds: cacheInteger(input.banSeconds, "Route bandwidth limit ban duration", null, 0, MAX_BAN_DURATION_SECONDS, true),
 	};
 }
 
@@ -506,6 +570,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 		cache: parseSiteCache(input.cache),
 		protection: parseSiteProtection(input.protection),
 		banDurations: parseSiteBanDurations(input.banDurations),
+		bandwidthLimit: parseSiteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseSiteBodyCapture(input.bodyCapture),
 	};
 }
@@ -524,6 +589,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 		cache: parseRouteCache(input.cache),
 		protection: parseRouteProtection(input.protection),
 		banDurations: parseRouteBanDurations(input.banDurations),
+		bandwidthLimit: parseRouteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseRouteBodyCapture(input.bodyCapture),
 	};
 }
@@ -553,6 +619,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Site static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Site managed protection policy");
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Site ban duration policy");
+	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Site bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Site body capture policy");
 	return JSON.stringify(
 		parseSitePolicy({
@@ -562,6 +629,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
+			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 		}),
 	);
@@ -576,6 +644,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const suppliedCache = value.cache === undefined ? {} : objectValue(value.cache, "Route static cache policy");
 	const suppliedProtection = value.protection === undefined ? {} : objectValue(value.protection, "Route managed protection policy");
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Route ban duration policy");
+	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Route bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Route body capture policy");
 	return JSON.stringify(
 		parseRoutePolicy({
@@ -585,6 +654,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
+			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 		}),
 	);
@@ -639,6 +709,13 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			medium: routePolicy.banDurations.medium ?? sitePolicy.banDurations.medium,
 			high: routePolicy.banDurations.high ?? sitePolicy.banDurations.high,
 			critical: routePolicy.banDurations.critical ?? sitePolicy.banDurations.critical,
+		},
+		bandwidthLimit: {
+			enabled: routePolicy.bandwidthLimit.enabled ?? sitePolicy.bandwidthLimit.enabled,
+			maxBytes: routePolicy.bandwidthLimit.maxBytes ?? sitePolicy.bandwidthLimit.maxBytes,
+			windowSeconds: routePolicy.bandwidthLimit.windowSeconds ?? sitePolicy.bandwidthLimit.windowSeconds,
+			banSeconds: routePolicy.bandwidthLimit.banSeconds ?? sitePolicy.bandwidthLimit.banSeconds,
+			scopeId: policy?.id ?? site.id,
 		},
 		bodyCapture: {
 			mode: routePolicy.bodyCapture.mode === "inherit" ? sitePolicy.bodyCapture.mode : routePolicy.bodyCapture.mode,

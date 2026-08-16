@@ -419,6 +419,13 @@ export function adminPage(): string {
               <label><span>High severity (seconds)</span><input id="routeHttpBanDurationHigh" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
               <label><span>Critical severity (seconds)</span><input id="routeHttpBanDurationCritical" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
             </div>
+            <div class="section-heading error-response-heading"><div><h3>Bandwidth limit</h3><p class="muted">Temp-ban an IP that pushes more than the configured amount of bandwidth through this route within the time window. Blank inherits the site.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Enforcement</span><select id="routeHttpBandwidthLimitEnabled" class="select"><option value="">Inherit site</option><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+              <label><span>Threshold (MiB)</span><input id="routeHttpBandwidthLimitMaxMiB" class="input" type="number" min="1" step="1" placeholder="Inherit site"></label>
+              <label><span>Window (seconds)</span><input id="routeHttpBandwidthLimitWindowSeconds" class="input" type="number" min="1" max="3600" step="1" placeholder="Inherit site"></label>
+              <label><span>Ban duration (seconds)</span><input id="routeHttpBandwidthLimitBanSeconds" class="input" type="number" min="0" max="2592000" step="1" placeholder="Inherit site"></label>
+            </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="http">
             <div class="section-heading error-response-heading"><div><h3>HTTP headers and request limits</h3><p class="muted">Add route-specific header rules and override the site's request limits. Route header rules take precedence over matching site rules.</p></div></div>
@@ -565,6 +572,13 @@ export function adminPage(): string {
 							<label><span>Medium severity (seconds)</span><input id="siteHttpBanDurationMedium" class="input" type="number" min="0" max="2592000" step="1" value="600" required></label>
 							<label><span>High severity (seconds)</span><input id="siteHttpBanDurationHigh" class="input" type="number" min="0" max="2592000" step="1" value="3600" required></label>
 							<label><span>Critical severity (seconds)</span><input id="siteHttpBanDurationCritical" class="input" type="number" min="0" max="2592000" step="1" value="86400" required></label>
+						</div>
+						<div class="section-heading error-response-heading"><div><h3>Bandwidth limit</h3><p class="muted">Temp-ban an IP that pushes more than the configured amount of bandwidth through this site (or a route, if overridden) within the time window. Detection is periodic rather than instantaneous to keep the proxy path fast.</p></div></div>
+						<div class="site-form-grid">
+							<label class="check-row"><input id="siteHttpBandwidthLimitEnabled" type="checkbox"><span><strong>Enabled</strong><small class="muted">Off by default.</small></span></label>
+							<label><span>Threshold (MiB)</span><input id="siteHttpBandwidthLimitMaxMiB" class="input" type="number" min="1" step="1" value="50" required></label>
+							<label><span>Window (seconds)</span><input id="siteHttpBandwidthLimitWindowSeconds" class="input" type="number" min="1" max="3600" step="1" value="60" required></label>
+							<label><span>Ban duration (seconds)</span><input id="siteHttpBandwidthLimitBanSeconds" class="input" type="number" min="0" max="2592000" step="1" value="3600" required></label>
 						</div>
 						<button id="openProtectionDashboard" class="button secondary" type="button">Open Protection dashboard</button>
 					</section>

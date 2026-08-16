@@ -144,6 +144,7 @@
 								<li>Counters shared across a policy or separated by path and method</li>
 								<li>Request body, request-target, and combined header byte limits</li>
 								<li>Violations rejected with <code>413</code>, <code>414</code>, or <code>431</code> and logged as events</li>
+								<li>Per-site/per-route bandwidth-threshold auto-bans, independent of request-count limits</li>
 							</ul>
 						</div>
 
@@ -201,6 +202,7 @@
 								<li>Live TCP connection lists and synthetic UDP peer sessions</li>
 								<li>Connect, disconnect, and error logs with GeoIP-enriched client country</li>
 								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
+								<li>Per-stream TCP/UDP bandwidth-threshold auto-bans, applied live without restarting the listener</li>
 							</ul>
 						</div>
 
