@@ -693,7 +693,7 @@ export interface AdminAuditLogRecord {
 	created_at: number;
 }
 
-export type FirewallSyncProviderType = "unifi" | "nftables";
+export type FirewallSyncProviderType = "unifi" | "nftables" | "ovh";
 export type FirewallSyncStatus = "ok" | "error";
 
 export interface FirewallSyncProviderRecord {

@@ -115,7 +115,7 @@ async function runNft(cfg: NftablesProviderConfig, args: string[], stdin: string
 		const detail = (stderr || stdout).trim();
 		if (/operation not permitted/iu.test(detail)) {
 			throw new Error(
-				`nft lacks permission to modify the ruleset (${detail}). Grant it via: sudo setcap cap_net_admin+ep $(which ${cfg.nftBinaryPath}) — or enable "Use sudo" with a narrow sudoers rule.`,
+				`nft lacks permission to modify the ruleset (${detail}). Grant it via: sudo setcap cap_net_admin+ep $(which ${cfg.nftBinaryPath}) - or enable "Use sudo" with a narrow sudoers rule.`,
 			);
 		}
 		throw new Error(`nft exited ${exitCode}: ${detail || "no output"}`);

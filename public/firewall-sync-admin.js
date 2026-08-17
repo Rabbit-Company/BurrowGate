@@ -135,13 +135,19 @@ function statusBadgeClass(status) {
 	return status === "ok" ? "ok" : status === "error" ? "bad" : "warn";
 }
 
+function providerTypeLabel(type) {
+	if (type === "unifi") return "UniFi Controller";
+	if (type === "ovh") return "OVH Edge Firewall";
+	return "Local nftables";
+}
+
 function renderProviders() {
 	byId("providerRows").innerHTML = providers.length
 		? providers
 				.map(
 					(provider) => `<tr>
         <td>${escapeHtml(provider.name)}</td>
-        <td>${provider.type === "unifi" ? "UniFi Controller" : "Local nftables"}</td>
+        <td>${providerTypeLabel(provider.type)}</td>
         <td>${provider.enabled ? "Yes" : "No"}</td>
         <td>${escapeHtml(formatDate(provider.lastSyncedAt))}</td>
         <td>${provider.lastAppliedCount} / ${provider.maxEntries}</td>
@@ -201,6 +207,8 @@ function updateProviderTypeFields() {
 	const type = byId("providerType").value;
 	byId("unifiFields").classList.toggle("hidden", type !== "unifi");
 	byId("nftablesFields").classList.toggle("hidden", type !== "nftables");
+	byId("ovhFields").classList.toggle("hidden", type !== "ovh");
+	byId("providerMaxEntries").max = type === "ovh" ? "20" : "";
 }
 
 function updateAckRow() {
@@ -231,6 +239,18 @@ function openProviderForm(provider) {
 	byId("unifiVerifyTls").checked = config.verifyTls ?? true;
 	byId("nftBinaryPath").value = config.nftBinaryPath ?? "nft";
 	byId("nftUseSudo").checked = config.useSudo ?? false;
+
+	byId("ovhEndpoint").value = config.endpoint ?? "https://eu.api.ovh.com";
+	byId("ovhApplicationKey").value = config.applicationKey ?? "";
+	byId("ovhApplicationSecret").value = "";
+	byId("ovhApplicationSecret").placeholder = config.applicationSecretConfigured ? "Leave blank to keep the current secret" : "Required";
+	byId("ovhConsumerKey").value = "";
+	byId("ovhConsumerKey").placeholder = config.consumerKeyConfigured ? "Leave blank to keep the current key" : "Required";
+	byId("ovhCredentialStatus").textContent = "";
+	byId("ovhIp").innerHTML = config.ipBlock
+		? `<option value="${escapeHtml(config.ipBlock)}">${escapeHtml(config.ipBlock)}</option>`
+		: `<option value="">Click "Load IPs" first</option>`;
+	byId("ovhIpsStatus").textContent = "";
 
 	updateProviderTypeFields();
 	updateAckRow();
@@ -263,6 +283,52 @@ async function loadUnifiSites() {
 	}
 }
 
+async function loadOvhIps() {
+	const status = byId("ovhIpsStatus");
+	status.textContent = "Loading...";
+	status.className = "muted";
+	try {
+		const result = await api("/providers/ovh/ips", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				endpoint: byId("ovhEndpoint").value.trim(),
+				applicationKey: byId("ovhApplicationKey").value.trim(),
+				applicationSecret: byId("ovhApplicationSecret").value.trim(),
+				consumerKey: byId("ovhConsumerKey").value.trim(),
+				providerId: byId("providerId").value || undefined,
+			}),
+		});
+		const currentValue = byId("ovhIp").value;
+		byId("ovhIp").innerHTML = result.items
+			.map((ip) => `<option value="${escapeHtml(ip.block)}">${escapeHtml(ip.block)}${ip.serviceName ? ` - ${escapeHtml(ip.serviceName)}` : ""}</option>`)
+			.join("");
+		if (result.items.some((ip) => ip.block === currentValue)) byId("ovhIp").value = currentValue;
+		status.textContent = `Loaded ${result.items.length} IP${result.items.length === 1 ? "" : "s"}.`;
+	} catch (error) {
+		status.textContent = error.message;
+		status.className = "muted error-text";
+	}
+}
+
+async function requestOvhCredential() {
+	const status = byId("ovhCredentialStatus");
+	status.textContent = "Requesting...";
+	status.className = "muted";
+	try {
+		const result = await api("/providers/ovh/credential", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ endpoint: byId("ovhEndpoint").value.trim(), applicationKey: byId("ovhApplicationKey").value.trim() }),
+		});
+		byId("ovhConsumerKey").value = result.consumerKey;
+		status.innerHTML = `Requested. <a href="${escapeHtml(result.validationUrl)}" target="_blank" rel="noopener">Open this link to approve access</a>, then save the provider.`;
+	} catch (error) {
+		status.textContent = error.message;
+		status.className = "muted error-text";
+	}
+}
+
 function providerConfigFromForm() {
 	const type = byId("providerType").value;
 	if (type === "unifi") {
@@ -273,6 +339,15 @@ function providerConfigFromForm() {
 			listName: byId("unifiGroupName").value.trim(),
 			apiKey: byId("unifiApiKey").value.trim(),
 			verifyTls: byId("unifiVerifyTls").checked,
+		};
+	}
+	if (type === "ovh") {
+		return {
+			endpoint: byId("ovhEndpoint").value.trim(),
+			applicationKey: byId("ovhApplicationKey").value.trim(),
+			applicationSecret: byId("ovhApplicationSecret").value.trim(),
+			consumerKey: byId("ovhConsumerKey").value.trim(),
+			ipBlock: byId("ovhIp").value.trim(),
 		};
 	}
 	return { nftBinaryPath: byId("nftBinaryPath").value.trim(), useSudo: byId("nftUseSudo").checked };
@@ -337,6 +412,8 @@ byId("whitelistUseMine").addEventListener("click", () => void useMyCurrentIp());
 byId("providerAdd").addEventListener("click", () => openProviderForm(null));
 byId("providerType").addEventListener("change", updateProviderTypeFields);
 byId("unifiLoadSites").addEventListener("click", () => void loadUnifiSites());
+byId("ovhLoadIps").addEventListener("click", () => void loadOvhIps());
+byId("ovhRequestCredential").addEventListener("click", () => void requestOvhCredential());
 byId("providerEnabled").addEventListener("change", updateAckRow);
 byId("providerTest").addEventListener("click", () => void testProviderConnection());
 byId("providerSave").addEventListener("click", () => void saveProvider());

@@ -61,7 +61,7 @@ BURROWGATE_FRONTEND_SITE_ID=...
 BURROWGATE_SESSION_VERIFICATION_TOKEN=...
 ```
 
-`DEMO_BACKEND_PUBLIC_ORIGIN` must be the URL the browser uses to reach the API site through BurrowGate—not the local `http://localhost:3200` origin when the frontend is loaded over HTTPS. A secure frontend cannot call a plain-HTTP API because browsers block it as mixed content before CORS is evaluated.
+`DEMO_BACKEND_PUBLIC_ORIGIN` must be the URL the browser uses to reach the API site through BurrowGate - not the local `http://localhost:3200` origin when the frontend is loaded over HTTPS. A secure frontend cannot call a plain-HTTP API because browsers block it as mixed content before CORS is evaluated.
 
 The backend allows the configured `DEMO_FRONTEND_PUBLIC_ORIGIN` plus `http://localhost:3100` and `http://127.0.0.1:3100` automatically. If you open the frontend from another origin, add it explicitly:
 
@@ -77,7 +77,7 @@ Build the browser SDK and start both origins from the repository root:
 bun run example:cross-site-auth
 ```
 
-Open `https://app.example.test`—never open port 3100 directly for the workflow test. BurrowGate will request login, 2FA, or SSO before serving the frontend.
+Open `https://app.example.test` - never open port 3100 directly for the workflow test. BurrowGate will request login, 2FA, or SSO before serving the frontend.
 
 ## 5. Test the workflow
 
@@ -105,7 +105,7 @@ The browser never receives the HTTP-only BurrowGate session cookie value or the 
 
 ## CORS troubleshooting
 
-Check the browser request's `Origin` header—not its `Referer`—and compare it with the origins printed by the backend at startup. A rejected origin is logged by the backend and receives `403`.
+Check the browser request's `Origin` header (not its `Referer`) and compare it with the origins printed by the backend at startup. A rejected origin is logged by the backend and receives `403`.
 
 For the default local ports, this direct-development pair is accepted:
 

@@ -18,6 +18,11 @@ export async function sha256Hex(value: string | Uint8Array<ArrayBuffer>): Promis
 	return toHex(await sha256Bytes(value));
 }
 
+/** SHA-1 is mandated by OVH's legacy API request-signing protocol (not a security choice we are making). */
+export async function sha1Hex(value: string): Promise<string> {
+	return toHex(new Uint8Array(await crypto.subtle.digest("SHA-1", encoder.encode(value))));
+}
+
 export async function hmacSha256Hex(secret: string, value: string): Promise<string> {
 	const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 	const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));

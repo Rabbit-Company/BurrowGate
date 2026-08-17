@@ -12,6 +12,7 @@ import {
 	removeFirewallSyncWhitelistCidr,
 	updateFirewallSyncProvider,
 } from "../services/firewall-sync-service.ts";
+import { ovhListIps, ovhRequestCredential } from "../services/firewall-sync/ovh-adapter.ts";
 import { unifiListSites } from "../services/firewall-sync/unifi-adapter.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { firewallSyncPage } from "../ui/firewall-sync-page.ts";
@@ -72,6 +73,51 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ items: sites });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list sites" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/firewall-sync/providers/ovh/ips", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as {
+				endpoint?: string;
+				applicationKey?: string;
+				applicationSecret?: string;
+				consumerKey?: string;
+				providerId?: string;
+			};
+			const existing = body.providerId ? await repository.firewallSyncProviderById(body.providerId) : null;
+			const ips = await ovhListIps({
+				endpoint: String(body.endpoint ?? ""),
+				applicationKey: String(body.applicationKey ?? ""),
+				applicationSecret: body.applicationSecret,
+				consumerKey: body.consumerKey,
+				existingConfigJson: existing?.config_json ?? null,
+			});
+			return jsonResponse({ items: ips });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list IPs" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/firewall-sync/providers/ovh/credential", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as { endpoint?: string; applicationKey?: string };
+			const result = await ovhRequestCredential(String(body.endpoint ?? ""), String(body.applicationKey ?? ""));
+			return jsonResponse(result);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to request a consumer key" }, 400);
 		}
 	});
 

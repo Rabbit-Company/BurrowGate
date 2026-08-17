@@ -39,7 +39,7 @@ export function firewallSyncPage(): string {
       <input type="hidden" id="providerId">
       <div class="site-form-grid">
         <label><span>Name</span><input id="providerName" class="input" required></label>
-        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option></select></label>
+        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option><option value="ovh">OVH Edge Firewall</option></select></label>
         <label><span>Max entries</span><input id="providerMaxEntries" class="input" type="number" min="1"></label>
       </div>
 
@@ -56,6 +56,23 @@ export function firewallSyncPage(): string {
         <label><span>nft binary path</span><input id="nftBinaryPath" class="input" placeholder="nft"></label>
         <label class="check-row"><input id="nftUseSudo" type="checkbox"><span><strong>Run via sudo -n</strong><small class="muted">Requires a narrow sudoers rule for the nft binary.</small></span></label>
         <p class="muted">BurrowGate manages its own isolated <code>inet burrowgate</code> table/chain/sets - it never touches other firewall rules (ufw, firewalld, etc.) on this host.</p>
+      </div>
+
+      <div id="ovhFields" class="site-form-grid hidden">
+        <label><span>API endpoint</span><input id="ovhEndpoint" class="input" placeholder="https://eu.api.ovh.com"><small class="muted">Regional API root, e.g. https://eu.api.ovh.com, https://ca.api.ovh.com, or https://api.us.ovhcloud.com.</small></label>
+        <label><span>Application key</span><input id="ovhApplicationKey" class="input" placeholder="Created at ca.ovh.com/auth/api/createToken"></label>
+        <label><span>Application secret</span><input id="ovhApplicationSecret" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current secret"></label>
+        <label>
+          <span>Consumer key</span>
+          <div class="row"><input id="ovhConsumerKey" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key"><button id="ovhRequestCredential" class="button secondary compact" type="button">Request access</button></div>
+          <small id="ovhCredentialStatus" class="muted"></small>
+        </label>
+        <label><span>Protected IP</span><div class="row"><select id="ovhIp" class="select"><option value="">Click "Load IPs" first</option></select><button id="ovhLoadIps" class="button secondary compact" type="button">Load IPs</button></div><small id="ovhIpsStatus" class="muted"></small></label>
+        <p class="muted">
+          BurrowGate manages this firewall scoped to just the IP you select above - never your whole account. It has a hard limit of 20 rule slots and is IPv4-only.
+          BurrowGate only ever adds/removes its own plain deny-by-IP rules - it never touches ALLOW rules or any other rule you add manually, and unmatched traffic is not
+          blocked by BurrowGate's rules (OVH's edge firewall only blocks what an explicit rule matches - it doesn't deny everything else by default).
+        </p>
       </div>
 
       <label id="providerAckRow" class="check-row hidden"><input id="providerAcknowledge" type="checkbox"><span><strong>I understand the risk and want to enable this without a whitelist entry</strong><small class="muted">A false-positive ban could lock you out of this VPS entirely.</small></span></label>

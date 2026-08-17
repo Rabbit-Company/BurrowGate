@@ -113,6 +113,24 @@ describe("firewall sync provider routes", () => {
 		);
 		expect(response.status).toBe(400);
 	});
+
+	test("clamps an OVH provider's max entries to the 20-slot hard limit, and redacts its secrets", async () => {
+		const cookie = await administratorCookie();
+		const created = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "OVH edge", type: "ovh", maxEntries: 999, config: { applicationKey: "AK" } }),
+			}),
+		);
+		expect(created.status).toBe(201);
+		const createdBody = (await created.json()) as { maxEntries: number; config: Record<string, unknown> };
+		expect(createdBody.maxEntries).toBe(20);
+		expect(createdBody.config.applicationSecretConfigured).toBe(false);
+		expect(createdBody.config.consumerKeyConfigured).toBe(false);
+		expect(createdBody.config.applicationSecretEncrypted).toBeUndefined();
+		expect(createdBody.config.consumerKeyEncrypted).toBeUndefined();
+	});
 });
 
 describe("firewall sync unifi sites route", () => {

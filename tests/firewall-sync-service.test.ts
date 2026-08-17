@@ -29,7 +29,7 @@ function fakeAdapter(state: FakeAdapterState): FirewallSyncAdapter {
 
 function serviceWithFakeAdapters(adapters: Partial<Record<FirewallSyncProviderType, FirewallSyncAdapter>>): FirewallSyncService {
 	const noop: FirewallSyncAdapter = { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown };
-	return new FirewallSyncService({ unifi: adapters.unifi ?? noop, nftables: adapters.nftables ?? noop });
+	return new FirewallSyncService({ unifi: adapters.unifi ?? noop, nftables: adapters.nftables ?? noop, ovh: adapters.ovh ?? noop });
 }
 
 async function insertProvider(overrides: Partial<FirewallSyncProviderRecord> = {}): Promise<FirewallSyncProviderRecord> {
@@ -144,6 +144,7 @@ describe("FirewallSyncService tick", () => {
 		const workState: FakeAdapterState = { calls: [], shouldFail: false };
 		const service = new FirewallSyncService({
 			unifi: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
+			ovh: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			nftables: {
 				async reconcile(configJson, cidrs) {
 					const isFailing = configJson === failing.config_json;
@@ -174,6 +175,7 @@ describe("FirewallSyncService tick", () => {
 		let callCount = 0;
 		const service = new FirewallSyncService({
 			unifi: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
+			ovh: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			nftables: {
 				async reconcile() {
 					callCount += 1;

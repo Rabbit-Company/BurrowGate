@@ -35,7 +35,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Multi-origin load balancing with priority failover, round robin, weighted round robin, session affinity, and deterministic IP fallback
 - Per-origin health checks, automatic unhealthy-origin removal, and optional 503 maintenance mode
 - Unified notification system for sites and Streams: origin health, internet-connectivity, and IP auto-ban webhooks to ntfy, Slack, Discord, or signed generic JSON, with per-event-type subscriptions, durable ordered retries, and a searchable delivery log
-- Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller or local nftables, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
+- Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller, local nftables, or OVH's per-IP edge firewall, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
 - Per-site customizable HTML challenge pages
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
@@ -382,7 +382,7 @@ See [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md).
 
 ## Firewall Sync
 
-A dedicated **Firewall Sync** dashboard pushes BurrowGate's own IP block rules out to an external firewall, so blocked traffic is dropped before it costs this host bandwidth or CPU. Every 10 seconds (configurable) it aggregates active block rules across every site and stream, dedupes them, and reconciles the result against each enabled provider, capped to that provider's own entry limit with oldest-bans-first eviction. UniFi Controller and local nftables are supported today.
+A dedicated **Firewall Sync** dashboard pushes BurrowGate's own IP block rules out to an external firewall, so blocked traffic is dropped before it costs this host bandwidth or CPU. Every 10 seconds (configurable) it aggregates active block rules across every site and stream, dedupes them, and reconciles the result against each enabled provider, capped to that provider's own entry limit with oldest-bans-first eviction. UniFi Controller, local nftables, and OVH's per-IP edge firewall are supported today.
 
 Private/loopback ranges are never pushed, and an admin-managed whitelist adds another layer of protection against accidentally locking yourself out of the VPS - a provider cannot be enabled without at least one whitelist entry or an explicit acknowledgment of the risk.
 

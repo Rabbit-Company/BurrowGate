@@ -6,6 +6,7 @@ import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { isPrivateIp, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { nftablesReconcile, nftablesTeardown, nftablesTestConnection, parseNftablesProviderConfig } from "./firewall-sync/nftables-adapter.ts";
+import { OVH_MAX_RULES, ovhReconcile, ovhTeardown, ovhTestConnection, parseOvhProviderConfig } from "./firewall-sync/ovh-adapter.ts";
 import { parseUnifiProviderConfig, unifiReconcile, unifiTeardown, unifiTestConnection } from "./firewall-sync/unifi-adapter.ts";
 
 export function dedupeCidrsByRecency(rows: Array<{ network_cidr: string; created_at: number }>): string[] {
@@ -88,6 +89,7 @@ export interface FirewallSyncAdapter {
 const defaultAdapters: Record<FirewallSyncProviderType, FirewallSyncAdapter> = {
 	unifi: { reconcile: unifiReconcile, testConnection: unifiTestConnection, teardown: unifiTeardown },
 	nftables: { reconcile: nftablesReconcile, testConnection: nftablesTestConnection, teardown: nftablesTeardown },
+	ovh: { reconcile: ovhReconcile, testConnection: ovhTestConnection, teardown: ovhTeardown },
 };
 
 export interface FirewallSyncProviderView {
@@ -110,6 +112,14 @@ function redactConfig(type: FirewallSyncProviderType, configJson: string): Recor
 	if (type === "unifi") {
 		const { apiKeyEncrypted, ...rest } = parsed;
 		return { ...rest, apiKeyConfigured: typeof apiKeyEncrypted === "string" && apiKeyEncrypted.length > 0 };
+	}
+	if (type === "ovh") {
+		const { applicationSecretEncrypted, consumerKeyEncrypted, ...rest } = parsed;
+		return {
+			...rest,
+			applicationSecretConfigured: typeof applicationSecretEncrypted === "string" && applicationSecretEncrypted.length > 0,
+			consumerKeyConfigured: typeof consumerKeyEncrypted === "string" && consumerKeyEncrypted.length > 0,
+		};
 	}
 	return parsed;
 }
@@ -158,17 +168,34 @@ async function buildConfigJson(type: FirewallSyncProviderType, input: unknown, e
 		if (!parsed.controllerUrl) throw new Error("Controller URL is required");
 		return JSON.stringify(parsed);
 	}
+	if (type === "ovh") {
+		const existing = existingConfigJson ? parseOvhProviderConfig(JSON.parse(existingConfigJson)) : null;
+		const applicationSecretInput = typeof raw.applicationSecret === "string" ? raw.applicationSecret.trim() : "";
+		const applicationSecretEncrypted = applicationSecretInput ? await encryptSecret(applicationSecretInput) : (existing?.applicationSecretEncrypted ?? "");
+		const consumerKeyInput = typeof raw.consumerKey === "string" ? raw.consumerKey.trim() : "";
+		const consumerKeyEncrypted = consumerKeyInput ? await encryptSecret(consumerKeyInput) : (existing?.consumerKeyEncrypted ?? "");
+		const parsed = parseOvhProviderConfig({ ...existing, ...raw, applicationSecretEncrypted, consumerKeyEncrypted });
+		if (!parsed.applicationKey) throw new Error("Application key is required");
+		return JSON.stringify(parsed);
+	}
 	const existing = existingConfigJson ? parseNftablesProviderConfig(JSON.parse(existingConfigJson)) : null;
 	return JSON.stringify(parseNftablesProviderConfig({ ...existing, ...raw }));
 }
 
 function defaultMaxEntries(type: FirewallSyncProviderType): number {
-	return type === "unifi" ? config.firewallSync.defaultUnifiMaxEntries : config.firewallSync.defaultNftablesMaxEntries;
+	if (type === "unifi") return config.firewallSync.defaultUnifiMaxEntries;
+	if (type === "ovh") return OVH_MAX_RULES;
+	return config.firewallSync.defaultNftablesMaxEntries;
+}
+
+/** OVH's edge firewall has exactly 20 fixed rule slots - going over would just produce API errors at sync time. */
+function clampMaxEntries(type: FirewallSyncProviderType, requested: number): number {
+	return type === "ovh" ? Math.min(requested, OVH_MAX_RULES) : requested;
 }
 
 export async function createFirewallSyncProvider(input: FirewallSyncProviderInput): Promise<FirewallSyncProviderRecord> {
 	const type = input.type as FirewallSyncProviderType;
-	if (type !== "unifi" && type !== "nftables") throw new Error("Unsupported provider type");
+	if (type !== "unifi" && type !== "nftables" && type !== "ovh") throw new Error("Unsupported provider type");
 	const name = String(input.name ?? "").trim();
 	if (!name) throw new Error("Name is required");
 	const now = Date.now();
@@ -177,7 +204,7 @@ export async function createFirewallSyncProvider(input: FirewallSyncProviderInpu
 		name,
 		type,
 		enabled: booleanValue(input.enabled, false) ? 1 : 0,
-		max_entries: Number.isInteger(input.maxEntries) ? Number(input.maxEntries) : defaultMaxEntries(type),
+		max_entries: clampMaxEntries(type, Number.isInteger(input.maxEntries) ? Number(input.maxEntries) : defaultMaxEntries(type)),
 		config_json: await buildConfigJson(type, input.config, null),
 		acknowledged_no_whitelist: booleanValue(input.acknowledgedNoWhitelist, false) ? 1 : 0,
 		last_checked_at: null,
@@ -204,7 +231,7 @@ export async function updateFirewallSyncProvider(id: string, input: FirewallSync
 		const whitelist = await repository.allFirewallSyncWhitelistCidrs();
 		if (whitelist.length === 0) throw new Error("Add at least one whitelist IP, or explicitly acknowledge the risk, before enabling a provider");
 	}
-	const maxEntries = Number.isInteger(input.maxEntries) ? Number(input.maxEntries) : existing.max_entries;
+	const maxEntries = clampMaxEntries(existing.type, Number.isInteger(input.maxEntries) ? Number(input.maxEntries) : existing.max_entries);
 	const configJson = input.config === undefined ? existing.config_json : await buildConfigJson(existing.type, input.config, existing.config_json);
 	await repository.updateFirewallSyncProviderConfig(id, name, enabled ? 1 : 0, maxEntries, configJson, acknowledgedNoWhitelist ? 1 : 0, Date.now());
 	return (await repository.firewallSyncProviderById(id))!;

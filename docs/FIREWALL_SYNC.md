@@ -54,13 +54,29 @@ sudo setcap cap_net_admin+ep $(which nft)
 
 Alternatively, enable **Run via sudo -n** with a narrow sudoers rule scoped to the `nft` binary. If BurrowGate runs under systemd, note that sandboxing directives like `NoNewPrivileges` can interfere with an inherited capability - check the unit file if `setcap` doesn't seem to take effect.
 
+### OVH Edge Firewall
+
+Every OVH public IP has its own **Edge Firewall**, filtering traffic at the OVH network edge before it reaches your service at all - independent of which OVH product (VPS, dedicated server, etc.) that IP is attached to. Find it in the OVH control panel under **Network > Public IP addresses**, then open the IP's **Edge firewall**. It has a hard limit of **20 rule slots per IP** and is **IPv4-only**.
+
+Configure:
+
+- **API endpoint** - the regional API root, e.g. `https://eu.api.ovh.com`, `https://ca.api.ovh.com`, or `https://api.us.ovhcloud.com`.
+- **Application key** and **application secret** - created at `<endpoint>/auth/api/createToken` (e.g. [https://ca.ovh.com/auth/api/createToken](https://ca.ovh.com/auth/api/createToken)) or via the OVH API console.
+- **Consumer key** - click **Request access** to have BurrowGate request one scoped to just the `/ip/*` resource tree (never your whole account). This returns a validation link you open once, in your browser, to approve it - after that the key is permanent until you revoke it. You can also paste in a consumer key obtained some other way.
+- **Protected IP** - picked from a dropdown, not typed. Click **Load IPs** to fetch every IP on the account (labeled with the OVH service it's routed to, when known) and pick the one this BurrowGate instance is actually reachable on - the firewall applies only to that single IP, never anything else on the account.
+
+BurrowGate enables the edge firewall for the selected IP if it isn't already, then manages rules as `{action: "deny", protocol: "ipv4", source: <banned CIDR>}` - one rule blocks all traffic from that source regardless of TCP/UDP/ICMP. OVH's rule API has no comment/label field to distinguish "BurrowGate's rules" from anything else, so **BurrowGate only ever touches a rule that exactly matches its own shape** (a plain `deny`/`ipv4` rule with no port restriction) - any `permit` (allow) rule, or any rule scoped to a specific port, is left completely alone: never deleted, and its slot is never reused for a ban. Effective ban capacity is therefore 20 minus however many slots your own rules occupy.
+
+Because rules are addressed by a fixed slot number (0-19) rather than a replaceable list, reconciliation diffs against the existing 20 slots (keeping already-correct rules, freeing slots whose ban expired, filling free slots with new bans) instead of a full flush-and-recreate, so an unchanged ban list produces no API calls at all.
+
 ## Configuration
 
 - `BG_FIREWALL_SYNC_ENABLED` (default `true`) - instance-wide kill switch, independent of each provider's own enabled state.
 - `BG_FIREWALL_SYNC_INTERVAL_MS` (default `10000`) - automatic reconciliation interval.
-- `BG_FIREWALL_SYNC_REQUEST_TIMEOUT_MS` (default `10000`) - timeout for UniFi API requests.
+- `BG_FIREWALL_SYNC_REQUEST_TIMEOUT_MS` (default `10000`) - timeout for UniFi and OVH API requests.
 - `BG_FIREWALL_SYNC_NFT_TIMEOUT_MS` (default `5000`) - timeout for each `nft` invocation.
 - `BG_FIREWALL_SYNC_UNIFI_DEFAULT_MAX_ENTRIES` (default `2000`) - default cap for new UniFi providers.
 - `BG_FIREWALL_SYNC_NFTABLES_DEFAULT_MAX_ENTRIES` (default `100000`) - default cap for new nftables providers.
+- OVH providers are always capped at 20 entries - the API's own hard limit, not configurable.
 
 See [`docs/NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for how block rules are created in the first place, and [`docs/BANDWIDTH.md`](BANDWIDTH.md) / [`docs/STREAMS.md`](STREAMS.md) for the bandwidth-limit auto-bans that most commonly feed this feature.
