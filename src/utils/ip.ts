@@ -99,3 +99,14 @@ export function isPrivateIp(ip: string): boolean {
 	const candidates = parsed.version === 6 ? [ip, ipv4FromMapped(parsed.value)].filter((value): value is string => value !== null) : [ip];
 	return candidates.some((candidate) => PRIVATE_CIDRS.some((cidr) => cidrContains(cidr, candidate)));
 }
+
+export function splitCidrsByFamily(cidrs: string[]): { v4: string[]; v6: string[] } {
+	const v4: string[] = [];
+	const v6: string[] = [];
+	for (const cidr of cidrs) {
+		const parsed = parseCidr(cidr);
+		if (!parsed) continue;
+		(parsed.version === 4 ? v4 : v6).push(cidr);
+	}
+	return { v4, v6 };
+}

@@ -1810,6 +1810,14 @@ form.grid label {
 	margin-top: 4px;
 }
 
+#previewExclusions {
+	margin-top: 12px;
+}
+
+.firewall-section {
+	margin-top: 18px;
+}
+
 @media (min-width: 1281px) {
 	.toolbar {
 		grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(105px, 1fr));

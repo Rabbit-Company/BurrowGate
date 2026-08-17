@@ -21,6 +21,9 @@ import type {
 	ChallengeFlowRecord,
 	CountryRuleRecord,
 	ChallengeStepRecord,
+	FirewallSyncProviderRecord,
+	FirewallSyncStatus,
+	FirewallSyncWhitelistCidrRecord,
 	IpRuleRecord,
 	RequestEventRecord,
 	RoutePolicyRecord,
@@ -3168,5 +3171,56 @@ export const repository = {
 		} else {
 			await db`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
 		}
+	},
+	async allFirewallSyncProviders(): Promise<FirewallSyncProviderRecord[]> {
+		return (await db`SELECT * FROM firewall_sync_providers ORDER BY created_at ASC`) as FirewallSyncProviderRecord[];
+	},
+	async firewallSyncProviderById(id: string): Promise<FirewallSyncProviderRecord | null> {
+		const rows = (await db`SELECT * FROM firewall_sync_providers WHERE id=${id}`) as FirewallSyncProviderRecord[];
+		return rows[0] ?? null;
+	},
+	async insertFirewallSyncProvider(record: FirewallSyncProviderRecord): Promise<void> {
+		await db`INSERT INTO firewall_sync_providers (id,name,type,enabled,max_entries,config_json,acknowledged_no_whitelist,last_checked_at,last_synced_at,last_sync_status,last_sync_error,last_applied_count,last_applied_hash,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.enabled},${record.max_entries},${record.config_json},${record.acknowledged_no_whitelist},${record.last_checked_at},${record.last_synced_at},${record.last_sync_status},${record.last_sync_error},${record.last_applied_count},${record.last_applied_hash},${record.created_at},${record.updated_at})`;
+	},
+	async updateFirewallSyncProviderConfig(
+		id: string,
+		name: string,
+		enabled: number,
+		maxEntries: number,
+		configJson: string,
+		acknowledgedNoWhitelist: number,
+		updatedAt: number,
+	): Promise<void> {
+		await db`UPDATE firewall_sync_providers SET name=${name}, enabled=${enabled}, max_entries=${maxEntries}, config_json=${configJson}, acknowledged_no_whitelist=${acknowledgedNoWhitelist}, updated_at=${updatedAt} WHERE id=${id}`;
+	},
+	async updateFirewallSyncProviderResult(
+		id: string,
+		checkedAt: number,
+		syncedAt: number | null,
+		status: FirewallSyncStatus | null,
+		error: string | null,
+		appliedCount: number,
+		appliedHash: string | null,
+	): Promise<void> {
+		await db`UPDATE firewall_sync_providers SET last_checked_at=${checkedAt}, last_synced_at=${syncedAt}, last_sync_status=${status}, last_sync_error=${error}, last_applied_count=${appliedCount}, last_applied_hash=${appliedHash} WHERE id=${id}`;
+	},
+	async deleteFirewallSyncProvider(id: string): Promise<void> {
+		await db`DELETE FROM firewall_sync_providers WHERE id=${id}`;
+	},
+	async activeBannedCidrRows(now: number): Promise<Array<{ network_cidr: string; created_at: number }>> {
+		return (await db`
+			SELECT network_cidr, created_at FROM ip_rules WHERE action='block' AND (expires_at IS NULL OR expires_at > ${now})
+			UNION ALL
+			SELECT network_cidr, created_at FROM stream_ip_rules WHERE action='block' AND (expires_at IS NULL OR expires_at > ${now})
+		`) as Array<{ network_cidr: string; created_at: number }>;
+	},
+	async allFirewallSyncWhitelistCidrs(): Promise<FirewallSyncWhitelistCidrRecord[]> {
+		return (await db`SELECT * FROM firewall_sync_whitelist_cidrs ORDER BY created_at ASC`) as FirewallSyncWhitelistCidrRecord[];
+	},
+	async insertFirewallSyncWhitelistCidr(record: FirewallSyncWhitelistCidrRecord): Promise<void> {
+		await db`INSERT INTO firewall_sync_whitelist_cidrs (id,network_cidr,note,created_at) VALUES (${record.id},${record.network_cidr},${record.note},${record.created_at})`;
+	},
+	async deleteFirewallSyncWhitelistCidr(id: string): Promise<void> {
+		await db`DELETE FROM firewall_sync_whitelist_cidrs WHERE id=${id}`;
 	},
 };

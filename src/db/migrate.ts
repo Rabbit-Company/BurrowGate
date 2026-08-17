@@ -600,6 +600,29 @@ CREATE TABLE IF NOT EXISTS origin_latency_minutes (
   timeout_count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (origin_id, bucket_start)
 );
+CREATE TABLE IF NOT EXISTS firewall_sync_providers (
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(16) NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  max_entries INTEGER NOT NULL DEFAULT 2000,
+  config_json TEXT NOT NULL,
+  acknowledged_no_whitelist INTEGER NOT NULL DEFAULT 0,
+  last_checked_at BIGINT NULL,
+  last_synced_at BIGINT NULL,
+  last_sync_status VARCHAR(16) NULL,
+  last_sync_error TEXT NULL,
+  last_applied_count INTEGER NOT NULL DEFAULT 0,
+  last_applied_hash VARCHAR(64) NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS firewall_sync_whitelist_cidrs (
+  id VARCHAR(64) PRIMARY KEY,
+  network_cidr VARCHAR(160) NOT NULL,
+  note TEXT NULL,
+  created_at BIGINT NOT NULL
+);
 `;
 
 const indexes = [
@@ -699,6 +722,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_connectivity_ping_bucket ON connectivity_ping_minutes (bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_origin_latency_stream_bucket ON stream_origin_latency_minutes (stream_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_latency_site_bucket ON origin_latency_minutes (site_id, bucket_start)",
+	"CREATE INDEX IF NOT EXISTS idx_firewall_sync_providers_enabled ON firewall_sync_providers (enabled)",
 ];
 
 function isMySql(): boolean {

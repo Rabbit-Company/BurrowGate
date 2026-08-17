@@ -693,6 +693,34 @@ export interface AdminAuditLogRecord {
 	created_at: number;
 }
 
+export type FirewallSyncProviderType = "unifi" | "nftables";
+export type FirewallSyncStatus = "ok" | "error";
+
+export interface FirewallSyncProviderRecord {
+	id: string;
+	name: string;
+	type: FirewallSyncProviderType;
+	enabled: number;
+	max_entries: number;
+	config_json: string;
+	acknowledged_no_whitelist: number;
+	last_checked_at: number | null;
+	last_synced_at: number | null;
+	last_sync_status: FirewallSyncStatus | null;
+	last_sync_error: string | null;
+	last_applied_count: number;
+	last_applied_hash: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface FirewallSyncWhitelistCidrRecord {
+	id: string;
+	network_cidr: string;
+	note: string | null;
+	created_at: number;
+}
+
 export interface GatewayState {
 	site?: SiteRecord;
 	accessSession?: AccessSessionRecord;

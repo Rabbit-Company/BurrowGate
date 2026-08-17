@@ -92,7 +92,7 @@ export function notificationsPage(): string {
 		"Notifications",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a class="active" href="/_burrowgate/admin/notifications">Notifications</a></nav><p class="muted header-subtitle">Webhook alerts for origin health, internet connectivity, and auto-bans</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a class="active" href="/_burrowgate/admin/notifications">Notifications</a><a href="/_burrowgate/admin/firewall-sync">Firewall Sync</a></nav><p class="muted header-subtitle">Webhook alerts for origin health, internet connectivity, and auto-bans</p></div>
   <div class="dashboard-controls"><div class="row dashboard-actions"><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh" title="Refresh">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div></div>
 </header>
 <div class="grid notification-sections">
