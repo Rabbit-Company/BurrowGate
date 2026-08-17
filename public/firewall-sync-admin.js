@@ -138,6 +138,7 @@ function statusBadgeClass(status) {
 function providerTypeLabel(type) {
 	if (type === "unifi") return "UniFi Controller";
 	if (type === "ovh") return "OVH Edge Firewall";
+	if (type === "aws-nacl") return "AWS VPC Network ACL";
 	return "Local nftables";
 }
 
@@ -208,7 +209,8 @@ function updateProviderTypeFields() {
 	byId("unifiFields").classList.toggle("hidden", type !== "unifi");
 	byId("nftablesFields").classList.toggle("hidden", type !== "nftables");
 	byId("ovhFields").classList.toggle("hidden", type !== "ovh");
-	byId("providerMaxEntries").max = type === "ovh" ? "20" : "";
+	byId("awsFields").classList.toggle("hidden", type !== "aws-nacl");
+	byId("providerMaxEntries").max = type === "ovh" || type === "aws-nacl" ? "20" : "";
 }
 
 function updateAckRow() {
@@ -251,6 +253,18 @@ function openProviderForm(provider) {
 		? `<option value="${escapeHtml(config.ipBlock)}">${escapeHtml(config.ipBlock)}</option>`
 		: `<option value="">Click "Load IPs" first</option>`;
 	byId("ovhIpsStatus").textContent = "";
+
+	byId("awsRegion").value = config.region ?? "us-east-1";
+	byId("awsAccessKeyId").value = config.accessKeyId ?? "";
+	byId("awsSecretAccessKey").value = "";
+	byId("awsSecretAccessKey").placeholder = config.secretAccessKeyConfigured ? "Leave blank to keep the current secret" : "Required";
+	byId("awsSessionToken").value = "";
+	byId("awsSessionToken").placeholder = config.sessionTokenConfigured ? "Leave blank to keep the current token" : "Only needed for temporary (STS) credentials";
+	byId("awsNetworkAcl").innerHTML = config.networkAclId
+		? `<option value="${escapeHtml(config.networkAclId)}">${escapeHtml(config.networkAclId)}</option>`
+		: `<option value="">Click "Load Network ACLs" first</option>`;
+	byId("awsNaclsStatus").textContent = "";
+	byId("awsRuleNumberStart").value = config.ruleNumberStart ?? 1;
 
 	updateProviderTypeFields();
 	updateAckRow();
@@ -311,6 +325,37 @@ async function loadOvhIps() {
 	}
 }
 
+async function loadAwsNacls() {
+	const status = byId("awsNaclsStatus");
+	status.textContent = "Loading...";
+	status.className = "muted";
+	try {
+		const result = await api("/providers/aws-nacl/network-acls", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				region: byId("awsRegion").value.trim(),
+				accessKeyId: byId("awsAccessKeyId").value.trim(),
+				secretAccessKey: byId("awsSecretAccessKey").value.trim(),
+				sessionToken: byId("awsSessionToken").value.trim(),
+				providerId: byId("providerId").value || undefined,
+			}),
+		});
+		const currentValue = byId("awsNetworkAcl").value;
+		byId("awsNetworkAcl").innerHTML = result.items
+			.map(
+				(item) =>
+					`<option value="${escapeHtml(item.networkAclId)}">${escapeHtml(item.networkAclId)} (vpc: ${escapeHtml(item.vpcId)}${item.isDefault ? ", default" : ""})</option>`,
+			)
+			.join("");
+		if (result.items.some((item) => item.networkAclId === currentValue)) byId("awsNetworkAcl").value = currentValue;
+		status.textContent = `Loaded ${result.items.length} Network ACL${result.items.length === 1 ? "" : "s"}.`;
+	} catch (error) {
+		status.textContent = error.message;
+		status.className = "muted error-text";
+	}
+}
+
 async function requestOvhCredential() {
 	const status = byId("ovhCredentialStatus");
 	status.textContent = "Requesting...";
@@ -348,6 +393,16 @@ function providerConfigFromForm() {
 			applicationSecret: byId("ovhApplicationSecret").value.trim(),
 			consumerKey: byId("ovhConsumerKey").value.trim(),
 			ipBlock: byId("ovhIp").value.trim(),
+		};
+	}
+	if (type === "aws-nacl") {
+		return {
+			region: byId("awsRegion").value.trim(),
+			accessKeyId: byId("awsAccessKeyId").value.trim(),
+			secretAccessKey: byId("awsSecretAccessKey").value.trim(),
+			sessionToken: byId("awsSessionToken").value.trim(),
+			networkAclId: byId("awsNetworkAcl").value.trim(),
+			ruleNumberStart: Number(byId("awsRuleNumberStart").value) || 1,
 		};
 	}
 	return { nftBinaryPath: byId("nftBinaryPath").value.trim(), useSudo: byId("nftUseSudo").checked };
@@ -413,6 +468,7 @@ byId("providerAdd").addEventListener("click", () => openProviderForm(null));
 byId("providerType").addEventListener("change", updateProviderTypeFields);
 byId("unifiLoadSites").addEventListener("click", () => void loadUnifiSites());
 byId("ovhLoadIps").addEventListener("click", () => void loadOvhIps());
+byId("awsLoadNacls").addEventListener("click", () => void loadAwsNacls());
 byId("ovhRequestCredential").addEventListener("click", () => void requestOvhCredential());
 byId("providerEnabled").addEventListener("change", updateAckRow);
 byId("providerTest").addEventListener("click", () => void testProviderConnection());

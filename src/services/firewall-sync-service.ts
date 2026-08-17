@@ -5,6 +5,7 @@ import type { FirewallSyncProviderRecord, FirewallSyncProviderType, FirewallSync
 import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { isPrivateIp, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
+import { AWS_NACL_MAX_RULES, awsNaclReconcile, awsNaclTeardown, awsNaclTestConnection, parseAwsNaclProviderConfig } from "./firewall-sync/aws-nacl-adapter.ts";
 import { nftablesReconcile, nftablesTeardown, nftablesTestConnection, parseNftablesProviderConfig } from "./firewall-sync/nftables-adapter.ts";
 import { OVH_MAX_RULES, ovhReconcile, ovhTeardown, ovhTestConnection, parseOvhProviderConfig } from "./firewall-sync/ovh-adapter.ts";
 import { parseUnifiProviderConfig, unifiReconcile, unifiTeardown, unifiTestConnection } from "./firewall-sync/unifi-adapter.ts";
@@ -90,6 +91,7 @@ const defaultAdapters: Record<FirewallSyncProviderType, FirewallSyncAdapter> = {
 	unifi: { reconcile: unifiReconcile, testConnection: unifiTestConnection, teardown: unifiTeardown },
 	nftables: { reconcile: nftablesReconcile, testConnection: nftablesTestConnection, teardown: nftablesTeardown },
 	ovh: { reconcile: ovhReconcile, testConnection: ovhTestConnection, teardown: ovhTeardown },
+	"aws-nacl": { reconcile: awsNaclReconcile, testConnection: awsNaclTestConnection, teardown: awsNaclTeardown },
 };
 
 export interface FirewallSyncProviderView {
@@ -119,6 +121,14 @@ function redactConfig(type: FirewallSyncProviderType, configJson: string): Recor
 			...rest,
 			applicationSecretConfigured: typeof applicationSecretEncrypted === "string" && applicationSecretEncrypted.length > 0,
 			consumerKeyConfigured: typeof consumerKeyEncrypted === "string" && consumerKeyEncrypted.length > 0,
+		};
+	}
+	if (type === "aws-nacl") {
+		const { secretAccessKeyEncrypted, sessionTokenEncrypted, ...rest } = parsed;
+		return {
+			...rest,
+			secretAccessKeyConfigured: typeof secretAccessKeyEncrypted === "string" && secretAccessKeyEncrypted.length > 0,
+			sessionTokenConfigured: typeof sessionTokenEncrypted === "string" && sessionTokenEncrypted.length > 0,
 		};
 	}
 	return parsed;
@@ -178,6 +188,16 @@ async function buildConfigJson(type: FirewallSyncProviderType, input: unknown, e
 		if (!parsed.applicationKey) throw new Error("Application key is required");
 		return JSON.stringify(parsed);
 	}
+	if (type === "aws-nacl") {
+		const existing = existingConfigJson ? parseAwsNaclProviderConfig(JSON.parse(existingConfigJson)) : null;
+		const secretAccessKeyInput = typeof raw.secretAccessKey === "string" ? raw.secretAccessKey.trim() : "";
+		const secretAccessKeyEncrypted = secretAccessKeyInput ? await encryptSecret(secretAccessKeyInput) : (existing?.secretAccessKeyEncrypted ?? "");
+		const sessionTokenInput = typeof raw.sessionToken === "string" ? raw.sessionToken.trim() : "";
+		const sessionTokenEncrypted = sessionTokenInput ? await encryptSecret(sessionTokenInput) : (existing?.sessionTokenEncrypted ?? "");
+		const parsed = parseAwsNaclProviderConfig({ ...existing, ...raw, secretAccessKeyEncrypted, sessionTokenEncrypted });
+		if (!parsed.accessKeyId) throw new Error("Access key ID is required");
+		return JSON.stringify(parsed);
+	}
 	const existing = existingConfigJson ? parseNftablesProviderConfig(JSON.parse(existingConfigJson)) : null;
 	return JSON.stringify(parseNftablesProviderConfig({ ...existing, ...raw }));
 }
@@ -185,17 +205,20 @@ async function buildConfigJson(type: FirewallSyncProviderType, input: unknown, e
 function defaultMaxEntries(type: FirewallSyncProviderType): number {
 	if (type === "unifi") return config.firewallSync.defaultUnifiMaxEntries;
 	if (type === "ovh") return OVH_MAX_RULES;
+	if (type === "aws-nacl") return AWS_NACL_MAX_RULES;
 	return config.firewallSync.defaultNftablesMaxEntries;
 }
 
-/** OVH's edge firewall has exactly 20 fixed rule slots - going over would just produce API errors at sync time. */
+/** OVH's edge firewall and the AWS Network ACL adapter each have exactly 20 fixed rule slots - going over would just produce API errors at sync time. */
 function clampMaxEntries(type: FirewallSyncProviderType, requested: number): number {
-	return type === "ovh" ? Math.min(requested, OVH_MAX_RULES) : requested;
+	if (type === "ovh") return Math.min(requested, OVH_MAX_RULES);
+	if (type === "aws-nacl") return Math.min(requested, AWS_NACL_MAX_RULES);
+	return requested;
 }
 
 export async function createFirewallSyncProvider(input: FirewallSyncProviderInput): Promise<FirewallSyncProviderRecord> {
 	const type = input.type as FirewallSyncProviderType;
-	if (type !== "unifi" && type !== "nftables" && type !== "ovh") throw new Error("Unsupported provider type");
+	if (type !== "unifi" && type !== "nftables" && type !== "ovh" && type !== "aws-nacl") throw new Error("Unsupported provider type");
 	const name = String(input.name ?? "").trim();
 	if (!name) throw new Error("Name is required");
 	const now = Date.now();

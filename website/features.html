@@ -202,11 +202,17 @@
 							<h3>Firewall Sync</h3>
 							<p>Push BurrowGate's own IP blocks out to an external firewall.</p>
 							<ul>
-								<li>UniFi Controller (Zone-Based Firewall, via a managed Traffic Matching List), local nftables, and OVH's per-IP edge firewall</li>
+								<li>
+									UniFi Controller (Zone-Based Firewall, via a managed Traffic Matching List), local nftables, OVH's per-IP edge firewall, and AWS VPC Network
+									ACLs
+								</li>
 								<li>Global, deduplicated aggregation across every site and Stream, reconciled automatically every 10 seconds</li>
 								<li>Per-provider entry cap with oldest-bans-first eviction when full</li>
 								<li>Private/loopback ranges are never pushed, plus an admin-managed never-ban whitelist with one-click "use my current IP"</li>
-								<li>Deleting a provider tears down its remote entries too - the nftables table, the UniFi traffic matching lists, or the OVH firewall rules</li>
+								<li>
+									Deleting a provider tears down its remote entries too - the nftables table, the UniFi traffic matching lists, the OVH firewall rules, or the
+									AWS Network ACL entries
+								</li>
 							</ul>
 						</div>
 

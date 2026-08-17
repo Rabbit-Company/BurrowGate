@@ -12,6 +12,7 @@ import {
 	removeFirewallSyncWhitelistCidr,
 	updateFirewallSyncProvider,
 } from "../services/firewall-sync-service.ts";
+import { awsListNacls } from "../services/firewall-sync/aws-nacl-adapter.ts";
 import { ovhListIps, ovhRequestCredential } from "../services/firewall-sync/ovh-adapter.ts";
 import { unifiListSites } from "../services/firewall-sync/unifi-adapter.ts";
 import { getAdminSession } from "../services/session-service.ts";
@@ -118,6 +119,35 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 			return jsonResponse(result);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to request a consumer key" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/firewall-sync/providers/aws-nacl/network-acls", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as {
+				region?: string;
+				accessKeyId?: string;
+				secretAccessKey?: string;
+				sessionToken?: string;
+				providerId?: string;
+			};
+			const existing = body.providerId ? await repository.firewallSyncProviderById(body.providerId) : null;
+			const items = await awsListNacls({
+				region: String(body.region ?? ""),
+				accessKeyId: String(body.accessKeyId ?? ""),
+				secretAccessKey: body.secretAccessKey,
+				sessionToken: body.sessionToken,
+				existingConfigJson: existing?.config_json ?? null,
+			});
+			return jsonResponse({ items });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list Network ACLs" }, 400);
 		}
 	});
 

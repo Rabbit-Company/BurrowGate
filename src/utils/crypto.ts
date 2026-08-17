@@ -23,10 +23,14 @@ export async function sha1Hex(value: string): Promise<string> {
 	return toHex(new Uint8Array(await crypto.subtle.digest("SHA-1", encoder.encode(value))));
 }
 
+/** Raw-bytes HMAC, needed where the output feeds back in as the key of another HMAC (e.g. AWS SigV4's derived signing key chain) rather than being used as a hex string. */
+export async function hmacSha256(keyBytes: Uint8Array, value: string): Promise<Uint8Array<ArrayBuffer>> {
+	const key = await crypto.subtle.importKey("raw", keyBytes as Uint8Array<ArrayBuffer>, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+	return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
+}
+
 export async function hmacSha256Hex(secret: string, value: string): Promise<string> {
-	const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-	const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));
-	return toHex(new Uint8Array(signature));
+	return toHex(await hmacSha256(encoder.encode(secret), value));
 }
 
 export function toHex(bytes: Uint8Array): string {

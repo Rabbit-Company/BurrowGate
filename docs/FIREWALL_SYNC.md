@@ -71,6 +71,48 @@ BurrowGate enables the edge firewall for the selected IP if it isn't already, th
 
 Because rules are addressed by a fixed slot number (0-19) rather than a replaceable list, reconciliation diffs against the existing 20 slots (keeping already-correct rules, freeing slots whose ban expired, filling free slots with new bans) instead of a full flush-and-recreate, so an unchanged ban list produces no API calls at all.
 
+### AWS VPC Network ACL
+
+Manages the inbound rules of a single VPC Network ACL - the stateless, subnet-level firewall that sits in front of a VPC's route table, independent of any Security Group. It has a hard limit of **20 rule slots reserved by BurrowGate** and is **IPv4-only**.
+
+Configure:
+
+- **Region** - e.g. `us-east-1`.
+- **Access key ID** and **secret access key** - a long-term IAM user's credentials, or the access key/secret of a temporary STS session (pair with the optional **session token** field below).
+- **Session token** - only needed for temporary (STS) credentials; leave blank for a long-term IAM user.
+- **Network ACL** - picked from a dropdown, not typed. Click **Load Network ACLs** to fetch every Network ACL in the account/region (labeled with its VPC and default status) and pick the one associated with the subnet this BurrowGate instance actually runs in - the adapter applies only to that single Network ACL, never anything else on the account.
+- **Rule number start** - the first of 20 consecutive inbound rule numbers BurrowGate reserves for itself (default `1`). Network ACL rules are evaluated lowest-number-first, so a low start ensures BurrowGate's deny rules are checked before any broader allow rule further down the list. Change this if you've already assigned rule numbers 1-20 to something else.
+
+The IAM identity needs exactly three actions: `ec2:CreateNetworkAclEntry` and `ec2:DeleteNetworkAclEntry`, both scoped to just the target Network ACL's ARN, plus `ec2:DescribeNetworkAcls` - EC2's Describe\* actions don't support resource-level scoping, so that one needs `Resource: "*"`.
+
+**Getting an access key**: find the target Network ACL's ID first (VPC console -> Subnets -> the subnet BurrowGate runs in -> Network ACL tab), then create a dedicated IAM user (IAM -> Users -> Create user, programmatic access only) and attach an inline policy scoped to that ACL:
+
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "BurrowGateModifyOwnAcl",
+			"Effect": "Allow",
+			"Action": ["ec2:CreateNetworkAclEntry", "ec2:DeleteNetworkAclEntry"],
+			"Resource": "arn:aws:ec2:REGION:ACCOUNT_ID:network-acl/acl-XXXXXXXX"
+		},
+		{
+			"Sid": "BurrowGateDescribe",
+			"Effect": "Allow",
+			"Action": "ec2:DescribeNetworkAcls",
+			"Resource": "*"
+		}
+	]
+}
+```
+
+Then generate the key from that user's **Security credentials** tab -> **Access keys** -> **Create access key** (use case: _Third-party service_) - the secret is shown once, so copy it immediately. A key scoped this way can only touch the one Network ACL BurrowGate is meant to manage, even if it ever leaked.
+
+BurrowGate manages rules as `{ruleAction: "deny", protocol: "-1", egress: false, cidrBlock: <banned CIDR>}` - one rule blocks all inbound traffic from that source regardless of TCP/UDP/ICMP. A Network ACL entry has no comment/label field to distinguish "BurrowGate's rules" from anything else, so - the same reasoning as the OVH adapter - **BurrowGate only ever touches a rule that exactly matches its own shape** (a plain ingress `deny`/all-protocols rule with no port restriction) _and_ falls inside its reserved rule-number range; any `allow` rule, any port-scoped rule, or anything outside that reserved range (including the account's own default explicit-deny-all catch-all at rule 32767) is left completely alone. Effective ban capacity is therefore 20 minus however many of the reserved slots your own rules already occupy.
+
+Because rules are addressed by a specific rule number rather than a replaceable list, reconciliation diffs against the 20 reserved slots (keeping already-correct rules, freeing slots whose ban expired, filling free slots with new bans) instead of a full flush-and-recreate, so an unchanged ban list produces no API calls at all.
+
 ## Configuration
 
 - `BG_FIREWALL_SYNC_ENABLED` (default `true`) - instance-wide kill switch, independent of each provider's own enabled state.
@@ -80,5 +122,6 @@ Because rules are addressed by a fixed slot number (0-19) rather than a replacea
 - `BG_FIREWALL_SYNC_UNIFI_DEFAULT_MAX_ENTRIES` (default `2000`) - default cap for new UniFi providers.
 - `BG_FIREWALL_SYNC_NFTABLES_DEFAULT_MAX_ENTRIES` (default `100000`) - default cap for new nftables providers.
 - OVH providers are always capped at 20 entries - the API's own hard limit, not configurable.
+- AWS VPC Network ACL providers are always capped at 20 entries - the number of rule slots BurrowGate reserves, not configurable.
 
 See [`docs/NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for how block rules are created in the first place, and [`docs/BANDWIDTH.md`](BANDWIDTH.md) / [`docs/STREAMS.md`](STREAMS.md) for the bandwidth-limit auto-bans that most commonly feed this feature.

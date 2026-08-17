@@ -39,7 +39,7 @@ export function firewallSyncPage(): string {
       <input type="hidden" id="providerId">
       <div class="site-form-grid">
         <label><span>Name</span><input id="providerName" class="input" required></label>
-        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option><option value="ovh">OVH Edge Firewall</option></select></label>
+        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option><option value="ovh">OVH Edge Firewall</option><option value="aws-nacl">AWS VPC Network ACL</option></select></label>
         <label><span>Max entries</span><input id="providerMaxEntries" class="input" type="number" min="1"></label>
       </div>
 
@@ -72,6 +72,20 @@ export function firewallSyncPage(): string {
           BurrowGate manages this firewall scoped to just the IP you select above - never your whole account. It has a hard limit of 20 rule slots and is IPv4-only.
           BurrowGate only ever adds/removes its own plain deny-by-IP rules - it never touches ALLOW rules or any other rule you add manually, and unmatched traffic is not
           blocked by BurrowGate's rules (OVH's edge firewall only blocks what an explicit rule matches - it doesn't deny everything else by default).
+        </p>
+      </div>
+
+      <div id="awsFields" class="site-form-grid hidden">
+        <label><span>Region</span><input id="awsRegion" class="input" placeholder="us-east-1"></label>
+        <label><span>Access key ID</span><input id="awsAccessKeyId" class="input" placeholder="AKIA..."></label>
+        <label><span>Secret access key</span><input id="awsSecretAccessKey" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current secret"></label>
+        <label><span>Session token</span><input id="awsSessionToken" class="input" type="password" autocomplete="new-password" placeholder="Only needed for temporary (STS) credentials"></label>
+        <label><span>Network ACL</span><div class="row"><select id="awsNetworkAcl" class="select"><option value="">Click "Load Network ACLs" first</option></select><button id="awsLoadNacls" class="button secondary compact" type="button">Load Network ACLs</button></div><small id="awsNaclsStatus" class="muted"></small></label>
+        <label><span>Rule number start</span><input id="awsRuleNumberStart" class="input" type="number" min="1" placeholder="1"><small class="muted">BurrowGate reserves 20 consecutive inbound rule numbers starting here. Pick a value that doesn't collide with any rule numbers you've assigned yourself - lower numbers are evaluated first.</small></label>
+        <p class="muted">
+          BurrowGate manages this Network ACL scoped to just the 20 reserved inbound rule numbers above - it never touches ALLOW rules or any other rule number range.
+          It has a hard limit of 20 rule slots and is IPv4-only. Requires <code>ec2:DescribeNetworkAcls</code>, <code>ec2:CreateNetworkAclEntry</code>, and
+          <code>ec2:DeleteNetworkAclEntry</code> IAM permissions.
         </p>
       </div>
 
