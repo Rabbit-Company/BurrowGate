@@ -10,6 +10,7 @@ services:
         required: false
     cap_add:
       - NET_BIND_SERVICE
+      - NET_ADMIN
     volumes:
       - ./data:/app/data
     healthcheck:

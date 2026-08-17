@@ -2,7 +2,7 @@ FROM oven/bun:1.3.14
 
 USER root
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates openssl libcap2-bin \
+	&& apt-get install -y --no-install-recommends ca-certificates openssl libcap2-bin nftables \
 	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -12,7 +12,8 @@ COPY . .
 
 RUN mkdir -p /app/data \
 	&& chown -R bun:bun /app \
-	&& setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(command -v bun)")"
+	&& setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(command -v bun)")" \
+	&& setcap 'cap_net_admin=+ep' "$(readlink -f "$(command -v nft)")"
 
 EXPOSE 80 443
 

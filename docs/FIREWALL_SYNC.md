@@ -54,6 +54,8 @@ sudo setcap cap_net_admin+ep $(which nft)
 
 Alternatively, enable **Run via sudo -n** with a narrow sudoers rule scoped to the `nft` binary. If BurrowGate runs under systemd, note that sandboxing directives like `NoNewPrivileges` can interfere with an inherited capability - check the unit file if `setcap` doesn't seem to take effect.
 
+**Docker Compose deployments**: the default `docker-compose.yml`/`docker-compose.override.yml` already install `nftables` in the image and grant the container `NET_ADMIN` (alongside the existing `NET_BIND_SERVICE`), with `setcap cap_net_admin+ep` applied to just the `nft` binary during the image build - the same scoped-capability pattern as above, just baked into the image instead of run manually. No extra setup is needed for this provider under the default Compose configuration. This relies on `network_mode: host`: since the container shares the host's actual network namespace, `nft` commands run inside it modify the host's real ruleset directly, exactly like running `nft` outside Docker would.
+
 ### OVH Edge Firewall
 
 Every OVH public IP has its own **Edge Firewall**, filtering traffic at the OVH network edge before it reaches your service at all - independent of which OVH product (VPS, dedicated server, etc.) that IP is attached to. Find it in the OVH control panel under **Network > Public IP addresses**, then open the IP's **Edge firewall**. It has a hard limit of **20 rule slots per IP** and is **IPv4-only**.

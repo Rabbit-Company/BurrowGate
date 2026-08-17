@@ -71,6 +71,7 @@ services:
         required: false
     cap_add:
       - NET_BIND_SERVICE
+      - NET_ADMIN
     volumes:
       - ./data:/app/data
     healthcheck:
@@ -134,7 +135,7 @@ The default Compose configuration is production ready:
 - `network_mode: host` runs BurrowGate directly on the host network, so it binds host ports 80 and 443 (or whatever `BG_HTTP_PORT`/`BG_HTTPS_PORT` are set to) with no Docker port mapping or NAT in between
 - origins running on the same host are reachable at `localhost`/`127.0.0.1` with no extra Docker networking configuration
 - runtime data is stored in the `./data` directory
-- only `NET_BIND_SERVICE` is added for low-port binding
+- `NET_BIND_SERVICE` is added for low-port binding, and `NET_ADMIN` for the optional local-nftables Firewall Sync provider (see [`docs/FIREWALL_SYNC.md`](docs/FIREWALL_SYNC.md)) - both are scoped to specific binaries via file capabilities (`setcap`) in the image rather than left on the container's main process
 
 Host networking only works on Linux Docker hosts (the only supported deployment target) and gives the container full access to the host's network interfaces, so firewall the host as if BurrowGate's configured ports were running outside of Docker.
 
