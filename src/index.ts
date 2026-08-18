@@ -21,7 +21,7 @@ import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.t
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { findAccessSession, userAgentHash } from "./services/session-service.ts";
-import { resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
+import { applyPendingSiteChange, resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
 import { resolveRoutePolicy } from "./services/route-policy-service.ts";
 import { appendRateLimitHeaders, applyRouteRateLimit } from "./services/rate-limit-service.ts";
 import {
@@ -62,6 +62,8 @@ import {
 } from "./services/managed-protection-service.ts";
 import { loadManagedRuleSets } from "./services/managed-ruleset-loader.ts";
 import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
+import { registerPendingChangeApplier, startPendingChangeScheduler } from "./services/pending-change-service.ts";
+import { applyPendingStreamChange } from "./services/stream-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -84,6 +86,9 @@ firewallSyncService.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
 startStreamMonitoring();
+registerPendingChangeApplier("site", applyPendingSiteChange);
+registerPendingChangeApplier("stream", applyPendingStreamChange);
+startPendingChangeScheduler();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
 	Logger.warn(

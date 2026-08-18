@@ -50,6 +50,9 @@ import type {
 	NotificationOutboxStatus,
 	NotificationEventWithDeliveryRecord,
 	PendingNotificationDeliveryRecord,
+	PendingChangeEntityType,
+	PendingChangeRecord,
+	PendingChangeStatus,
 	SiteOriginRecord,
 	OriginBackendHealthStatusRecord,
 	OriginBackendHealthEventRecord,
@@ -464,6 +467,7 @@ export const repository = {
 			await transaction`DELETE FROM certificates WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_tls_settings WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM site_sso_settings WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM pending_changes WHERE entity_type='site' AND entity_id=${siteId}`;
 			await transaction`DELETE FROM sites WHERE id=${siteId}`;
 		});
 	},
@@ -548,6 +552,50 @@ export const repository = {
 		deliveredAt: number | null,
 	): Promise<void> {
 		await db`UPDATE notification_outbox SET status=${status}, attempts=${attempts}, next_attempt_at=${nextAttemptAt}, last_error=${error}, delivered_at=${deliveredAt} WHERE id=${id}`;
+	},
+	async insertPendingChange(change: PendingChangeRecord): Promise<void> {
+		await db`INSERT INTO pending_changes (id,entity_type,entity_id,changes_json,summary,apply_at,status,attempts,last_error,created_by,created_at,applied_at) VALUES (${change.id},${change.entity_type},${change.entity_id},${change.changes_json},${change.summary},${change.apply_at},${change.status},${change.attempts},${change.last_error},${change.created_by},${change.created_at},${change.applied_at})`;
+	},
+	async pendingChangeById(id: string): Promise<PendingChangeRecord | null> {
+		const rows = (await db`SELECT * FROM pending_changes WHERE id=${id} LIMIT 1`) as PendingChangeRecord[];
+		return rows[0] ?? null;
+	},
+	/** Strictly the active schedule slot for an entity - used to reject staging a second change while one is already pending. */
+	async pendingChangeFor(entityType: PendingChangeEntityType, entityId: string): Promise<PendingChangeRecord | null> {
+		const rows =
+			(await db`SELECT * FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status='pending' LIMIT 1`) as PendingChangeRecord[];
+		return rows[0] ?? null;
+	},
+	/** The entity's current change - pending or failed - for display and for apply-now/cancel to act on. Failed rows are cleaned up when a new change is staged, so at most one row per entity is expected; ORDER BY guards against that invariant ever being violated. */
+	async pendingOrFailedChangeFor(entityType: PendingChangeEntityType, entityId: string): Promise<PendingChangeRecord | null> {
+		const rows = (await db`
+			SELECT * FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status IN ('pending', 'failed')
+			ORDER BY created_at DESC LIMIT 1`) as PendingChangeRecord[];
+		return rows[0] ?? null;
+	},
+	async pendingChangesFor(entityType: PendingChangeEntityType, entityIds: string[]): Promise<PendingChangeRecord[]> {
+		if (entityIds.length === 0) return [];
+		return (await db`
+			SELECT * FROM pending_changes WHERE entity_type=${entityType} AND entity_id IN ${db(entityIds)} AND status IN ('pending', 'failed')`) as PendingChangeRecord[];
+	},
+	async deleteFailedPendingChangesFor(entityType: PendingChangeEntityType, entityId: string): Promise<void> {
+		await db`DELETE FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status='failed'`;
+	},
+	async duePendingChanges(now: number, limit: number): Promise<PendingChangeRecord[]> {
+		return (await db`SELECT * FROM pending_changes WHERE status='pending' AND apply_at <= ${now} ORDER BY apply_at ASC LIMIT ${limit}`) as PendingChangeRecord[];
+	},
+	async updatePendingChangeStatus(
+		id: string,
+		status: PendingChangeStatus,
+		attempts: number,
+		applyAt: number,
+		lastError: string | null,
+		appliedAt: number | null,
+	): Promise<void> {
+		await db`UPDATE pending_changes SET status=${status}, attempts=${attempts}, apply_at=${applyAt}, last_error=${lastError}, applied_at=${appliedAt} WHERE id=${id}`;
+	},
+	async deletePendingChange(id: string): Promise<void> {
+		await db`DELETE FROM pending_changes WHERE id=${id}`;
 	},
 	async pagedNotificationsForSite(query: NotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
 		const pattern = searchPattern(query.search);
@@ -2460,6 +2508,7 @@ export const repository = {
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE stream_id=${id}`;
 			await transaction`DELETE FROM notification_outbox WHERE stream_id=${id}`;
 			await transaction`DELETE FROM notification_events WHERE stream_id=${id}`;
+			await transaction`DELETE FROM pending_changes WHERE entity_type='stream' AND entity_id=${id}`;
 			await transaction`DELETE FROM streams WHERE id=${id}`;
 		});
 	},

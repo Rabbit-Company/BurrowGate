@@ -177,6 +177,7 @@ function geoConfigForScope(scope) {
 	return allEntries.find((entry) => entry.geoScope === scope) ?? GEO_TAB_CONFIG.traffic;
 }
 let sites = [];
+let sitePendingChanges = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
 let accessSso = {
@@ -1490,6 +1491,78 @@ async function saveOrigin(event) {
 	}
 }
 
+function pendingChangeForSite(id) {
+	return sitePendingChanges.find((change) => change.entityId === id) ?? null;
+}
+
+function datetimeLocalToEpochMs(value) {
+	if (!value) return null;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function pendingChangeBadge(pending) {
+	if (!pending) return "";
+	const failed = pending.status === "failed";
+	const label = failed ? "schedule failed" : `scheduled ${formatDate(pending.applyAt)}`;
+	return `<span class="badge ${failed ? "bad" : "warn"}" title="${escapeHtml(pendingChangeSummaryText(pending))}">${escapeHtml(label)}</span>`;
+}
+
+function pendingChangeSummaryText(pending) {
+	if (pending.status === "failed") {
+		const reason = pending.lastError ? `: ${pending.lastError}` : "";
+		return `${pending.summary} - failed after ${pending.attempts} attempt${pending.attempts === 1 ? "" : "s"}${reason}`;
+	}
+	return `${pending.summary}, at ${formatDate(pending.applyAt)}`;
+}
+
+function renderSitePendingChangeBanner(siteId) {
+	byId("sitePendingChangeEffectiveAt").value = "";
+	const pending = siteId ? pendingChangeForSite(siteId) : null;
+	const banner = byId("sitePendingChangeBanner");
+	banner.classList.toggle("hidden", !pending);
+	if (!pending) return;
+	const failed = pending.status === "failed";
+	banner.classList.toggle("failed", failed);
+	byId("sitePendingChangeLabel").textContent = failed ? "Scheduled change failed:" : "Scheduled change:";
+	byId("sitePendingChangeSummary").textContent = pendingChangeSummaryText(pending);
+	byId("sitePendingChangeApplyNow").textContent = failed ? "Retry now" : "Apply now";
+	byId("sitePendingChangeCancel").textContent = failed ? "Dismiss" : "Cancel";
+}
+
+async function applySitePendingChangeNow() {
+	if (!editingSiteId) return;
+	const button = byId("sitePendingChangeApplyNow");
+	button.disabled = true;
+	try {
+		await api(`/sites/${encodeURIComponent(editingSiteId)}/pending-change/apply-now`, { method: "POST" }, false);
+		await loadSites();
+		editSite(editingSiteId);
+		await reloadSelectedSite();
+		showToast("Scheduled change applied.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function cancelSitePendingChange() {
+	if (!editingSiteId) return;
+	const button = byId("sitePendingChangeCancel");
+	button.disabled = true;
+	try {
+		await api(`/sites/${encodeURIComponent(editingSiteId)}/pending-change`, { method: "DELETE" }, false);
+		await loadSites();
+		editSite(editingSiteId);
+		showToast("Scheduled change cancelled.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
 function renderSites() {
 	const container = byId("sitesList");
 	if (sites.length === 0) {
@@ -1497,15 +1570,15 @@ function renderSites() {
 		return;
 	}
 	container.innerHTML = sites
-		.map(
-			(site) => `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
+		.map((site) => {
+			return `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
-      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span><span class="badge info">${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"}</span>${site.websocket?.mode === "deny" ? '<span class="badge warn">WebSocket off</span>' : ""}${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}</div>
+      <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span><span class="badge info">${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"}</span>${site.websocket?.mode === "deny" ? '<span class="badge warn">WebSocket off</span>' : ""}${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}${pendingChangeBadge(pendingChangeForSite(site.id))}</div>
       <div class="site-list-meta"><code title="${escapeHtml(site.publicHost)}">${escapeHtml(site.publicHost)}</code><span title="${escapeHtml(site.originUrl)}">${escapeHtml(site.originUrl)}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
-  </div>`,
-		)
+  </div>`;
+		})
 		.join("");
 }
 
@@ -1691,6 +1764,7 @@ function resetSiteForm() {
 	byId("generatedSecretPanel").dataset.available = "false";
 	byId("siteTlsPanel").classList.add("hidden");
 	currentTls = null;
+	renderSitePendingChangeBanner(null);
 	setSiteEditorTab("general");
 }
 
@@ -1749,6 +1823,7 @@ function editSite(id) {
 	byId("cancelSiteEdit").classList.remove("hidden");
 	byId("generatedSecretPanel").classList.add("hidden");
 	byId("generatedSecretPanel").dataset.available = "false";
+	renderSitePendingChangeBanner(site.id);
 	setSiteEditorTab("general");
 	byId("siteName").focus();
 	void loadSiteTls(site.id);
@@ -1767,6 +1842,7 @@ function randomSecret(bytes = 48) {
 async function loadSites() {
 	const response = await api("/sites", {}, false);
 	sites = response.items ?? [];
+	sitePendingChanges = response.pendingChanges ?? [];
 	challengeProviders = response.challengeProviders ?? [];
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
@@ -1948,6 +2024,7 @@ async function saveSite(event) {
 			upstreamBufferBytes: Number(byId("siteWebSocketUpstreamBuffer").value),
 		},
 		http: httpPolicy,
+		effectiveAt: datetimeLocalToEpochMs(byId("sitePendingChangeEffectiveAt").value),
 	};
 	try {
 		const editing = Boolean(editingSiteId);
@@ -1971,7 +2048,8 @@ async function saveSite(event) {
 			byId("generatedSecretPanel").classList.remove("hidden");
 		}
 		await reloadSelectedSite();
-		showToast(editing ? "Site updated." : "Site created.");
+		if (result.pendingChange) showToast(`Site updated. ${result.pendingChange.summary}, scheduled for ${formatDate(result.pendingChange.applyAt)}.`);
+		else showToast(editing ? "Site updated." : "Site created.");
 	} catch (error) {
 		showToast(error.message, "bad");
 	} finally {
@@ -4632,6 +4710,8 @@ function bindActions() {
 	);
 	byId("siteWebSocketMode").addEventListener("change", updateSiteWebSocketControls);
 	byId("deleteSite").addEventListener("click", deleteEditingSite);
+	byId("sitePendingChangeApplyNow").addEventListener("click", applySitePendingChangeNow);
+	byId("sitePendingChangeCancel").addEventListener("click", cancelSitePendingChange);
 	byId("saveOrigin").addEventListener("click", saveOrigin);
 	byId("newOrigin").addEventListener("click", () => {
 		resetOriginForm();

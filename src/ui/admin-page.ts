@@ -556,8 +556,16 @@ export function adminPage(): string {
               <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required><small class="muted">A friendly name used throughout the admin dashboard.</small></label>
               <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
               <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
+              <label><span>Schedule hostname change for</span><input id="sitePendingChangeEffectiveAt" class="input" type="datetime-local"><small class="muted">Only used when the public host changes on a site with an active certificate - the HTTPS listener rebuild is deferred to this time instead of happening immediately. Leave blank to apply now. All other changes always apply immediately.</small></label>
             </div>
             <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
+            <div id="sitePendingChangeBanner" class="pending-change-banner hidden">
+              <div><strong id="sitePendingChangeLabel">Scheduled change:</strong> <span id="sitePendingChangeSummary"></span></div>
+              <div class="pending-change-actions">
+                <button id="sitePendingChangeApplyNow" class="button secondary compact" type="button">Apply now</button>
+                <button id="sitePendingChangeCancel" class="button danger compact" type="button">Cancel</button>
+              </div>
+            </div>
           </section>
 					<section class="error-response-editor hidden" data-site-editor-panel="protection">
 						<div class="section-heading error-response-heading"><div><h3>Managed request protection</h3><p class="muted">Inspect requests with a versioned managed ruleset before they reach the origin.</p></div><span id="siteProtectionModeBadge" class="badge info">Monitor</span></div>

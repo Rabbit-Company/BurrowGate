@@ -16,6 +16,8 @@ Each stream contains:
 
 TCP and UDP use separate operating-system port namespaces, so one stream may enable both on the same numeric port. Two streams cannot claim the same protocol and incoming port. TCP stream ports also cannot conflict with BurrowGate's HTTP or HTTPS listener.
 
+Changing the incoming port, forward host/port, certificate, PROXY protocol mode, or a TCP/UDP toggle swaps the stream's listener. That can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. See [`SCHEDULED_CHANGES.md`](SCHEDULED_CHANGES.md).
+
 ## Client IP forwarding
 
 TCP and UDP upstream sockets normally see BurrowGate as their network peer. A stream can prepend the standard HAProxy PROXY protocol so a compatible upstream can recover the original client IP and port:

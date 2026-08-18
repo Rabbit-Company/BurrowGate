@@ -139,6 +139,11 @@ export const config = {
 		cleanupPauseMs: envNumber("BG_MAINTENANCE_CLEANUP_PAUSE_MS", 25, 0, 5_000),
 		cleanupTimeBudgetMs: envNumber("BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS", 5_000, 100, 60_000),
 	},
+	pendingChanges: {
+		pollIntervalSeconds: envNumber("BG_PENDING_CHANGE_POLL_INTERVAL_SECONDS", 15, 5, 300),
+		maxAttempts: envNumber("BG_PENDING_CHANGE_MAX_ATTEMPTS", 5, 1, 20),
+		retryBackoffSeconds: envNumber("BG_PENDING_CHANGE_RETRY_BACKOFF_SECONDS", 60, 5, 3_600),
+	},
 	firewallSync: {
 		enabled: envBoolean("BG_FIREWALL_SYNC_ENABLED", true),
 		intervalMs: envNumber("BG_FIREWALL_SYNC_INTERVAL_MS", 10_000, 1_000, 300_000),

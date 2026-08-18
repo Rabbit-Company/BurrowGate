@@ -53,7 +53,7 @@ Open **Sites**, edit a site, then use **TLS certificate -> Uploaded certificate*
 
 Activating or replacing a certificate starts a replacement HTTPS SNI listener with `SO_REUSEPORT` before the current listener is drained. The old listener stops accepting new connections only after the replacement has bound successfully. Existing requests are allowed to finish during the configured drain period, while long-lived connections are closed when the drain timeout expires. Two enabled sites may use the same hostname on different ports for plain HTTP development, but TLS cannot be enabled for both because SNI selects by hostname rather than port. BurrowGate rejects that ambiguous configuration.
 
-If a site already has a certificate, changing its public hostname is allowed only when the existing certificate covers the new hostname. Otherwise, remove or replace the certificate first.
+If a site already has a certificate, changing its public hostname is allowed only when the existing certificate covers the new hostname. Otherwise, remove or replace the certificate first. Since this rebuilds the HTTPS SNI listener, the hostname change can be scheduled for a chosen time instead of applying immediately - see [`SCHEDULED_CHANGES.md`](SCHEDULED_CHANGES.md). A site without a certificate is unaffected: its hostname is pure routing data and changes apply immediately.
 
 ## Let's Encrypt HTTP-01
 

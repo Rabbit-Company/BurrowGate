@@ -14,6 +14,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying
 - Managed request protection with monitor/block modes, per-route overrides, rule exclusions, and auditable outcomes
 - Native TCP and UDP stream proxying, including optional incoming TCP TLS termination
+- Scheduled application of listener-affecting Site and Stream changes (hostname, port, forward target, certificate, protocol mode), so an edit doesn't land in the middle of active connections
 - Per-site and per-route access policies
 - Fixed-window, sliding-window, and token-bucket rate limits
 - Safe bounded static-asset caching with per-site/route controls, metrics, and scoped purge
@@ -202,6 +203,7 @@ Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases)
 | `BG_MAINTENANCE_CLEANUP_BATCH_SIZE`       | `250`                                | Maximum rows removed by one cleanup write                                                  |
 | `BG_MAINTENANCE_CLEANUP_PAUSE_MS`         | `25`                                 | Event-loop pause between cleanup writes                                                    |
 | `BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS`   | `5000`                               | Maximum incremental-cleanup time per maintenance run                                       |
+| `BG_PENDING_CHANGE_POLL_INTERVAL_SECONDS` | `15`                                 | Interval between checks for due scheduled Site/Stream changes                              |
 | `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                      |
 | `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
 | `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP reader cache entries                                                         |
@@ -251,6 +253,8 @@ Each site contains:
 - HTTP request/response header policies and request-size limits, with route-level overrides
 
 The selected site is stored in the dashboard URL. Traffic, sessions, network rules, route policies, and actions are scoped to that site.
+
+Changing the public hostname of a site with an active certificate rebuilds the HTTPS listener; that can be scheduled for a chosen time instead of applying immediately. See [`docs/SCHEDULED_CHANGES.md`](docs/SCHEDULED_CHANGES.md).
 
 Editing a site exposes a permanent delete action protected by typed-name confirmation. Deletion removes the site's request and bandwidth history, sessions, access memberships and settings, challenges, route and network policies, origins, health history, notification events and deliveries, ACME challenges, TLS settings, certificate, and certificate events in one transaction. Global access users and ACME accounts are preserved because they may be shared. A site cannot be deleted while its certificate is assigned to a TCP Stream or while certificate issuance is active.
 
@@ -449,6 +453,8 @@ The dashboard provides live TCP connections and UDP peers, connect/disconnect an
 With the default `network_mode: host` Compose configuration, every stream port you create from the dashboard is immediately reachable on the host with no Compose changes or container restart. Firewall the host to only expose the ports you intend to publish.
 
 Selecting a certificate terminates incoming TCP TLS and forwards decrypted bytes. Leaving the certificate empty performs raw TCP forwarding and therefore supports TLS passthrough. TLS/DTLS termination is not available for UDP.
+
+Changing the incoming port, forward host/port, certificate, PROXY protocol mode, or a TCP/UDP toggle swaps the stream's listener; that can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. Every other stream setting still applies immediately. See [`docs/SCHEDULED_CHANGES.md`](docs/SCHEDULED_CHANGES.md).
 
 See [`docs/STREAMS.md`](docs/STREAMS.md).
 

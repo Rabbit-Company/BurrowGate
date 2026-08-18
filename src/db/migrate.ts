@@ -569,6 +569,20 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
   created_at BIGINT NOT NULL,
   delivered_at BIGINT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_changes (
+  id VARCHAR(64) PRIMARY KEY,
+  entity_type VARCHAR(16) NOT NULL,
+  entity_id VARCHAR(64) NOT NULL,
+  changes_json TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  apply_at BIGINT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  created_by VARCHAR(255) NULL,
+  created_at BIGINT NOT NULL,
+  applied_at BIGINT NULL
+);
 CREATE TABLE IF NOT EXISTS connectivity_ping_minutes (
   target VARCHAR(64) NOT NULL,
   bucket_start BIGINT NOT NULL,
@@ -701,6 +715,8 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_site_created ON notification_outbox (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_stream_created ON notification_outbox (stream_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_notification_outbox_event ON notification_outbox (event_id)",
+	"CREATE INDEX IF NOT EXISTS idx_pending_changes_due ON pending_changes (status, apply_at)",
+	"CREATE INDEX IF NOT EXISTS idx_pending_changes_entity ON pending_changes (entity_type, entity_id)",
 	"CREATE INDEX IF NOT EXISTS idx_site_origins_site_priority ON site_origins (site_id, enabled, priority)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_site_state ON origin_backend_health_status (site_id, state)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_backend_health_events_origin_created ON origin_backend_health_events (origin_id, created_at)",

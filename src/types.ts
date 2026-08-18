@@ -437,6 +437,24 @@ export interface StreamRecord {
 	updated_at: number;
 }
 
+export type PendingChangeEntityType = "site" | "stream";
+export type PendingChangeStatus = "pending" | "applied" | "failed";
+
+export interface PendingChangeRecord {
+	id: string;
+	entity_type: PendingChangeEntityType;
+	entity_id: string;
+	changes_json: string;
+	summary: string;
+	apply_at: number;
+	status: PendingChangeStatus;
+	attempts: number;
+	last_error: string | null;
+	created_by: string | null;
+	created_at: number;
+	applied_at: number | null;
+}
+
 export interface StreamEventRecord {
 	id: string;
 	stream_id: string;

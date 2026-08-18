@@ -1269,6 +1269,28 @@ form.grid label {
 	overflow-wrap: anywhere;
 	color: #99f6e4;
 }
+.pending-change-banner {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 12px 15px;
+	border: 1px solid #b45309;
+	border-radius: 12px;
+	background: #3a2508;
+	color: #fde68a;
+}
+.pending-change-banner.failed {
+	border-color: #9f1239;
+	background: #3f1118;
+	color: #fecdd3;
+}
+.pending-change-actions {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
+}
 .site-form-actions {
 	justify-content: flex-end;
 	padding-top: 2px;

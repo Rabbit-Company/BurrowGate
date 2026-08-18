@@ -4,6 +4,8 @@ import { repository } from "../db/repository.ts";
 import type { RateLimitAlgorithm, StreamProxyProtocol, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
+import { streamHealthManager } from "./stream-health-service.ts";
+import { streamProxyManager } from "./stream-proxy-service.ts";
 
 export interface StreamInput {
 	name?: unknown;
@@ -29,6 +31,26 @@ export interface StreamInput {
 	originHealthCheckTimeoutMs?: unknown;
 	originHealthCheckFailureThreshold?: unknown;
 	originHealthCheckRecoveryThreshold?: unknown;
+	effectiveAt?: unknown;
+}
+
+/** Fields that force StreamProxyManager to stop and recreate the TCP/UDP listener when changed. */
+export const STREAM_RESTART_FIELDS = [
+	"tcp_enabled",
+	"udp_enabled",
+	"incoming_port",
+	"forward_host",
+	"forward_port",
+	"certificate_id",
+	"proxy_protocol",
+] as const satisfies readonly (keyof StreamRecord)[];
+
+export function streamRestartDiffers(a: StreamRecord, b: StreamRecord): boolean {
+	return STREAM_RESTART_FIELDS.some((field) => a[field] !== b[field]);
+}
+
+export function pickStreamRestartFields(record: StreamRecord): Pick<StreamRecord, (typeof STREAM_RESTART_FIELDS)[number]> {
+	return Object.fromEntries(STREAM_RESTART_FIELDS.map((field) => [field, record[field]])) as Pick<StreamRecord, (typeof STREAM_RESTART_FIELDS)[number]>;
 }
 
 function requiredString(value: unknown, label: string, maximum: number): string {
@@ -252,4 +274,18 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		created_at: existing?.created_at ?? now,
 		updated_at: now,
 	};
+}
+
+export async function applyPendingStreamChange(streamId: string, changes: Record<string, unknown>): Promise<void> {
+	const live = await repository.streamById(streamId);
+	if (!live) return;
+	const merged: StreamRecord = { ...live, ...(changes as Partial<StreamRecord>), updated_at: Date.now() };
+	await repository.saveStream(merged);
+	try {
+		await streamProxyManager.apply(merged);
+	} catch (error) {
+		await repository.saveStream(live);
+		throw error;
+	}
+	await streamHealthManager.refresh(merged.id);
 }

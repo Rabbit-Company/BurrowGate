@@ -14,6 +14,7 @@ function bytesToMib(bytes) {
 }
 
 let streams = [];
+let streamPendingChanges = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
 let editingPermissionsUserId = null;
@@ -889,6 +890,79 @@ function statusFor(id) {
 	return statuses.find((status) => status.id === id) ?? { tcp: "disabled", udp: "disabled", error: null, activeTcpConnections: 0, activeUdpPeers: 0 };
 }
 
+function pendingChangeForStream(id) {
+	return streamPendingChanges.find((change) => change.entityId === id) ?? null;
+}
+
+function datetimeLocalToEpochMs(value) {
+	if (!value) return null;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function pendingChangeSummaryText(pending) {
+	if (pending.status === "failed") {
+		const reason = pending.lastError ? `: ${pending.lastError}` : "";
+		return `${pending.summary} - failed after ${pending.attempts} attempt${pending.attempts === 1 ? "" : "s"}${reason}`;
+	}
+	return `${pending.summary}, at ${formatDate(pending.applyAt)}`;
+}
+
+function pendingChangeBadge(pending) {
+	if (!pending) return "";
+	const failed = pending.status === "failed";
+	const label = failed ? "schedule failed" : `scheduled ${formatDate(pending.applyAt)}`;
+	return `<span class="badge ${failed ? "bad" : "warn"}" title="${escapeHtml(pendingChangeSummaryText(pending))}">${escapeHtml(label)}</span>`;
+}
+
+function renderStreamPendingChangeBanner(streamId) {
+	byId("streamPendingChangeEffectiveAt").value = "";
+	const pending = streamId ? pendingChangeForStream(streamId) : null;
+	const banner = byId("streamPendingChangeBanner");
+	banner.classList.toggle("hidden", !pending);
+	if (!pending) return;
+	const failed = pending.status === "failed";
+	banner.classList.toggle("failed", failed);
+	byId("streamPendingChangeLabel").textContent = failed ? "Scheduled change failed:" : "Scheduled change:";
+	byId("streamPendingChangeSummary").textContent = pendingChangeSummaryText(pending);
+	byId("streamPendingChangeApplyNow").textContent = failed ? "Retry now" : "Apply now";
+	byId("streamPendingChangeCancel").textContent = failed ? "Dismiss" : "Cancel";
+}
+
+async function applyStreamPendingChangeNow() {
+	const id = byId("streamId").value;
+	if (!id) return;
+	const button = byId("streamPendingChangeApplyNow");
+	button.disabled = true;
+	try {
+		await api(`/streams/${id}/pending-change/apply-now`, { method: "POST" });
+		await refreshDashboard();
+		editStream(id);
+		showToast("Scheduled change applied.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function cancelStreamPendingChange() {
+	const id = byId("streamId").value;
+	if (!id) return;
+	const button = byId("streamPendingChangeCancel");
+	button.disabled = true;
+	try {
+		await api(`/streams/${id}/pending-change`, { method: "DELETE" });
+		await refreshDashboard();
+		editStream(id);
+		showToast("Scheduled change cancelled.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
 function statusBadge(value) {
 	return `<span class="badge ${value === "active" ? "ok" : value === "error" ? "bad" : "info"}">${escapeHtml(value)}</span>`;
 }
@@ -1253,7 +1327,8 @@ function renderStreams() {
 			const deleteButton = isAdministrator
 				? `<button class="button danger compact" type="button" data-delete-stream="${escapeHtml(stream.id)}">Delete</button>`
 				: "";
-			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${escapeHtml(stream.name)}</strong></div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
+			const pendingBadge = pendingChangeBadge(pendingChangeForStream(stream.id));
+			return `<div class="site-list-item ${status.error ? "disabled" : ""}"><div class="site-list-title"><strong>${escapeHtml(stream.name)}</strong>${pendingBadge}</div><div class="site-list-meta"><code>${escapeHtml(stream.forwardHost)}:${stream.forwardPort}</code><span>Retention ${stream.eventRetentionDays}d</span></div><div class="stream-status-row">${stream.tcpEnabled ? `TCP ${statusBadge(status.tcp)}` : ""}${stream.udpEnabled ? `UDP ${statusBadge(status.udp)}` : ""}<span class="muted">${status.activeTcpConnections} TCP / ${status.activeUdpPeers} UDP active</span></div>${status.error ? `<p class="badge bad">${escapeHtml(status.error)}</p>` : ""}<div class="site-list-actions"><button class="button secondary compact" type="button" data-edit-stream="${escapeHtml(stream.id)}">Edit</button>${deleteButton}</div></div>`;
 		})
 		.join("");
 }
@@ -1261,6 +1336,7 @@ function renderStreams() {
 async function loadStreams() {
 	const result = await api("/streams");
 	streams = result.items;
+	streamPendingChanges = result.pendingChanges ?? [];
 	certificates = result.certificates;
 	statuses = result.statuses;
 	byId("udpPeerNotice").textContent = `UDP peers disconnect after ${result.defaults.udpPeerIdleTimeoutSeconds} seconds without a datagram.`;
@@ -2165,6 +2241,7 @@ function resetForm() {
 	byId("streamRateLimitRefillRate").value = "10";
 	byId("streamRateLimitRefillInterval").value = "1000";
 	byId("streamUdpAmplificationMaxRatio").value = "0";
+	renderStreamPendingChangeBanner(null);
 	updateProtocolControls();
 }
 
@@ -2194,6 +2271,7 @@ function editStream(id) {
 	byId("streamFormTitle").textContent = `Edit ${stream.name}`;
 	byId("saveStream").textContent = "Save";
 	byId("cancelStreamEdit").classList.remove("hidden");
+	renderStreamPendingChangeBanner(stream.id);
 	updateProtocolControls();
 }
 
@@ -2219,14 +2297,16 @@ async function saveStream(event) {
 		connectionRateLimitRefillRate: Number(byId("streamRateLimitRefillRate").value),
 		connectionRateLimitRefillIntervalMs: Number(byId("streamRateLimitRefillInterval").value),
 		udpAmplificationMaxRatio: Number(byId("streamUdpAmplificationMaxRatio").value),
+		effectiveAt: datetimeLocalToEpochMs(byId("streamPendingChangeEffectiveAt").value),
 	};
 	try {
-		await api(id ? `/streams/${id}` : "/streams", {
+		const result = await api(id ? `/streams/${id}` : "/streams", {
 			method: id ? "PUT" : "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(payload),
 		});
-		showToast(id ? "Stream updated" : "Stream created");
+		if (result.pendingChange) showToast(`Stream updated. ${result.pendingChange.summary}, scheduled for ${formatDate(result.pendingChange.applyAt)}.`);
+		else showToast(id ? "Stream updated" : "Stream created");
 		resetForm();
 		await refreshDashboard();
 		activeTab = "streams";
@@ -2395,6 +2475,8 @@ byId("streamForm").addEventListener("submit", saveStream);
 byId("newStream").addEventListener("click", resetForm);
 byId("resetStreamForm").addEventListener("click", resetForm);
 byId("cancelStreamEdit").addEventListener("click", resetForm);
+byId("streamPendingChangeApplyNow").addEventListener("click", applyStreamPendingChangeNow);
+byId("streamPendingChangeCancel").addEventListener("click", cancelStreamPendingChange);
 byId("streamsList").addEventListener("click", (event) => {
 	const edit = event.target.closest("[data-edit-stream]");
 	const remove = event.target.closest("[data-delete-stream]");

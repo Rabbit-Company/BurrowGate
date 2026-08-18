@@ -63,6 +63,13 @@ import {
 import { DEFAULT_CHALLENGE_HTML_TEMPLATE, CHALLENGE_TEMPLATE_PLACEHOLDERS } from "../services/challenge-page-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
 import {
+	applyPendingChangeNow,
+	cancelPendingChange,
+	pendingChangeView,
+	pendingChangesFor,
+	pendingOrFailedChangeFor,
+} from "../services/pending-change-service.ts";
+import {
 	accessListView,
 	createAccessUser,
 	generateSessionVerificationToken,
@@ -624,8 +631,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
+		const sites = await sitesVisibleToUser(user);
 		return jsonResponse({
-			items: (await sitesVisibleToUser(user)).map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
+			items: sites.map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
+			pendingChanges: (
+				await pendingChangesFor(
+					"site",
+					sites.map((site) => site.id),
+				)
+			).map(pendingChangeView),
 			challengeProviders: providerViews(),
 			defaultEventRetentionDays: config.eventRetentionDays,
 			websocketDefaults: instanceWebSocketDefaults(),
@@ -687,22 +701,75 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
 		try {
-			const site = await updateSite(ctx.params.id, await parseSiteInput(ctx.req));
+			const { site, pendingChange } = await updateSite(ctx.params.id, await parseSiteInput(ctx.req), user.username);
 			await loadBalancer.refreshSite(site.id);
 			await originHealthManager.refreshSite(site.id);
-			await requestTlsReload();
+			if (!pendingChange) await requestTlsReload();
 			await recordAdminAudit({
 				actor: user,
 				action: "site.update",
 				resourceType: "site",
 				resourceId: site.id,
-				summary: `Updated site ${site.name}`,
+				summary: pendingChange ? `Updated site ${site.name} (${pendingChange.summary}, scheduled)` : `Updated site ${site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ site: siteView(site) });
+			return jsonResponse({ site: siteView(site), pendingChange: pendingChange ? pendingChangeView(pendingChange) : null });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update site";
 			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/sites/:id/pending-change/apply-now", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
+		if (denied) return denied;
+		try {
+			const pending = await pendingOrFailedChangeFor("site", ctx.params.id);
+			if (!pending) return jsonResponse({ error: "No pending change for this site" }, 404);
+			await applyPendingChangeNow(pending.id);
+			const site = await repository.siteById(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "site.pending-change.apply-now",
+				resourceType: "site",
+				resourceId: ctx.params.id,
+				summary: `Applied scheduled change now: ${pending.summary}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ site: site ? siteView(site) : null });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to apply the pending change" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/sites/:id/pending-change", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
+		if (denied) return denied;
+		try {
+			const pending = await pendingOrFailedChangeFor("site", ctx.params.id);
+			if (!pending) return jsonResponse({ error: "No pending change for this site" }, 404);
+			await cancelPendingChange(pending.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "site.pending-change.cancel",
+				resourceType: "site",
+				resourceId: ctx.params.id,
+				summary: `Cancelled scheduled change: ${pending.summary}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to cancel the pending change" }, 400);
 		}
 	});
 

@@ -11,12 +11,15 @@ import type {
 	LoadBalancingAlgorithm,
 	IpExtractionPreset,
 	NotificationEventType,
+	PendingChangeRecord,
 	SiteAccessMode,
 	SiteRecord,
 } from "../types.ts";
 import { randomId, randomToken } from "../utils/crypto.ts";
 import { normalizeHost } from "../utils/http.ts";
 import { assertTlsHostnameAvailable, certificateCoversHostname, siteHostname } from "./certificate-service.ts";
+import { currentPendingChange, parseScheduleTime, stagePendingChange } from "./pending-change-service.ts";
+import { requestTlsReload } from "./tls-listener-service.ts";
 import {
 	DEFAULT_ERROR_HTML_TEMPLATE,
 	DEFAULT_ERROR_JSON_FIELDS,
@@ -53,6 +56,7 @@ export interface SiteInput {
 	ipExtractionPreset?: unknown;
 	websocket?: unknown;
 	http?: unknown;
+	effectiveAt?: unknown;
 }
 
 export interface SiteView {
@@ -460,7 +464,29 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 	return { site, generatedSigningSecret };
 }
 
-export async function updateSite(id: string, input: SiteInput): Promise<SiteRecord> {
+/** A hostname change only needs to defer the HTTPS listener rebuild when this site actually has a certificate serving it over HTTPS. */
+export function siteRestartRequired(existing: SiteRecord, updated: SiteRecord, hasCertificate: boolean): boolean {
+	return updated.public_host !== existing.public_host && config.https.enabled && hasCertificate;
+}
+
+async function syncPrimaryOrigin(siteId: string, record: SiteRecord): Promise<void> {
+	const primary = await repository.primaryOrigin(siteId);
+	if (!primary) return;
+	if (primary.origin_url !== record.origin_url || (primary.name.endsWith(" primary") && primary.name !== `${record.name} primary`)) {
+		await repository.updateOrigin({
+			...primary,
+			name: primary.name.endsWith(" primary") ? `${record.name} primary` : primary.name,
+			origin_url: record.origin_url,
+			updated_at: record.updated_at,
+		});
+	}
+}
+
+export async function updateSite(
+	id: string,
+	input: SiteInput,
+	createdBy: string | null = null,
+): Promise<{ site: SiteRecord; pendingChange: PendingChangeRecord | null }> {
 	const existing = await repository.siteById(id);
 	if (!existing) throw new Error("Site not found");
 	const publicHost = normalizePublicHost(input.publicHost ?? existing.public_host);
@@ -523,18 +549,50 @@ export async function updateSite(id: string, input: SiteInput): Promise<SiteReco
 	) {
 		throw new Error("The active certificate does not cover the new public hostname. Replace or remove the certificate before changing this hostname.");
 	}
+
+	const restartRequired = siteRestartRequired(existing, updated, Boolean(certificate));
+	const applyAt = parseScheduleTime(input.effectiveAt);
+
+	if (restartRequired && applyAt) {
+		const existingPending = await currentPendingChange("site", id);
+		if (existingPending) {
+			throw new Error(`A hostname change is already scheduled for ${new Date(existingPending.apply_at).toLocaleString()}. Cancel or apply it first.`);
+		}
+		const deferred: SiteRecord = { ...updated, public_host: existing.public_host };
+		await repository.updateSite(deferred);
+		staticAssetCache.purge({ siteId: id });
+		await syncPrimaryOrigin(id, deferred);
+		const pendingChange = await stagePendingChange(
+			"site",
+			id,
+			{ publicHost: updated.public_host },
+			`Public host: ${existing.public_host} -> ${updated.public_host}`,
+			applyAt,
+			createdBy,
+		);
+		return { site: deferred, pendingChange };
+	}
+
 	await repository.updateSite(updated);
 	staticAssetCache.purge({ siteId: id });
-	const primary = await repository.primaryOrigin(id);
-	if (primary && (primary.origin_url !== updated.origin_url || (primary.name.endsWith(" primary") && primary.name !== `${updated.name} primary`))) {
-		await repository.updateOrigin({
-			...primary,
-			name: primary.name.endsWith(" primary") ? `${updated.name} primary` : primary.name,
-			origin_url: updated.origin_url,
-			updated_at: updated.updated_at,
-		});
+	await syncPrimaryOrigin(id, updated);
+	return { site: updated, pendingChange: null };
+}
+
+export async function applyPendingSiteChange(siteId: string, changes: Record<string, unknown>): Promise<void> {
+	const existing = await repository.siteById(siteId);
+	if (!existing) return;
+	const publicHost = normalizePublicHost(changes.publicHost ?? existing.public_host);
+	const conflict = await repository.siteByPublicHost(publicHost);
+	if (conflict && conflict.id !== siteId) throw new Error("A site with this public host already exists");
+	const merged: SiteRecord = { ...existing, public_host: publicHost, updated_at: Date.now() };
+	const certificate = await repository.certificateBySite(siteId);
+	if (certificate?.certificate_pem && !certificateCoversHostname(certificate.certificate_pem, siteHostname(merged))) {
+		throw new Error("The active certificate no longer covers the new public hostname");
 	}
-	return updated;
+	await repository.updateSite(merged);
+	staticAssetCache.purge({ siteId });
+	await requestTlsReload();
 }
 
 export interface SiteNotificationPolicyView {

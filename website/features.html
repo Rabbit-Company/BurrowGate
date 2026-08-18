@@ -87,6 +87,9 @@
 								<li>SNI certificate selection for multiple domains on one listener</li>
 								<li>Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying</li>
 								<li>Signed <code>X-BurrowGate-*</code> origin verification headers (HMAC-SHA256)</li>
+								<li>
+									Hostname changes on a site with an active certificate can be scheduled for a chosen time instead of rebuilding the HTTPS listener immediately
+								</li>
 							</ul>
 						</div>
 
@@ -253,6 +256,7 @@
 								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
 								<li>Optional per-stream TCP origin health checks with a connect-latency graph and webhook notifications</li>
 								<li>Per-stream TCP/UDP bandwidth-threshold auto-bans, applied live without restarting the listener</li>
+								<li>Port, forward target, certificate, and protocol changes can be scheduled for a chosen time instead of swapping the listener immediately</li>
 							</ul>
 						</div>
 

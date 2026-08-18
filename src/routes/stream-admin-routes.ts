@@ -3,7 +3,17 @@ import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { repository } from "../db/repository.ts";
 import { config } from "../config.ts";
 import { getAdminSession } from "../services/session-service.ts";
-import { buildStream, streamView, type StreamInput } from "../services/stream-service.ts";
+import { buildStream, pickStreamRestartFields, streamRestartDiffers, streamView, type StreamInput } from "../services/stream-service.ts";
+import {
+	applyPendingChangeNow,
+	cancelPendingChange,
+	currentPendingChange,
+	parseScheduleTime,
+	pendingChangeView,
+	pendingChangesFor,
+	pendingOrFailedChangeFor,
+	stagePendingChange,
+} from "../services/pending-change-service.ts";
 import { streamHealthManager } from "../services/stream-health-service.ts";
 import { streamProxyManager } from "../services/stream-proxy-service.ts";
 import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts";
@@ -234,6 +244,18 @@ async function saveAndActivate(stream: StreamRecord, previous?: StreamRecord): P
 	await streamHealthManager.refresh(stream.id);
 }
 
+function summarizeStreamRestartChange(previous: StreamRecord, candidate: StreamRecord): string {
+	const parts: string[] = [];
+	if (previous.tcp_enabled !== candidate.tcp_enabled) parts.push(`TCP ${candidate.tcp_enabled === 1 ? "enabled" : "disabled"}`);
+	if (previous.udp_enabled !== candidate.udp_enabled) parts.push(`UDP ${candidate.udp_enabled === 1 ? "enabled" : "disabled"}`);
+	if (previous.incoming_port !== candidate.incoming_port) parts.push(`Incoming port: ${previous.incoming_port} -> ${candidate.incoming_port}`);
+	if (previous.forward_host !== candidate.forward_host) parts.push(`Forward host: ${previous.forward_host} -> ${candidate.forward_host}`);
+	if (previous.forward_port !== candidate.forward_port) parts.push(`Forward port: ${previous.forward_port} -> ${candidate.forward_port}`);
+	if (previous.certificate_id !== candidate.certificate_id) parts.push("Certificate changed");
+	if (previous.proxy_protocol !== candidate.proxy_protocol) parts.push(`PROXY protocol: ${previous.proxy_protocol} -> ${candidate.proxy_protocol}`);
+	return parts.join(", ") || "Listener configuration changed";
+}
+
 function mutationError(error: unknown, fallback: string): Response {
 	const raw = error instanceof Error ? error.message : fallback;
 	const message = /unique|duplicate|constraint/iu.test(raw) ? "That protocol and incoming port are already assigned to another stream" : raw;
@@ -254,8 +276,15 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
+		const streams = await streamsVisibleToUser(user);
 		return jsonResponse({
-			items: (await streamsVisibleToUser(user)).map(streamView),
+			items: streams.map(streamView),
+			pendingChanges: (
+				await pendingChangesFor(
+					"stream",
+					streams.map((stream) => stream.id),
+				)
+			).map(pendingChangeView),
 			certificates: (await repository.streamCertificateOptions()).map(certificateView),
 			statuses: streamProxyManager.statusesView(),
 			defaults: {
@@ -301,20 +330,106 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const denied = requireLevel(await streamAccessLevel(user, previous.id), "manage");
 		if (denied) return denied;
 		try {
-			const stream = await buildStream(await body(ctx.req), previous);
-			await saveAndActivate(stream, previous);
-			invalidateStreamRateLimiter(stream.id);
+			const payload = await body(ctx.req);
+			const candidate = await buildStream(payload, previous);
+			const restartRequired = streamRestartDiffers(previous, candidate);
+			const applyAt = parseScheduleTime((payload as StreamInput).effectiveAt);
+			if (restartRequired && applyAt) {
+				const existingPending = await currentPendingChange("stream", previous.id);
+				if (existingPending) {
+					throw new Error(`A change is already scheduled for ${new Date(existingPending.apply_at).toLocaleString()}. Cancel or apply it first.`);
+				}
+				const immediate: StreamRecord = { ...candidate, ...pickStreamRestartFields(previous) };
+				await saveAndActivate(immediate, previous);
+				invalidateStreamRateLimiter(immediate.id);
+				const pendingChange = await stagePendingChange(
+					"stream",
+					previous.id,
+					pickStreamRestartFields(candidate),
+					summarizeStreamRestartChange(previous, candidate),
+					applyAt,
+					user.username,
+				);
+				await recordAdminAudit({
+					actor: user,
+					action: "stream.update",
+					resourceType: "stream",
+					resourceId: immediate.id,
+					summary: `Updated stream ${immediate.name} (${pendingChange.summary}, scheduled)`,
+					ip: getClientIp(ctx) ?? "unknown",
+				});
+				return jsonResponse({
+					stream: streamView(immediate),
+					pendingChange: pendingChangeView(pendingChange),
+					statuses: streamProxyManager.statusesView(),
+				});
+			}
+			await saveAndActivate(candidate, previous);
+			invalidateStreamRateLimiter(candidate.id);
 			await recordAdminAudit({
 				actor: user,
 				action: "stream.update",
 				resourceType: "stream",
-				resourceId: stream.id,
-				summary: `Updated stream ${stream.name} (port ${stream.incoming_port})`,
+				resourceId: candidate.id,
+				summary: `Updated stream ${candidate.name} (port ${candidate.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() });
+			return jsonResponse({ stream: streamView(candidate), pendingChange: null, statuses: streamProxyManager.statusesView() });
 		} catch (error) {
 			return mutationError(error, "Unable to update stream");
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/streams/:id/pending-change/apply-now", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await streamAccessLevel(user, ctx.params.id), "manage");
+		if (denied) return denied;
+		try {
+			const pending = await pendingOrFailedChangeFor("stream", ctx.params.id);
+			if (!pending) return jsonResponse({ error: "No pending change for this stream" }, 404);
+			await applyPendingChangeNow(pending.id);
+			const stream = await repository.streamById(ctx.params.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream.pending-change.apply-now",
+				resourceType: "stream",
+				resourceId: ctx.params.id,
+				summary: `Applied scheduled change now: ${pending.summary}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ stream: stream ? streamView(stream) : null, statuses: streamProxyManager.statusesView() });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to apply the pending change" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/streams/:id/pending-change", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const denied = requireLevel(await streamAccessLevel(user, ctx.params.id), "manage");
+		if (denied) return denied;
+		try {
+			const pending = await pendingOrFailedChangeFor("stream", ctx.params.id);
+			if (!pending) return jsonResponse({ error: "No pending change for this stream" }, 404);
+			await cancelPendingChange(pending.id);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream.pending-change.cancel",
+				resourceType: "stream",
+				resourceId: ctx.params.id,
+				summary: `Cancelled scheduled change: ${pending.summary}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ ok: true });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to cancel the pending change" }, 400);
 		}
 	});
 
