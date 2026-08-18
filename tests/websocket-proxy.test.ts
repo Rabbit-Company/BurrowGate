@@ -157,7 +157,8 @@ describe("WebSocket reverse proxy", () => {
 		expect(headers.get("cookie")).toContain(`bg_identity_signature=${await hmacSha256Hex(site.origin_signing_secret, cookieCanonical)}`);
 		expect(headers.get("x-burrowgate-authenticated-user")).toBe("ziga");
 		const timestamp = headers.get("x-burrowgate-timestamp")!;
-		const canonical = ["GET", "/ws?room=1", accessSession.id, "203.0.113.8", timestamp, "ziga"].join("\n");
+		expect(headers.get("x-burrowgate-country")).toBe("ZZ");
+		const canonical = ["GET", "/ws?room=1", accessSession.id, "203.0.113.8", "ZZ", timestamp, "ziga"].join("\n");
 		expect(headers.get("x-burrowgate-identity-signature")).toBe(await hmacSha256Hex(site.origin_signing_secret, canonical));
 	});
 

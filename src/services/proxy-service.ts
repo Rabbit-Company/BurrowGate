@@ -6,6 +6,7 @@ import { removeCookieFromHeader, setCookieInHeader } from "../utils/cookies.ts";
 import { hmacSha256Hex } from "../utils/crypto.ts";
 import { copyProxyHeaders, requestHost } from "../utils/http.ts";
 import { resolveRequestId, siteErrorResponse } from "./error-response-service.ts";
+import { UNKNOWN_COUNTRY_CODE } from "./geoip-service.ts";
 import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-list-service.ts";
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
 import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
@@ -57,6 +58,7 @@ export async function upstreamHeaders(
 	transport?: RequestTransport,
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
+	countryCode: string | null = null,
 ): Promise<Headers> {
 	const headers = copyProxyHeaders(request.headers);
 
@@ -113,16 +115,18 @@ export async function upstreamHeaders(
 
 	const timestamp = Math.floor(Date.now() / 1_000).toString();
 	const sessionId = session?.id ?? accessStatus;
-	const canonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, timestamp].join("\n");
+	const country = countryCode ?? UNKNOWN_COUNTRY_CODE;
+	const canonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, country, timestamp].join("\n");
 
 	headers.set("x-burrowgate-verified", accessStatus === "bypass" ? "false" : "true");
 	headers.set("x-burrowgate-access-mode", accessStatus);
 	headers.set("x-burrowgate-session-id", sessionId);
 	headers.set("x-burrowgate-client-ip", ip);
+	headers.set("x-burrowgate-country", country);
 	headers.set("x-burrowgate-timestamp", timestamp);
 	headers.set("x-burrowgate-signature", await hmacSha256Hex(site.origin_signing_secret, canonical));
 	if (sendUsernameToUpstream && authenticatedUsername) {
-		const identityCanonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, timestamp, authenticatedUsername].join("\n");
+		const identityCanonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, country, timestamp, authenticatedUsername].join("\n");
 		headers.set("x-burrowgate-authenticated-user", authenticatedUsername);
 		headers.set("x-burrowgate-identity-signature", await hmacSha256Hex(site.origin_signing_secret, identityCanonical));
 	}
@@ -267,7 +271,7 @@ export async function proxyRequest(
 	const incoming = new URL(request.url);
 	const transport = requestTransport(request);
 	const target = upstreamUrlForOrigin(originUrl, request);
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
+	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream, countryCode);
 	applyHeaderPolicy(headers, httpPolicy.requestHeaders);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
 	const bodyCaptureActive = isBodyCaptureActive(httpPolicy.bodyCapture);

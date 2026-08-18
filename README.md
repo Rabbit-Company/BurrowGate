@@ -500,9 +500,12 @@ X-BurrowGate-Verified: true
 X-BurrowGate-Access-Mode: verified
 X-BurrowGate-Session-Id: sess_...
 X-BurrowGate-Client-Ip: 203.0.113.10
+X-BurrowGate-Country: US
 X-BurrowGate-Timestamp: 1785681000
 X-BurrowGate-Signature: <HMAC-SHA256>
 ```
+
+`X-BurrowGate-Country` is `XX` for private/local addresses and `ZZ` when GeoIP is disabled or the country cannot be resolved.
 
 Origins should reject direct public traffic. Use a private network, firewall allowlist, WireGuard, or mutual TLS so requests cannot bypass BurrowGate.
 
@@ -516,6 +519,7 @@ The dashboard includes:
 - route-policy outcomes and configuration totals
 - challenge-gated access lists with reusable users and signed upstream identity
 - cross-site request and latency comparison
+- an "All websites"/"All streams" option in the site and Stream selectors, combining statistics, graphs, and tables across every site or Stream a user can access
 - interactive country map for requests and newly created sessions
 - server-side pagination, search, filters, and sorting
 - exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions

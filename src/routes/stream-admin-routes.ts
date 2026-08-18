@@ -118,7 +118,7 @@ async function streamsVisibleToUser(user: AuthenticatedAdmin): Promise<StreamRec
 
 async function selectedStream(url: URL, user: AuthenticatedAdmin): Promise<{ stream: StreamRecord | null; error: Response | null }> {
 	const requestedId = stringParam(url, "streamId");
-	if (!requestedId) return { stream: (await streamsVisibleToUser(user))[0] ?? null, error: null };
+	if (!requestedId) return { stream: null, error: null };
 	const stream = await repository.streamById(requestedId);
 	if (!stream) return { stream: null, error: jsonResponse({ error: "Selected stream was not found" }, 404) };
 	if ((await streamAccessLevel(user, stream.id)) === "none") return { stream: null, error: jsonResponse({ error: "Forbidden" }, 403) };
@@ -127,9 +127,17 @@ async function selectedStream(url: URL, user: AuthenticatedAdmin): Promise<{ str
 
 const NO_ACCESS_STREAM_ID = "__no-accessible-stream__";
 
-function streamsScopeId(selection: { stream: StreamRecord | null }, user: AuthenticatedAdmin): string | undefined {
+async function scopeStreamIds(user: AuthenticatedAdmin): Promise<string[] | undefined> {
+	if (isAdministrator(user)) return undefined;
+	const streams = await streamsVisibleToUser(user);
+	return streams.map((stream) => stream.id);
+}
+
+async function streamsScopeId(selection: { stream: StreamRecord | null }, user: AuthenticatedAdmin): Promise<string | string[] | undefined> {
 	if (selection.stream) return selection.stream.id;
-	return isAdministrator(user) ? undefined : NO_ACCESS_STREAM_ID;
+	const ids = await scopeStreamIds(user);
+	if (ids === undefined) return undefined;
+	return ids.length > 0 ? ids : NO_ACCESS_STREAM_ID;
 }
 
 function parseStreamDefaultNetworkAction(value: unknown, fallback: StreamDefaultNetworkAction): StreamDefaultNetworkAction {
@@ -481,7 +489,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const visibleStreamIds = isAdministrator(user) ? null : new Set((await streamsVisibleToUser(user)).map((stream) => stream.id));
 		const selectedRange = range(url);
 		return jsonResponse({
@@ -501,7 +509,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const durationMs = selectedRange.until - selectedRange.since;
 		const bucketMs = metricBucketSize(durationMs);
@@ -532,7 +540,10 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			latestPoint.connected += streamProxyManager
 				.activeConnections()
 				.filter((connection) => now - connection.connectedAt >= STREAM_LONG_LIVED_MIN_DURATION_MS)
-				.filter((connection) => !scopeStreamId || connection.streamId === scopeStreamId).length;
+				.filter(
+					(connection) =>
+						!scopeStreamId || (Array.isArray(scopeStreamId) ? scopeStreamId.includes(connection.streamId) : connection.streamId === scopeStreamId),
+				).length;
 		}
 		return jsonResponse({
 			...(await repository.streamMetrics(scopeStreamId, selectedRange.since, selectedRange.until, bucketMs)),
@@ -557,7 +568,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (scope !== "blocked") return jsonResponse({ error: "Invalid scope" }, 400);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const ips = await repository.streamTabIpMetrics(scopeStreamId, selectedRange.since, selectedRange.until, scope);
 		return jsonResponse({
@@ -575,7 +586,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const ips = await repository.streamTabBandwidthIpMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
 		return jsonResponse({
@@ -593,7 +604,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const errors = await repository.streamErrorReasonMetrics(scopeStreamId, selectedRange.since, selectedRange.until);
 		return jsonResponse({
@@ -612,7 +623,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		return jsonResponse(
 			await repository.pagedStreamEvents({
@@ -638,7 +649,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
-		const scopeStreamId = streamsScopeId(selection, user);
+		const scopeStreamId = await streamsScopeId(selection, user);
 		return jsonResponse(
 			await repository.pagedStreamBandwidth({
 				streamId: scopeStreamId,

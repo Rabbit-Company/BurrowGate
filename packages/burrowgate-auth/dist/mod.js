@@ -286,6 +286,95 @@ export class BurrowGateClient {
         return session;
     }
 }
+const ORIGIN_HEADER_SESSION_ID = "x-burrowgate-session-id";
+const ORIGIN_HEADER_CLIENT_IP = "x-burrowgate-client-ip";
+const ORIGIN_HEADER_COUNTRY = "x-burrowgate-country";
+const ORIGIN_HEADER_TIMESTAMP = "x-burrowgate-timestamp";
+const ORIGIN_HEADER_SIGNATURE = "x-burrowgate-signature";
+const ORIGIN_HEADER_VERIFIED = "x-burrowgate-verified";
+const ORIGIN_HEADER_ACCESS_MODE = "x-burrowgate-access-mode";
+const ORIGIN_HEADER_AUTHENTICATED_USER = "x-burrowgate-authenticated-user";
+const ORIGIN_HEADER_IDENTITY_SIGNATURE = "x-burrowgate-identity-signature";
+const textEncoder = new TextEncoder();
+/** Decodes a lowercase hex string into bytes, or `null` when it is not valid hex. */
+function hexToBytes(hex) {
+    if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/iu.test(hex))
+        return null;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++)
+        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return bytes;
+}
+/** Verifies an HMAC-SHA256 hex signature against `secret` and `value`.  */
+async function verifyHmacSha256Hex(secret, value, signatureHex) {
+    const signatureBytes = hexToBytes(signatureHex);
+    if (!signatureBytes)
+        return false;
+    const key = await crypto.subtle.importKey("raw", textEncoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    return await crypto.subtle.verify("HMAC", key, signatureBytes, textEncoder.encode(value));
+}
+/**
+ * Verifies that a request actually passed through BurrowGate and was not
+ * forged or tampered with by a client that reached the origin directly,
+ * using only the site's `origin_signing_secret` (no network call).
+ *
+ * Call this as the first thing in the request handler, before reading the
+ * request body. `X-BurrowGate-Timestamp` is stamped when BurrowGate signs the
+ * outgoing request, before the body is forwarded, so a large or slow upload
+ * does not affect the freshness check - but only if verification happens
+ * before the body is consumed. Verifying after buffering a large upload would
+ * measure upload time against `maxAgeSeconds` and could fail spuriously.
+ *
+ * @param request Incoming request as received by the origin.
+ * @param originSigningSecret The protected site's origin signing secret (same value shown in BurrowGate's site editor).
+ * @returns A discriminated result: check `result.valid` before trusting any field.
+ * @throws {@link TypeError} for an empty `originSigningSecret` or an invalid `maxAgeSeconds`.
+ */
+export async function verifyOriginRequest(request, originSigningSecret, options = {}) {
+    const secret = required(originSigningSecret, "originSigningSecret");
+    const maxAgeSeconds = options.maxAgeSeconds ?? 60;
+    if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds < 0)
+        throw new TypeError("maxAgeSeconds must be zero or a positive number");
+    const sessionId = request.headers.get(ORIGIN_HEADER_SESSION_ID);
+    const clientIp = request.headers.get(ORIGIN_HEADER_CLIENT_IP);
+    const country = request.headers.get(ORIGIN_HEADER_COUNTRY);
+    const timestampHeader = request.headers.get(ORIGIN_HEADER_TIMESTAMP);
+    const signature = request.headers.get(ORIGIN_HEADER_SIGNATURE);
+    if (!sessionId || !clientIp || !country || !timestampHeader || !signature)
+        return { valid: false, reason: "missing-headers" };
+    const timestamp = Number(timestampHeader);
+    if (!Number.isInteger(timestamp))
+        return { valid: false, reason: "missing-headers" };
+    if (maxAgeSeconds > 0 && Math.abs(Math.floor(Date.now() / 1_000) - timestamp) > maxAgeSeconds) {
+        return { valid: false, reason: "stale-timestamp" };
+    }
+    const url = new URL(request.url);
+    const pathAndQuery = url.pathname + url.search;
+    const canonical = [request.method, pathAndQuery, sessionId, clientIp, country, timestampHeader].join("\n");
+    if (!(await verifyHmacSha256Hex(secret, canonical, signature)))
+        return { valid: false, reason: "invalid-signature" };
+    const authenticatedUserHeader = request.headers.get(ORIGIN_HEADER_AUTHENTICATED_USER);
+    const identitySignature = request.headers.get(ORIGIN_HEADER_IDENTITY_SIGNATURE);
+    let authenticatedUser = null;
+    if (authenticatedUserHeader || identitySignature) {
+        if (!authenticatedUserHeader || !identitySignature)
+            return { valid: false, reason: "invalid-identity-signature" };
+        const identityCanonical = [request.method, pathAndQuery, sessionId, clientIp, country, timestampHeader, authenticatedUserHeader].join("\n");
+        if (!(await verifyHmacSha256Hex(secret, identityCanonical, identitySignature)))
+            return { valid: false, reason: "invalid-identity-signature" };
+        authenticatedUser = authenticatedUserHeader;
+    }
+    return {
+        valid: true,
+        sessionId,
+        clientIp,
+        country,
+        timestamp,
+        accessMode: request.headers.get(ORIGIN_HEADER_ACCESS_MODE),
+        verified: request.headers.get(ORIGIN_HEADER_VERIFIED) === "true",
+        authenticatedUser,
+    };
+}
 /**
  * Mints a new short-lived assertion for the current authenticated browser
  * session by calling `POST /_burrowgate/access/session-token`.

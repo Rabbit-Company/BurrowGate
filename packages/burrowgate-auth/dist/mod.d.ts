@@ -190,6 +190,72 @@ export declare class BurrowGateClient {
      */
     requireSession(request: Request, headerName?: string): Promise<BurrowGateSession>;
 }
+/** Reason a call to {@link verifyOriginRequest} did not produce a trusted result. */
+export type OriginVerificationFailureReason = 
+/** One or more required `X-BurrowGate-*` headers were absent, so the request did not come through BurrowGate. */
+"missing-headers"
+/** `X-BurrowGate-Timestamp` is further from the current time than `maxAgeSeconds` allows. */
+ | "stale-timestamp"
+/** `X-BurrowGate-Signature` does not match the recomputed HMAC for this secret. */
+ | "invalid-signature"
+/** `X-BurrowGate-Authenticated-User` was present without a matching, valid `X-BurrowGate-Identity-Signature` (or vice versa). */
+ | "invalid-identity-signature";
+/** Result of a failed {@link verifyOriginRequest} call. */
+export interface OriginVerificationFailure {
+    /** Always `false`. Treat the request as not having come through BurrowGate. */
+    valid: false;
+    /** Why verification failed. */
+    reason: OriginVerificationFailureReason;
+}
+/** Result of a successful {@link verifyOriginRequest} call. */
+export interface OriginVerifiedRequest {
+    /** Always `true`. */
+    valid: true;
+    /** Opaque BurrowGate session ID, or the access mode (e.g. `allowlisted`) when no session exists. Cryptographically bound to the signature. */
+    sessionId: string;
+    /** Client IP BurrowGate observed for this request. Cryptographically bound to the signature. */
+    clientIp: string;
+    /** ISO 3166-1 country code, `XX` for a private/local address, or `ZZ` when unresolved. Cryptographically bound to the signature. */
+    country: string;
+    /** Unix timestamp in seconds at which BurrowGate signed this request. */
+    timestamp: number;
+    /** BurrowGate's origin access mode for this request (`verified`, `allowlisted`, or `bypass`). Not itself covered by the signature; informational only. */
+    accessMode: string | null;
+    /** Whether BurrowGate considers this request authenticated. Not itself covered by the signature; informational only. */
+    verified: boolean;
+    /** Authenticated access-list username, verified against `X-BurrowGate-Identity-Signature`. `null` when identity forwarding is not enabled for this request. */
+    authenticatedUser: string | null;
+}
+/** Result of {@link verifyOriginRequest}: a discriminated union on `valid`. */
+export type OriginVerificationResult = OriginVerifiedRequest | OriginVerificationFailure;
+/** Options for {@link verifyOriginRequest}. */
+export interface VerifyOriginRequestOptions {
+    /**
+     * Maximum allowed difference, in seconds, between `X-BurrowGate-Timestamp`
+     * and the current time. Defaults to 60. Set to 0 to disable the freshness
+     * check entirely (not recommended: without it, a captured request can be
+     * replayed indefinitely).
+     */
+    maxAgeSeconds?: number;
+}
+/**
+ * Verifies that a request actually passed through BurrowGate and was not
+ * forged or tampered with by a client that reached the origin directly,
+ * using only the site's `origin_signing_secret` (no network call).
+ *
+ * Call this as the first thing in the request handler, before reading the
+ * request body. `X-BurrowGate-Timestamp` is stamped when BurrowGate signs the
+ * outgoing request, before the body is forwarded, so a large or slow upload
+ * does not affect the freshness check - but only if verification happens
+ * before the body is consumed. Verifying after buffering a large upload would
+ * measure upload time against `maxAgeSeconds` and could fail spuriously.
+ *
+ * @param request Incoming request as received by the origin.
+ * @param originSigningSecret The protected site's origin signing secret (same value shown in BurrowGate's site editor).
+ * @returns A discriminated result: check `result.valid` before trusting any field.
+ * @throws {@link TypeError} for an empty `originSigningSecret` or an invalid `maxAgeSeconds`.
+ */
+export declare function verifyOriginRequest(request: Request, originSigningSecret: string, options?: VerifyOriginRequestOptions): Promise<OriginVerificationResult>;
 /**
  * Mints a new short-lived assertion for the current authenticated browser
  * session by calling `POST /_burrowgate/access/session-token`.

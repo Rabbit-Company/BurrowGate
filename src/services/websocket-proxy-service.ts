@@ -90,8 +90,9 @@ export async function websocketUpstreamHeaders(
 	transport?: RequestTransport,
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
+	countryCode: string | null = null,
 ): Promise<Headers> {
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream);
+	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream, countryCode);
 
 	// Bun creates a fresh upstream WebSocket handshake. Never reuse key/version
 	// or compression negotiation from the downstream handshake. Compression is
@@ -640,6 +641,7 @@ export async function handleWebSocketUpgrade(
 			transport,
 			accessUser?.username ?? null,
 			accessSettings.send_username_to_upstream === 1,
+			eventBase.countryCode ?? null,
 		);
 		let upstream: WebSocket;
 		try {

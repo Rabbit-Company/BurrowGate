@@ -70,7 +70,7 @@ export interface PageResult<T> {
 }
 
 export interface EventQuery {
-	siteId?: string;
+	siteId?: string | string[];
 	originId?: string;
 	page: number;
 	pageSize: number;
@@ -88,7 +88,7 @@ export interface EventQuery {
 }
 
 export interface SessionQuery {
-	siteId?: string;
+	siteId?: string | string[];
 	page: number;
 	pageSize: number;
 	search?: string;
@@ -159,7 +159,7 @@ export interface StreamNotificationQuery {
 }
 
 export interface BandwidthIpQuery {
-	siteId: string;
+	siteId: string | string[] | undefined;
 	page: number;
 	pageSize: number;
 	search?: string;
@@ -191,7 +191,7 @@ export interface BandwidthIpRow {
 }
 
 export interface StreamEventQuery {
-	streamId?: string;
+	streamId?: string | string[];
 	page: number;
 	pageSize: number;
 	search?: string;
@@ -216,7 +216,7 @@ export interface StreamEventQuery {
 }
 
 export interface StreamBandwidthQuery {
-	streamId?: string;
+	streamId?: string | string[];
 	page: number;
 	pageSize: number;
 	search?: string;
@@ -389,6 +389,12 @@ function siteScopeFilter(siteScope: string | string[] | undefined) {
 	return db`AND site_id=${siteScope}`;
 }
 
+function streamScopeFilter(streamScope: string | string[] | undefined) {
+	if (streamScope === undefined) return db``;
+	if (Array.isArray(streamScope)) return db`AND stream_id IN ${db(streamScope)}`;
+	return db`AND stream_id=${streamScope}`;
+}
+
 function tabScopeFilter(scope: Exclude<TabMetricsScope, "bandwidth" | "sessions">) {
 	switch (scope) {
 		case "blocked":
@@ -421,7 +427,7 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async allSites(): Promise<SiteRecord[]> {
-		return (await db`SELECT * FROM sites ORDER BY enabled DESC, name ASC`) as SiteRecord[];
+		return (await db`SELECT * FROM sites ORDER BY name ASC`) as SiteRecord[];
 	},
 	async insertSite(site: SiteRecord): Promise<void> {
 		await db`INSERT INTO sites (id,name,public_host,origin_url,origin_signing_secret,ip_extraction_preset,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,websocket_policy_json,http_policy_json,created_at,updated_at)
@@ -693,7 +699,7 @@ export const repository = {
 			timeout_count = origin_latency_minutes.timeout_count + excluded.timeout_count`;
 	},
 	async originLatencyMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -708,7 +714,7 @@ export const repository = {
 			timeoutPct: number;
 		}>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const bucket = metricBucketExpression("bucket_start", bucketMs);
 		const rows = (await db`
@@ -928,7 +934,8 @@ export const repository = {
 		const pattern = searchPattern(query.search);
 		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const now = Date.now();
-		const siteFilter = query.siteId ? db`AND s.site_id=${query.siteId}` : db``;
+		const siteFilter =
+			query.siteId === undefined ? db`` : Array.isArray(query.siteId) ? db`AND s.site_id IN ${db(query.siteId)}` : db`AND s.site_id=${query.siteId}`;
 		const searchFilter = pattern
 			? db`AND (s.id=${exactSearch} OR s.user_agent_hash=${exactSearch} OR LOWER(s.initial_ip) LIKE ${pattern} OR LOWER(s.last_ip) LIKE ${pattern} OR LOWER(COALESCE(au.username,'')) LIKE ${pattern})`
 			: db``;
@@ -1299,7 +1306,7 @@ export const repository = {
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
 		const pattern = searchPattern(query.search);
 		const exactSearch = query.search?.trim().toLowerCase() || null;
-		const siteFilter = query.siteId ? db`AND site_id=${query.siteId}` : db``;
+		const siteFilter = siteScopeFilter(query.siteId);
 		const searchFilter = pattern
 			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(access_username,'')) LIKE ${pattern} OR LOWER(COALESCE(referer_host,'')) LIKE ${pattern} OR session_id=${exactSearch})`
 			: db``;
@@ -1349,7 +1356,7 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async trafficMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -1358,7 +1365,7 @@ export const repository = {
 		decisions: Array<{ decision: string; count: number }>;
 		methods: Array<{ method: string; count: number }>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const bucketExpression =
 			config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://")
 				? db`FLOOR(created_at / ${bucketMs})`
@@ -1408,7 +1415,7 @@ export const repository = {
 		};
 	},
 	async cacheMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -1417,7 +1424,7 @@ export const repository = {
 		totals: { hits: number; misses: number; bypasses: number; hitRatio: number; originRequestsAvoided: number };
 		topPaths: Array<{ path: string; hits: number; misses: number; bypasses: number; hitRatio: number }>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const bucketExpression = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT
@@ -1488,7 +1495,7 @@ export const repository = {
 		};
 	},
 	async protectionMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -1497,7 +1504,7 @@ export const repository = {
 		totals: { inspected: number; clean: number; monitored: number; blocked: number };
 		topRules: Array<{ ruleId: string; category: string; severity: string; monitored: number; blocked: number; count: number }>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const bucket = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT ${bucket} * ${bucketMs} AS bucket,
@@ -1559,7 +1566,7 @@ export const repository = {
 		};
 	},
 	async bandwidthMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -1567,7 +1574,7 @@ export const repository = {
 		series: Array<{ bucket: number; clientUpload: number; clientDownload: number; upstreamUpload: number; upstreamDownload: number }>;
 		protocols: Array<{ protocol: string; clientBytes: number; upstreamBytes: number }>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const bucket = metricBucketExpression("bucket_start", bucketMs);
 		const rows = (await db`
@@ -1624,6 +1631,7 @@ export const repository = {
 	async pagedBandwidthIps(query: BandwidthIpQuery): Promise<PageResult<BandwidthIpRow>> {
 		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
 		const pattern = searchPattern(query.search);
+		const siteFilter = siteScopeFilter(query.siteId);
 		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
@@ -1633,8 +1641,8 @@ export const repository = {
       SELECT COUNT(*) AS count FROM (
         SELECT ip, country_code
         FROM bandwidth_minutes
-        WHERE site_id=${query.siteId} AND bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
-          AND ip <> '__other__' ${searchFilter} ${countryFilter} ${protocolFilter}
+        WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
+          AND ip <> '__other__' ${siteFilter} ${searchFilter} ${countryFilter} ${protocolFilter}
         GROUP BY ip, country_code
       ) AS bandwidth_ips
     `) as Array<{ count: number | string }>;
@@ -1647,8 +1655,8 @@ export const repository = {
         COALESCE(SUM(client_received_bytes + client_sent_bytes),0) AS client_total_bytes,
         COALESCE(SUM(upstream_sent_bytes + upstream_received_bytes),0) AS upstream_total_bytes
       FROM bandwidth_minutes
-      WHERE site_id=${query.siteId} AND bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
-        AND ip <> '__other__' ${searchFilter} ${countryFilter} ${protocolFilter}
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${query.until}
+        AND ip <> '__other__' ${siteFilter} ${searchFilter} ${countryFilter} ${protocolFilter}
       GROUP BY ip, country_code
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
@@ -1656,7 +1664,7 @@ export const repository = {
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async sessionMetrics(
-		siteId: string | undefined,
+		siteId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -1664,7 +1672,7 @@ export const repository = {
 		series: Array<{ bucket: number; created: number; expired: number; revoked: number; active: number }>;
 		states: Array<{ label: string; count: number }>;
 	}> {
-		const siteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const siteFilter = siteScopeFilter(siteId);
 		const createdBucket = metricBucketExpression("created_at", bucketMs);
 		const expiredBucket = metricBucketExpression("expires_at", bucketMs);
 		const revokedBucket = metricBucketExpression("revoked_at", bucketMs);
@@ -2008,12 +2016,12 @@ export const repository = {
 			disabledSites: siteRows.filter((site) => site.enabled !== 1).length,
 		};
 	},
-	async overview(siteId: string | undefined, since: number, until: number): Promise<Record<string, number>> {
+	async overview(siteId: string | string[] | undefined, since: number, until: number): Promise<Record<string, number>> {
 		const now = Date.now();
-		const sessionSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
-		const eventSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
-		const ruleSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
-		const flowSiteFilter = siteId ? db`AND site_id=${siteId}` : db``;
+		const sessionSiteFilter = siteScopeFilter(siteId);
+		const eventSiteFilter = siteScopeFilter(siteId);
+		const ruleSiteFilter = siteScopeFilter(siteId);
+		const flowSiteFilter = siteScopeFilter(siteId);
 		const [sessions] =
 			(await db`SELECT COUNT(*) AS count FROM access_sessions WHERE revoked_at IS NULL AND expires_at > ${now} ${sessionSiteFilter}`) as Array<{
 				count: number | string;
@@ -2474,7 +2482,7 @@ export const repository = {
 		return rows.length;
 	},
 	async allStreams(): Promise<StreamRecord[]> {
-		return (await db`SELECT * FROM streams ORDER BY incoming_port ASC`) as StreamRecord[];
+		return (await db`SELECT * FROM streams ORDER BY name ASC`) as StreamRecord[];
 	},
 	async streamById(id: string): Promise<StreamRecord | null> {
 		const rows = (await db`SELECT * FROM streams WHERE id=${id} LIMIT 1`) as StreamRecord[];
@@ -2570,7 +2578,7 @@ export const repository = {
 			timeout_count = stream_origin_latency_minutes.timeout_count + excluded.timeout_count`;
 	},
 	async streamOriginLatencyMetrics(
-		streamId: string | undefined,
+		streamId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -2585,7 +2593,7 @@ export const repository = {
 			timeoutPct: number;
 		}>;
 	}> {
-		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const streamFilter = streamScopeFilter(streamId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const bucket = metricBucketExpression("bucket_start", bucketMs);
 		const rows = (await db`
@@ -2621,7 +2629,7 @@ export const repository = {
 		const pattern = searchPattern(query.search);
 		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const exactSearchUpper = query.search?.trim().toUpperCase() || null;
-		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
+		const streamFilter = streamScopeFilter(query.streamId);
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
@@ -2641,7 +2649,7 @@ export const repository = {
 	async pagedStreamBandwidth(query: StreamBandwidthQuery): Promise<PageResult<StreamBandwidthRow>> {
 		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
 		const pattern = searchPattern(query.search);
-		const streamFilter = query.streamId ? db`AND stream_id=${query.streamId}` : db``;
+		const streamFilter = streamScopeFilter(query.streamId);
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
 		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
@@ -2656,7 +2664,7 @@ export const repository = {
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async streamOverview(
-		streamId: string | undefined,
+		streamId: string | string[] | undefined,
 		since: number,
 		until: number,
 	): Promise<{
@@ -2669,8 +2677,8 @@ export const repository = {
 		upstreamToClientBytes: number;
 		countries: Array<{ countryCode: string; connections: number; bytes: number; blocked: number }>;
 	}> {
-		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
-		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const eventStreamFilter = streamScopeFilter(streamId);
+		const bandwidthStreamFilter = streamScopeFilter(streamId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const [events] =
 			(await db`SELECT SUM(CASE WHEN event_type='connected' THEN 1 ELSE 0 END) AS connections,SUM(CASE WHEN event_type='disconnected' THEN 1 ELSE 0 END) AS disconnections,SUM(CASE WHEN event_type IN ('upstream-error','listener-error') THEN 1 ELSE 0 END) AS errors,SUM(CASE WHEN event_type='blocked' THEN 1 ELSE 0 END) AS blocked,COUNT(DISTINCT CASE WHEN event_type='connected' THEN client_ip ELSE NULL END) AS unique_ips FROM stream_events WHERE created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter}`) as Array<
@@ -2728,7 +2736,7 @@ export const repository = {
 		};
 	},
 	async streamMetrics(
-		streamId: string | undefined,
+		streamId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
@@ -2743,8 +2751,8 @@ export const repository = {
 			upstreamToClientBytes: number;
 		}>;
 	}> {
-		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
-		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const eventStreamFilter = streamScopeFilter(streamId);
+		const bandwidthStreamFilter = streamScopeFilter(streamId);
 		const eventBucket = metricBucketExpression("created_at", bucketMs);
 		const bandwidthBucket = metricBucketExpression("bucket_start", bucketMs);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
@@ -2805,13 +2813,13 @@ export const repository = {
 		return { series };
 	},
 	async streamLongLivedMetrics(
-		streamId: string | undefined,
+		streamId: string | string[] | undefined,
 		since: number,
 		until: number,
 		bucketMs: number,
 		minDurationMs: number,
 	): Promise<{ series: Array<{ bucket: number; connected: number; disconnected: number }> }> {
-		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const eventStreamFilter = streamScopeFilter(streamId);
 		// Duration is only known once a connection closes, so both series are derived from
 		// 'disconnected' rows: the disconnect bucket uses created_at directly, and the connect
 		// bucket is reconstructed as created_at - duration_ms (the connection's open time).
@@ -2870,8 +2878,13 @@ export const repository = {
 		}
 		return [...totals.entries()].map(([streamId, value]) => ({ streamId, ...value }));
 	},
-	async streamTabIpMetrics(streamId: string | undefined, since: number, until: number, scope: "blocked"): Promise<Array<{ ip: string; count: number }>> {
-		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+	async streamTabIpMetrics(
+		streamId: string | string[] | undefined,
+		since: number,
+		until: number,
+		scope: "blocked",
+	): Promise<Array<{ ip: string; count: number }>> {
+		const streamFilter = streamScopeFilter(streamId);
 		const scopeFilter = scope === "blocked" ? db`AND event_type='blocked'` : db``;
 		const rows = (await db`
       SELECT COALESCE(client_ip, 'unknown') AS ip, COUNT(*) AS count
@@ -2883,8 +2896,8 @@ export const repository = {
     `) as Array<{ ip: string; count: number | string }>;
 		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
 	},
-	async streamTabBandwidthIpMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ ip: string; count: number }>> {
-		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+	async streamTabBandwidthIpMetrics(streamId: string | string[] | undefined, since: number, until: number): Promise<Array<{ ip: string; count: number }>> {
+		const streamFilter = streamScopeFilter(streamId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const rows = (await db`
       SELECT ip, COALESCE(SUM(client_to_upstream_bytes + upstream_to_client_bytes),0) AS count
@@ -2896,8 +2909,8 @@ export const repository = {
     `) as Array<{ ip: string; count: number | string }>;
 		return rows.map((row) => ({ ip: row.ip, count: toNumber(row.count) }));
 	},
-	async streamBlockReasonMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ reason: string; count: number }>> {
-		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+	async streamBlockReasonMetrics(streamId: string | string[] | undefined, since: number, until: number): Promise<Array<{ reason: string; count: number }>> {
+		const streamFilter = streamScopeFilter(streamId);
 		const rows = (await db`
       SELECT COALESCE(reason, 'Unknown') AS reason, COUNT(*) AS count
       FROM stream_events
@@ -2908,8 +2921,8 @@ export const repository = {
     `) as Array<{ reason: string; count: number | string }>;
 		return rows.map((row) => ({ reason: row.reason, count: toNumber(row.count) }));
 	},
-	async streamErrorReasonMetrics(streamId: string | undefined, since: number, until: number): Promise<Array<{ error: string; count: number }>> {
-		const streamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+	async streamErrorReasonMetrics(streamId: string | string[] | undefined, since: number, until: number): Promise<Array<{ error: string; count: number }>> {
+		const streamFilter = streamScopeFilter(streamId);
 		const rows = (await db`
       SELECT error, COUNT(*) AS count
       FROM stream_events
@@ -2921,12 +2934,12 @@ export const repository = {
 		return rows.map((row) => ({ error: row.error, count: toNumber(row.count) }));
 	},
 	async streamProtocolMetrics(
-		streamId: string | undefined,
+		streamId: string | string[] | undefined,
 		since: number,
 		until: number,
 	): Promise<Array<{ protocol: string; connections: number; bytes: number }>> {
-		const eventStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
-		const bandwidthStreamFilter = streamId ? db`AND stream_id=${streamId}` : db``;
+		const eventStreamFilter = streamScopeFilter(streamId);
+		const bandwidthStreamFilter = streamScopeFilter(streamId);
 		const minuteSince = Math.floor(since / 60_000) * 60_000;
 		const eventRows = (await db`
       SELECT protocol, COUNT(*) AS connections
@@ -3118,7 +3131,7 @@ export const repository = {
 		return (await db`SELECT s.* FROM sites s JOIN admin_user_site_permissions permission ON permission.site_id=s.id WHERE permission.user_id=${userId} ORDER BY s.name ASC`) as SiteRecord[];
 	},
 	async adminStreamsForUser(userId: string): Promise<StreamRecord[]> {
-		return (await db`SELECT s.* FROM streams s JOIN admin_user_stream_permissions permission ON permission.stream_id=s.id WHERE permission.user_id=${userId} ORDER BY s.incoming_port ASC`) as StreamRecord[];
+		return (await db`SELECT s.* FROM streams s JOIN admin_user_stream_permissions permission ON permission.stream_id=s.id WHERE permission.user_id=${userId} ORDER BY s.name ASC`) as StreamRecord[];
 	},
 	async insertAdminAuditEntry(entry: AdminAuditLogRecord): Promise<void> {
 		await db`INSERT INTO admin_audit_log (id,actor_user_id,actor_username,action,resource_type,resource_id,summary,detail_json,ip,created_at)

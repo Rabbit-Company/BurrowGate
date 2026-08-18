@@ -249,7 +249,7 @@ let bodyCaptureDefaults = {
 };
 let managedProtection = { defaultRuleSetId: "burrowgate-core", items: [] };
 let errorResponseOptionsLoaded = false;
-let selectedSiteId = null;
+let selectedSiteId = "";
 let editingSiteId = null;
 let activeSiteEditorTab = "general";
 let activeRouteEditorTab = "general";
@@ -1260,12 +1260,13 @@ function renderSiteSelector() {
 	selector.innerHTML =
 		sites.length === 0
 			? '<option value="">No sites configured</option>'
-			: sites
+			: `<option value="">All websites</option>${sites
 					.map(
 						(site) =>
 							`<option value="${escapeHtml(site.id)}"${site.id === selectedSiteId ? " selected" : ""}>${escapeHtml(site.name)}${site.enabled ? "" : " (disabled)"} | ${escapeHtml(site.publicHost)}</option>`,
 					)
-					.join("");
+					.join("")}`;
+	if (sites.length > 0) selector.value = selectedSiteId;
 }
 
 function renderErrorResponseOptions() {
@@ -1872,9 +1873,9 @@ async function loadSites() {
 	if (firstErrorOptionsLoad && !editingSiteId) resetSiteForm();
 	else if (previousErrorJsonFields) setErrorJsonFields(previousErrorJsonFields);
 	const requestedId = new URL(location.href).searchParams.get("site");
-	const currentExists = sites.some((site) => site.id === selectedSiteId);
-	const requestedExists = sites.some((site) => site.id === requestedId);
-	if (!currentExists) selectedSiteId = requestedExists ? requestedId : (sites.find((site) => site.enabled)?.id ?? sites[0]?.id ?? null);
+	const currentValid = selectedSiteId === "" || sites.some((site) => site.id === selectedSiteId);
+	const requestedValid = requestedId !== null && sites.some((site) => site.id === requestedId);
+	if (!currentValid) selectedSiteId = requestedValid ? requestedId : "";
 	persistSiteSelection();
 	applyAutomaticRetentionDateRange();
 	renderSiteSelector();
@@ -1940,7 +1941,7 @@ async function reloadSelectedSite() {
 }
 
 async function chooseSite(id) {
-	if (!sites.some((site) => site.id === id) || selectedSiteId === id) return;
+	if ((id !== "" && !sites.some((site) => site.id === id)) || selectedSiteId === id) return;
 	selectedSiteId = id;
 	persistSiteSelection();
 	applyAutomaticRetentionDateRange();
@@ -2072,7 +2073,7 @@ async function deleteEditingSite() {
 	button.disabled = true;
 	try {
 		const result = await api(`/sites/${encodeURIComponent(site.id)}`, { method: "DELETE" }, false);
-		if (selectedSiteId === site.id) selectedSiteId = null;
+		if (selectedSiteId === site.id) selectedSiteId = "";
 		resetSiteForm();
 		await loadSites();
 		await reloadSelectedSite();

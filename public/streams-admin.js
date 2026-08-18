@@ -2307,8 +2307,8 @@ async function saveStream(event) {
 		});
 		if (result.pendingChange) showToast(`Stream updated. ${result.pendingChange.summary}, scheduled for ${formatDate(result.pendingChange.applyAt)}.`);
 		else showToast(id ? "Stream updated" : "Stream created");
-		resetForm();
 		await refreshDashboard();
+		editStream(result.stream.id);
 		activeTab = "streams";
 	} catch (error) {
 		showToast(error.message, "bad");

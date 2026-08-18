@@ -1,7 +1,7 @@
 {
 	"name": "@rabbit-company/burrowgate-auth",
-	"version": "1.1.0",
-	"description": "Runtime-neutral BurrowGate session assertion and introspection client for Browsers, Bun, Deno, and Node.js.",
+	"version": "1.2.0",
+	"description": "Runtime-neutral BurrowGate session assertion, introspection, and origin request verification for Browsers, Bun, Deno, and Node.js.",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/BurrowGate",
 	"funding": "https://rabbit-company.com/donation",
@@ -23,7 +23,9 @@
 		"authentication",
 		"sso",
 		"session",
-		"security"
+		"security",
+		"hmac",
+		"signature-verification"
 	],
 	"exports": {
 		".": {
@@ -45,6 +47,6 @@
 		"access": "public"
 	},
 	"engines": {
-		"node": ">=18"
+		"node": ">=20"
 	}
 }

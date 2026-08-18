@@ -2,6 +2,25 @@ interface DemoSocketData {
 	connectedAt: number;
 }
 
+function escapeHtml(value: string): string {
+	return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+}
+
+function headersTable(headers: Headers): string {
+	const rows = [...headers.entries()].sort(([left], [right]) => left.localeCompare(right));
+	return `<table>
+      <thead><tr><th>Header</th><th>Value</th></tr></thead>
+      <tbody>
+        ${rows
+					.map(
+						([name, value]) =>
+							`<tr class="${name.startsWith("x-burrowgate-") ? "burrowgate" : ""}"><td>${escapeHtml(name)}</td><td>${escapeHtml(value)}</td></tr>`,
+					)
+					.join("\n        ")}
+      </tbody>
+    </table>`;
+}
+
 const server = Bun.serve<DemoSocketData>({
 	port: 3000,
 	fetch(request, server) {
@@ -21,11 +40,19 @@ const server = Bun.serve<DemoSocketData>({
 		return new Response(
 			`<!doctype html>
 <html>
+  <head>
+    <style>
+      table { border-collapse: collapse; margin: 1rem 0; }
+      th, td { border: 1px solid #ccc; padding: 0.35rem 0.75rem; text-align: left; font-size: 0.9rem; }
+      th { background: #f2f2f2; }
+      tr.burrowgate td { background: #eef6ff; }
+    </style>
+  </head>
   <body style="font-family:system-ui;padding:3rem">
     <h1>Protected origin reached</h1>
     <p>Path: <code>${url.pathname}</code></p>
-    <p>BurrowGate session: <code>${request.headers.get("x-burrowgate-session-id") ?? "missing"}</code></p>
-    <p>Client IP: <code>${request.headers.get("x-burrowgate-client-ip") ?? "missing"}</code></p>
+    <h2>Request headers</h2>
+    ${headersTable(request.headers)}
     <button id="connect">Connect WebSocket</button>
     <pre id="output">Not connected</pre>
     <script>

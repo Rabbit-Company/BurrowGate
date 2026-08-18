@@ -1,6 +1,6 @@
 # `@rabbit-company/burrowgate-auth`
 
-Runtime-neutral TypeScript client for verifying BurrowGate browser sessions from a separate backend site. It uses standard `fetch`, `Request`, and `AbortController` APIs and supports Bun, Deno, and Node.js.
+Runtime-neutral TypeScript toolkit for BurrowGate: verifying cross-site browser sessions from a separate backend, and verifying that a request to a protected origin actually passed through BurrowGate. It uses standard `fetch`, `Request`, `AbortController`, and Web Crypto APIs and supports Bun, Deno, and Node.js.
 
 ## How verification works
 
@@ -107,3 +107,35 @@ The browser refresh interval and backend cache are independent:
 - Backend successful-introspection cache: five seconds by default.
 
 Each real introspection checks the parent session. With the default backend cache, logout and administrative revocation can take up to five seconds to reach a given backend process.
+
+## Origin request verification
+
+`verifyOriginRequest()` checks that a request actually passed through BurrowGate, using only the protected site's origin signing secret (no network call, no Access List required). Every request BurrowGate proxies is signed with `X-BurrowGate-Signature`, an HMAC-SHA256 over the method, path, session ID, client IP, country, and timestamp; this function recomputes and compares it in constant time. Use it in any protected origin, even one that does not use BurrowGate's Access Lists or cross-site session assertions at all:
+
+```ts
+import { verifyOriginRequest } from "@rabbit-company/burrowgate-auth";
+
+// Call this first, before reading the request body.
+const result = await verifyOriginRequest(request, process.env.BURROWGATE_ORIGIN_SECRET!);
+
+if (!result.valid) {
+	// result.reason is "missing-headers" | "stale-timestamp" | "invalid-signature" | "invalid-identity-signature"
+	return new Response("Forbidden", { status: 403 });
+}
+
+console.log(result.clientIp, result.country, result.sessionId);
+```
+
+Call it before reading the request body. `X-BurrowGate-Timestamp` is stamped when BurrowGate signs the outgoing request, before the body is forwarded, so a large or slow upload does not affect the freshness check - but only if verification runs before the body is consumed. Verifying after buffering a large upload measures upload time against `maxAgeSeconds` and can fail spuriously.
+
+The freshness check defaults to 60 seconds of allowed clock skew and rejects anything older (or, allowing for skew, anything from the future) than that:
+
+```ts
+const result = await verifyOriginRequest(request, secret, {
+	maxAgeSeconds: 60, // 0 disables the check entirely (not recommended)
+});
+```
+
+When the site's **Send authenticated username to upstream** toggle is enabled, `X-BurrowGate-Authenticated-User` and `X-BurrowGate-Identity-Signature` are also present and are verified automatically; `result.authenticatedUser` is `null` when identity forwarding was not used for this request, and the whole result is invalid if either identity header is tampered with or removed independently of the other.
+
+`result.accessMode` and `result.verified` reflect BurrowGate's own access decision for the request but, unlike the other fields, are not themselves covered by the signature.

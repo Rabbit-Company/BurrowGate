@@ -191,9 +191,11 @@ function protectionMatches(value: string | null): unknown[] {
 
 const NO_ACCESS_SITE_ID = "__no-accessible-site__";
 
-function metricsScopeSiteId(selection: { site: SiteRecord | null }, user: AuthenticatedAdmin): string | undefined {
+async function metricsScopeSiteId(selection: { site: SiteRecord | null }, user: AuthenticatedAdmin): Promise<string | string[] | undefined> {
 	if (selection.site) return selection.site.id;
-	return isAdministrator(user) ? undefined : NO_ACCESS_SITE_ID;
+	const ids = await tabScopeSiteIds(user);
+	if (ids === undefined) return undefined;
+	return ids.length > 0 ? ids : NO_ACCESS_SITE_ID;
 }
 
 const TAB_METRICS_SCOPES: TabMetricsScope[] = ["requests", "blocked", "protection", "cache", "access", "routes", "sites", "bandwidth", "sessions"];
@@ -239,7 +241,7 @@ async function sitesVisibleToUser(user: AuthenticatedAdmin): Promise<SiteRecord[
 
 async function selectedSite(url: URL, user: AuthenticatedAdmin): Promise<{ site: SiteRecord | null; error: Response | null }> {
 	const requestedId = stringParam(url, "siteId");
-	if (!requestedId) return { site: (await sitesVisibleToUser(user))[0] ?? null, error: null };
+	if (!requestedId) return { site: null, error: null };
 	const site = await repository.siteById(requestedId);
 	if (!site) return { site: null, error: jsonResponse({ error: "Selected site was not found" }, 404) };
 	if ((await siteAccessLevel(user, site.id)) === "none") return { site: null, error: jsonResponse({ error: "Forbidden" }, 403) };
@@ -1700,7 +1702,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const items = await repository.tabGeoMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		const items = await repository.tabGeoMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1725,7 +1727,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const referrers = await repository.tabRefererMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		const referrers = await repository.tabRefererMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1745,7 +1747,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const range = requestedDateRange(url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const ips = await repository.tabIpMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		const ips = await repository.tabIpMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1763,7 +1765,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const range = requestedDateRange(url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const ips = await repository.tabBandwidthIpMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		const ips = await repository.tabBandwidthIpMetrics(await metricsScopeSiteId(selection, user), range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1783,7 +1785,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const range = requestedDateRange(url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const paths = await repository.tabPathMetrics(metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		const paths = await repository.tabPathMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1801,7 +1803,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
-		const usernames = await repository.accessUsernameMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		const usernames = await repository.accessUsernameMetrics(await metricsScopeSiteId(selection, user), range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1819,7 +1821,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
-		const usernames = await repository.sessionUsernameMetrics(metricsScopeSiteId(selection, user), range.since, range.until);
+		const usernames = await repository.sessionUsernameMetrics(await metricsScopeSiteId(selection, user), range.since, range.until);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -1838,7 +1840,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const range = requestedDateRange(url);
 		return jsonResponse({
-			...(await repository.overview(metricsScopeSiteId(selection, user), range.since, range.until)),
+			...(await repository.overview(await metricsScopeSiteId(selection, user), range.since, range.until)),
 			retentionDays: selection.site?.event_retention_days ?? config.eventRetentionDays,
 			defaultPageSize: config.adminPageSize,
 			site: selection.site ? siteView(selection.site) : null,
@@ -1864,7 +1866,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 		const selection = section === "sites" || section === "connectivity" ? { site: null, error: null } : await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const scopeSiteId = metricsScopeSiteId(selection, user);
+		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const bucketMs = metricBucketSize(range.durationMs);
 		const since = range.since;
@@ -2088,7 +2090,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "rules") {
-			const metrics = await repository.ruleMetrics(scopeSiteId ?? "", since, until, bucketMs);
+			const metrics = await repository.ruleMetrics(typeof scopeSiteId === "string" ? scopeSiteId : "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -2124,7 +2126,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "routes") {
-			const metrics = await repository.routeMetrics(scopeSiteId ?? "", since, until, bucketMs);
+			const metrics = await repository.routeMetrics(typeof scopeSiteId === "string" ? scopeSiteId : "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -2161,7 +2163,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 
 		if (section === "access") {
-			const metrics = await repository.accessListMetrics(scopeSiteId ?? "", since, until, bucketMs);
+			const metrics = await repository.accessListMetrics(typeof scopeSiteId === "string" ? scopeSiteId : "", since, until, bucketMs);
 			return jsonResponse({
 				...base,
 				primary: {
@@ -2278,7 +2280,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const scopeSiteId = metricsScopeSiteId(selection, user);
+		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const decision = stringParam(url, "decision");
@@ -2347,7 +2349,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const countryCode = stringParam(url, "country")?.toUpperCase();
@@ -2355,7 +2357,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		await flushBandwidthMetrics();
 		return jsonResponse(
 			await repository.pagedBandwidthIps({
-				siteId: selection.site.id,
+				siteId: scopeSiteId,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
 				...(search ? { search } : {}),
@@ -2390,7 +2392,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
-		const scopeSiteId = metricsScopeSiteId(selection, user);
+		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
 		const search = stringParam(url, "search");
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);

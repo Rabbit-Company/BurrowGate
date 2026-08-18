@@ -52,11 +52,12 @@ BurrowGate always removes client-provided copies of these headers. The identity 
 <path-and-query>\n
 <burrowgate-session-id>\n
 <client-ip>\n
+<x-burrowgate-country>\n
 <x-burrowgate-timestamp>\n
 <username>
 ```
 
-The existing `X-BurrowGate-Signature` format remains unchanged. An origin that uses the username should verify the normal origin signature and the identity signature, require a recent timestamp, and prevent direct public access to the origin.
+`X-BurrowGate-Signature` uses the same canonical value, minus the trailing `<username>` line. An origin that uses the username should verify the normal origin signature and the identity signature, require a recent timestamp, and prevent direct public access to the origin.
 
 Passwords are never sent upstream.
 
