@@ -16,7 +16,7 @@ import { resolveRequestId, siteErrorResponse } from "./services/error-response-s
 import { banIpForProtectionMatch, formatBanExpiry } from "./services/ip-rule-service.ts";
 import { resolveNetworkDecision } from "./services/route-ip-rule-service.ts";
 import { runMaintenance, startMaintenance } from "./services/maintenance-service.ts";
-import { geoIpStatus, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
+import { geoIpStatus, initializeAsnGeoIp, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
@@ -69,6 +69,7 @@ await initializeRuntimeSecrets();
 await migrate();
 await ensureBootstrapAdministrator();
 await initializeGeoIp();
+await initializeAsnGeoIp();
 startGeoIpRetry();
 await seedDefaultSite();
 await loadManagedRuleSets();
@@ -157,7 +158,7 @@ app.get("/_burrowgate/health", () => {
 	return jsonResponse({
 		status: "ok",
 		challengeProviders: challengeRegistry.names(),
-		geoip: { enabled: geoip.enabled, available: geoip.available },
+		geoip: { enabled: geoip.enabled, available: geoip.available, asn: { enabled: geoip.asn.enabled, available: geoip.asn.available } },
 	});
 });
 
@@ -181,6 +182,8 @@ async function gateway(ctx: any): Promise<Response> {
 		referer: string | null;
 		refererHost: string | null;
 		countryCode?: string | null;
+		asn?: number | null;
+		asnOrg?: string | null;
 		protectionStatus?: ManagedProtectionStatus | null;
 		protectionRuleId?: string | null;
 		protectionCategory?: string | null;
@@ -236,6 +239,8 @@ async function gateway(ctx: any): Promise<Response> {
 	const route = await resolveRoutePolicy(site, request.method, url.pathname);
 	const ipRule = await resolveNetworkDecision(site, route.policy, ip);
 	eventBase.countryCode = ipRule.countryCode;
+	eventBase.asn = ipRule.asn;
+	eventBase.asnOrg = ipRule.asnOrg;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
 		const retryAfterSeconds = ipRule.expiresAt ? Math.max(1, Math.ceil((ipRule.expiresAt - Date.now()) / 1_000)) : null;

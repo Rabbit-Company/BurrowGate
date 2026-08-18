@@ -10,8 +10,8 @@ import {
 	secureCookieForRequest,
 } from "../config.ts";
 import { repository, type SortDirection, type TabMetricsScope } from "../db/repository.ts";
-import { addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
-import { addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } from "../services/route-ip-rule-service.ts";
+import { addAsnRule, addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
+import { addRouteAsnRule, addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } from "../services/route-ip-rule-service.ts";
 import {
 	authenticateAdminPassword,
 	beginPendingLogin,
@@ -1166,6 +1166,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		return jsonResponse({
 			ipRules: await repository.routeIpRules(routePolicy.id),
 			countryRules: await repository.routeCountryRules(routePolicy.id),
+			asnRules: await repository.routeAsnRules(routePolicy.id),
 			geoip: geoIpStatus(),
 		});
 	});
@@ -1291,6 +1292,69 @@ export function registerAdminRoutes(app: Web<any>): void {
 			resourceType: "route_country_rule",
 			resourceId: ctx.params.ruleId,
 			summary: `Deleted a country rule on route policy ${routePolicy.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ deleted: true });
+	});
+
+	app.post("/_burrowgate/api/admin/route-policies/:id/asn-rules", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		const body = (await ctx.req.json()) as { asn?: number | string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.asn || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid ASN rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addRouteAsnRule(routePolicy.id, body.asn, body.action!, body.reason ?? "", expiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "route_asn_rule.create",
+				resourceType: "route_asn_rule",
+				resourceId: rule.id,
+				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on route policy ${routePolicy.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
+		}
+	});
+
+	app.addRoute("DELETE", "/_burrowgate/api/admin/route-policies/:id/asn-rules/:ruleId", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
+		const routePolicy = await repository.routePolicyById(ctx.params.id, selection.site.id);
+		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
+		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (routeRuleDenied) return routeRuleDenied;
+		await repository.deleteRouteAsnRuleForRoute(ctx.params.ruleId, routePolicy.id);
+		invalidateRouteNetworkPolicy(routePolicy.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "route_asn_rule.delete",
+			resourceType: "route_asn_rule",
+			resourceId: ctx.params.ruleId,
+			summary: `Deleted an ASN rule on route policy ${routePolicy.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });
@@ -1703,6 +1767,31 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const items = await repository.tabGeoMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			status: geoIpStatus(),
+			items,
+		});
+	});
+
+	app.get("/_burrowgate/api/admin/asn-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const scope = tabMetricsScopeParam(url);
+		if (!scope || scope === "bandwidth") return jsonResponse({ error: "Invalid scope" }, 400);
+		const range = requestedDateRange(url);
+		if (scope === "sites") {
+			const items = await repository.tabAsnMetrics(await tabScopeSiteIds(user), range.since, range.until, scope);
+			return jsonResponse({ rangeFrom: range.since, rangeTo: range.until, rangeDurationMs: range.durationMs, status: geoIpStatus(), items });
+		}
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const items = await repository.tabAsnMetrics(await metricsScopeSiteId(selection, user), range.since, range.until, scope);
 		return jsonResponse({
 			rangeFrom: range.since,
 			rangeTo: range.until,
@@ -2290,6 +2379,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const method = stringParam(url, "method");
 		const statusGroup = enumParam(url, "status", ["1xx", "2xx", "3xx", "4xx", "5xx"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
+		const asn = Number(stringParam(url, "asn"));
 		const [page, origins] = await Promise.all([
 			repository.pagedEvents({
 				...(scopeSiteId ? { siteId: scopeSiteId } : {}),
@@ -2303,12 +2393,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(method ? { method } : {}),
 				...(statusGroup ? { statusGroup } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
+				...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
 				since: range.since,
 				until: range.until,
 				sortBy: enumParam(
 					url,
 					"sortBy",
-					["created_at", "ip", "country_code", "method", "path", "status", "decision", "cache_status", "protection_status", "latency_ms"] as const,
+					["created_at", "ip", "country_code", "asn", "method", "path", "status", "decision", "cache_status", "protection_status", "latency_ms"] as const,
 					"created_at",
 				)!,
 				sortDirection: sortDirection(url),
@@ -2397,6 +2488,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const search = stringParam(url, "search");
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
+		const asn = Number(stringParam(url, "asn"));
 		return jsonResponse(
 			await repository.pagedSessions({
 				...(scopeSiteId ? { siteId: scopeSiteId } : {}),
@@ -2405,9 +2497,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(search ? { search } : {}),
 				...(state ? { state } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
+				...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
 				since: range.since,
 				until: range.until,
-				sortBy: enumParam(url, "sortBy", ["last_seen_at", "created_at", "expires_at", "request_count", "last_ip", "country_code"] as const, "last_seen_at")!,
+				sortBy: enumParam(
+					url,
+					"sortBy",
+					["last_seen_at", "created_at", "expires_at", "request_count", "last_ip", "country_code", "asn"] as const,
+					"last_seen_at",
+				)!,
 				sortDirection: sortDirection(url),
 			}),
 		);
@@ -2424,6 +2522,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			defaultIpAction: selection.site.default_ip_action ?? "inherit",
 			defaultCountryAction: selection.site.default_country_action ?? "inherit",
 			countryRules: await repository.countryRules(selection.site.id),
+			asnRules: await repository.asnRules(selection.site.id),
 			geoip: geoIpStatus(),
 		});
 	});
@@ -2513,6 +2612,65 @@ export function registerAdminRoutes(app: Web<any>): void {
 			resourceType: "country_rule",
 			resourceId: ctx.params.id!,
 			summary: `Deleted a country rule on ${selection.site.name}`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ deleted: true });
+	});
+
+	app.post("/_burrowgate/api/admin/asn-rules", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const asnRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (asnRuleDenied) return asnRuleDenied;
+		const body = (await ctx.req.json()) as { asn?: number | string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.asn || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid ASN rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addAsnRule(selection.site.id, body.asn, body.action!, body.reason ?? "", expiresAt);
+			await recordAdminAudit({
+				actor: user,
+				action: "asn_rule.create",
+				resourceType: "asn_rule",
+				resourceId: rule.id,
+				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on ${selection.site.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/asn-rules/:id", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedSite(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
+		const asnRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
+		if (asnRuleDenied) return asnRuleDenied;
+		await repository.deleteAsnRuleForSite(ctx.params.id!, selection.site.id);
+		invalidateNetworkPolicy(selection.site.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "asn_rule.delete",
+			resourceType: "asn_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted an ASN rule on ${selection.site.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });

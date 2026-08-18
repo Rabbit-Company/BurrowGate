@@ -23,6 +23,7 @@ let statuses = [];
 let selectedStreamId = "";
 let rulesStreamId = "";
 let streamCountryRules = [];
+let streamAsnRules = [];
 const selectedStreamRuleIds = new Set();
 let protectionStreamId = "";
 let protectionCatalog = [];
@@ -60,6 +61,7 @@ const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.streams-admin.column-visibilit
 const COLUMN_REGISTRY = {
 	connections: [
 		{ key: "country", label: "Country" },
+		{ key: "asn", label: "ASN" },
 		{ key: "connected", label: "Connected" },
 		{ key: "lastActivity", label: "Last activity" },
 		{ key: "toOrigin", label: "To origin" },
@@ -67,6 +69,7 @@ const COLUMN_REGISTRY = {
 	],
 	events: [
 		{ key: "country", label: "Country" },
+		{ key: "asn", label: "ASN" },
 		{ key: "event", label: "Event" },
 		{ key: "reason", label: "Reason" },
 		{ key: "rule", label: "Rule" },
@@ -1399,6 +1402,7 @@ function renderActive(items) {
           <td><code>${item.incomingPort}</code></td>
           <td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
           ${isColumnVisible("connections", "country") ? `<td>${countryBadge(item.countryCode)}</td>` : ""}
+          ${isColumnVisible("connections", "asn") ? `<td>${asnBadge(item.asn, item.asnOrg)}</td>` : ""}
           ${isColumnVisible("connections", "connected") ? `<td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td>` : ""}
           ${isColumnVisible("connections", "lastActivity") ? `<td>${escapeHtml(formatDate(item.lastActivityAt))}</td>` : ""}
           ${isColumnVisible("connections", "toOrigin") ? `<td>${formatBytes(item.clientToUpstreamBytes)}</td>` : ""}
@@ -1438,6 +1442,22 @@ async function loadOverview() {
 	geoData.blocked = result.countries.map((item) => ({ countryCode: item.countryCode, count: Number(item.blocked) }));
 	renderActive(result.active);
 	renderGeoMap();
+	renderAsnList(result.asns ?? []);
+}
+
+function renderAsnList(asns) {
+	const total = asns.reduce((sum, item) => sum + Number(item.connections), 0);
+	byId("streamAsnTotal").textContent = formatNumber(total);
+	byId("streamAsnList").innerHTML =
+		asns.length === 0
+			? '<p class="muted">No ASN data is available.</p>'
+			: asns
+					.map((item) => {
+						const label = item.asn ? `AS${item.asn} ${item.org ?? ""}`.trim() : item.org || "Unknown";
+						const percentage = total > 0 ? (Number(item.connections) / total) * 100 : 0;
+						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${formatNumber(item.connections)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+					})
+					.join("");
 }
 
 function countryDisplayName(code, fallback = "") {
@@ -1454,6 +1474,16 @@ function countryBadge(codeInput) {
 	const code = String(codeInput || "ZZ").toUpperCase();
 	const name = countryDisplayName(code);
 	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
+}
+
+function asnBadge(asn, org) {
+	if (!asn) {
+		const title = org || "Unknown";
+		return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">-</span>`;
+	}
+	const label = `AS${asn}`;
+	const title = org ? `${label} - ${org}` : label;
+	return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
 }
 
 function populateCountrySelects() {
@@ -1742,7 +1772,7 @@ async function loadEvents() {
 	const state = tableState.events;
 	byId("streamEvents").innerHTML = `<tr><td colspan="${eventsColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
 	const result = await api(
-		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
+		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), asn: byId("eventAsn").value, ...rangeQuery() })}`,
 	);
 	updateSortIndicators("panel-events", state);
 	byId("streamEvents").innerHTML = result.items.length
@@ -1752,6 +1782,7 @@ async function loadEvents() {
           <td>${escapeHtml(formatDate(item.created_at))}</td>
           <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
           ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
+          ${isColumnVisible("events", "asn") ? `<td>${asnBadge(item.asn, item.asn_org)}</td>` : ""}
           ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" || item.event_type === "monitored" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
           <td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td>
           <td class="port-column"><code>${item.incoming_port}</code></td>
@@ -1851,10 +1882,37 @@ function renderStreamCountryRulesTable() {
 		.join("");
 }
 
+function renderStreamAsnRulesTable() {
+	const body = byId("streamAsnRules");
+	if (!rulesStreamId) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">Select a stream before adding ASN rules.</td></tr>';
+		return;
+	}
+	if (streamAsnRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">No ASN rules are configured.</td></tr>';
+		return;
+	}
+	body.innerHTML = streamAsnRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td><code>AS${rule.asn}</code></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(streamActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${escapeHtml(formatDate(rule.created_at))}</td>
+      <td>${rule.expires_at === null ? "Never" : escapeHtml(formatDate(rule.expires_at))}</td>
+      <td><button class="button danger compact" data-stream-asn-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
 function applyStreamNetworkPolicy(policy) {
 	byId("streamDefaultIpAction").value = policy.defaultIpAction ?? "inherit";
 	byId("streamDefaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
 	streamCountryRules = policy.countryRules ?? [];
+	streamAsnRules = policy.asnRules ?? [];
 	const warning = byId("streamGeoPolicyWarning");
 	if (!policy.geoip?.enabled) {
 		warning.textContent = "GeoIP is disabled. Country rules are stored but not enforced until GeoIP is enabled.";
@@ -1865,7 +1923,20 @@ function applyStreamNetworkPolicy(policy) {
 	} else {
 		warning.classList.add("hidden");
 	}
+	const asnWarning = byId("streamAsnPolicyWarning");
+	if (asnWarning) {
+		if (!policy.geoip?.asn?.enabled) {
+			asnWarning.textContent = "The ASN database is disabled. ASN rules are stored but not enforced until it is enabled.";
+			asnWarning.classList.remove("hidden");
+		} else if (!policy.geoip.asn.available) {
+			asnWarning.textContent = policy.geoip.asn.error || "The ASN database is unavailable. ASN policy fails open until it becomes available.";
+			asnWarning.classList.remove("hidden");
+		} else {
+			asnWarning.classList.add("hidden");
+		}
+	}
 	renderStreamCountryRulesTable();
+	renderStreamAsnRulesTable();
 }
 
 function streamRulesColumnCount() {
@@ -1881,10 +1952,12 @@ async function loadStreamRules() {
 	if (disabled) {
 		byId("streamRules").innerHTML = `<tr><td colspan="${streamRulesColumnCount()}" class="empty-cell">Create a stream before adding network rules.</td></tr>`;
 		byId("streamCountryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create a stream before adding network rules.</td></tr>';
+		byId("streamAsnRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create a stream before adding network rules.</td></tr>';
 		return;
 	}
 	setTableLoading("streamRules", streamRulesColumnCount());
 	setTableLoading("streamCountryRules", 7);
+	setTableLoading("streamAsnRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
 		const [result, networkPolicy] = await Promise.all([
@@ -1928,6 +2001,7 @@ async function loadStreamRules() {
 	} catch (error) {
 		setTableError("streamRules", streamRulesColumnCount(), error);
 		setTableError("streamCountryRules", 7, error);
+		setTableError("streamAsnRules", 7, error);
 	}
 }
 
@@ -2181,6 +2255,42 @@ async function deleteStreamCountryRule(id) {
 	try {
 		await api(`/streams/country-rules/${id}?${queryString({ streamId: rulesStreamId })}`, { method: "DELETE" });
 		showToast("Country rule deleted.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function addStreamAsnRuleFromForm(event) {
+	event.preventDefault();
+	if (!rulesStreamId) return;
+	const form = event.currentTarget;
+	const data = new FormData(form);
+	const expiresAtValue = data.get("expiresAt");
+	try {
+		await api(`/streams/asn-rules?${queryString({ streamId: rulesStreamId })}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				asn: data.get("asn"),
+				action: data.get("action"),
+				reason: data.get("reason").trim(),
+				expiresAt: expiresAtValue ? new Date(expiresAtValue).getTime() : null,
+			}),
+		});
+		form.reset();
+		showToast("ASN rule added.");
+		await loadStreamRules();
+	} catch (error) {
+		showToast(error.message, "bad");
+	}
+}
+
+async function deleteStreamAsnRule(id) {
+	if (!rulesStreamId || !confirm("Delete this ASN rule?")) return;
+	try {
+		await api(`/streams/asn-rules/${id}?${queryString({ streamId: rulesStreamId })}`, { method: "DELETE" });
+		showToast("ASN rule deleted.");
 		await loadStreamRules();
 	} catch (error) {
 		showToast(error.message, "bad");
@@ -2485,6 +2595,7 @@ byId("streamsList").addEventListener("click", (event) => {
 });
 for (const [id, load] of [
 	["eventSearch", loadEvents],
+	["eventAsn", loadEvents],
 	["bandwidthSearch", loadBandwidth],
 ])
 	byId(id).addEventListener(
@@ -2530,6 +2641,7 @@ byId("streamHealthInterval").addEventListener("input", updateStreamHealthDetecti
 byId("streamHealthFailureThreshold").addEventListener("input", updateStreamHealthDetectionNotice);
 byId("streamRuleForm").addEventListener("submit", addStreamIpRule);
 byId("streamCountryRuleForm").addEventListener("submit", addStreamCountryRuleFromForm);
+byId("streamAsnRuleForm").addEventListener("submit", addStreamAsnRuleFromForm);
 byId("refreshStreamRules").addEventListener("click", () => void loadStreamRules());
 byId("bulkDeleteStreamRules").addEventListener("click", () => void bulkDeleteStreamIpRules());
 byId("streamRulesSelectAll").addEventListener("change", (event) => {
@@ -2553,6 +2665,10 @@ byId("streamRules").addEventListener("click", (event) => {
 byId("streamCountryRules").addEventListener("click", (event) => {
 	const remove = event.target.closest("[data-stream-country-rule-id]");
 	if (remove) void deleteStreamCountryRule(remove.dataset.streamCountryRuleId);
+});
+byId("streamAsnRules").addEventListener("click", (event) => {
+	const remove = event.target.closest("[data-stream-asn-rule-id]");
+	if (remove) void deleteStreamAsnRule(remove.dataset.streamAsnRuleId);
 });
 byId("streamRuleSearch").addEventListener(
 	"input",

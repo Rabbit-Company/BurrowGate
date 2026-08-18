@@ -20,6 +20,7 @@ import type {
 	CertificateRecord,
 	ChallengeFlowRecord,
 	CountryRuleRecord,
+	AsnRuleRecord,
 	ChallengeStepRecord,
 	FirewallSyncProviderRecord,
 	FirewallSyncStatus,
@@ -29,6 +30,7 @@ import type {
 	RoutePolicyRecord,
 	RouteIpRuleRecord,
 	RouteCountryRuleRecord,
+	RouteAsnRuleRecord,
 	SiteRecord,
 	SiteAccessSettingsRecord,
 	SiteSsoSettingsRecord,
@@ -42,6 +44,7 @@ import type {
 	StreamRuleAction,
 	StreamIpRuleRecord,
 	StreamCountryRuleRecord,
+	StreamAsnRuleRecord,
 	OriginHealthStatusRecord,
 	OriginHealthEventRecord,
 	NotificationEventRecord,
@@ -81,9 +84,10 @@ export interface EventQuery {
 	method?: string;
 	statusGroup?: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
 	countryCode?: string;
+	asn?: number;
 	since?: number;
 	until?: number;
-	sortBy: "created_at" | "ip" | "country_code" | "method" | "path" | "status" | "decision" | "cache_status" | "protection_status" | "latency_ms";
+	sortBy: "created_at" | "ip" | "country_code" | "asn" | "method" | "path" | "status" | "decision" | "cache_status" | "protection_status" | "latency_ms";
 	sortDirection: SortDirection;
 }
 
@@ -94,9 +98,10 @@ export interface SessionQuery {
 	search?: string;
 	state?: "active" | "expired" | "revoked";
 	countryCode?: string;
+	asn?: number;
 	since?: number;
 	until?: number;
-	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip" | "country_code";
+	sortBy: "last_seen_at" | "created_at" | "expires_at" | "request_count" | "last_ip" | "country_code" | "asn";
 	sortDirection: SortDirection;
 }
 
@@ -198,6 +203,7 @@ export interface StreamEventQuery {
 	protocol?: StreamProtocol;
 	eventType?: StreamEventType;
 	countryCode?: string;
+	asn?: number;
 	since: number;
 	until: number;
 	sortBy:
@@ -207,6 +213,7 @@ export interface StreamEventQuery {
 		| "incoming_port"
 		| "client_ip"
 		| "country_code"
+		| "asn"
 		| "reason"
 		| "protection_rule_id"
 		| "connection_id"
@@ -450,6 +457,7 @@ export const repository = {
 			if (routePolicyIds.length > 0) {
 				await transaction`DELETE FROM route_ip_rules WHERE route_policy_id IN ${transaction(routePolicyIds)}`;
 				await transaction`DELETE FROM route_country_rules WHERE route_policy_id IN ${transaction(routePolicyIds)}`;
+				await transaction`DELETE FROM route_asn_rules WHERE route_policy_id IN ${transaction(routePolicyIds)}`;
 			}
 			await transaction`DELETE FROM route_policies WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM access_sessions WHERE site_id=${siteId}`;
@@ -458,6 +466,7 @@ export const repository = {
 			await transaction`DELETE FROM admin_user_site_permissions WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM ip_rules WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM country_rules WHERE site_id=${siteId}`;
+			await transaction`DELETE FROM asn_rules WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM request_events WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM bandwidth_minutes WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
@@ -773,6 +782,7 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM route_ip_rules WHERE route_policy_id=${id}`;
 			await transaction`DELETE FROM route_country_rules WHERE route_policy_id=${id}`;
+			await transaction`DELETE FROM route_asn_rules WHERE route_policy_id=${id}`;
 			await transaction`DELETE FROM route_policies WHERE id=${id} AND site_id=${siteId}`;
 		});
 	},
@@ -940,6 +950,7 @@ export const repository = {
 			? db`AND (s.id=${exactSearch} OR s.user_agent_hash=${exactSearch} OR LOWER(s.initial_ip) LIKE ${pattern} OR LOWER(s.last_ip) LIKE ${pattern} OR LOWER(COALESCE(au.username,'')) LIKE ${pattern})`
 			: db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(s.country_code, 'ZZ')=${query.countryCode}` : db``;
+		const asnFilter = query.asn ? db`AND s.asn=${query.asn}` : db``;
 		const stateFilter =
 			query.state === "active"
 				? db`AND s.revoked_at IS NULL AND s.expires_at > ${now}`
@@ -956,11 +967,11 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM access_sessions s LEFT JOIN access_users au ON au.id = s.access_user_id
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${asnFilter} ${stateFilter} ${rangeFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
       SELECT s.*, au.username AS access_username FROM access_sessions s LEFT JOIN access_users au ON au.id = s.access_user_id
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${stateFilter} ${rangeFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${asnFilter} ${stateFilter} ${rangeFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as Array<AccessSessionRecord & { access_username: string | null }>;
@@ -1058,6 +1069,19 @@ export const repository = {
 	async deleteCountryRuleForSite(id: string, siteId: string): Promise<void> {
 		await db`DELETE FROM country_rules WHERE id=${id} AND site_id=${siteId}`;
 	},
+	async asnRules(siteId: string): Promise<AsnRuleRecord[]> {
+		return (await db`SELECT * FROM asn_rules WHERE site_id=${siteId} ORDER BY asn ASC`) as AsnRuleRecord[];
+	},
+	async asnRuleByAsn(siteId: string, asn: number): Promise<AsnRuleRecord | null> {
+		const rows = (await db`SELECT * FROM asn_rules WHERE site_id=${siteId} AND asn=${asn} LIMIT 1`) as AsnRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertAsnRule(rule: AsnRuleRecord): Promise<void> {
+		await db`INSERT INTO asn_rules (id,site_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteAsnRuleForSite(id: string, siteId: string): Promise<void> {
+		await db`DELETE FROM asn_rules WHERE id=${id} AND site_id=${siteId}`;
+	},
 	async routeIpRules(routePolicyId: string): Promise<RouteIpRuleRecord[]> {
 		return (await db`SELECT * FROM route_ip_rules WHERE route_policy_id=${routePolicyId} ORDER BY created_at DESC`) as RouteIpRuleRecord[];
 	},
@@ -1080,6 +1104,19 @@ export const repository = {
 	},
 	async deleteRouteCountryRuleForRoute(id: string, routePolicyId: string): Promise<void> {
 		await db`DELETE FROM route_country_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+	},
+	async routeAsnRules(routePolicyId: string): Promise<RouteAsnRuleRecord[]> {
+		return (await db`SELECT * FROM route_asn_rules WHERE route_policy_id=${routePolicyId} ORDER BY asn ASC`) as RouteAsnRuleRecord[];
+	},
+	async routeAsnRuleByAsn(routePolicyId: string, asn: number): Promise<RouteAsnRuleRecord | null> {
+		const rows = (await db`SELECT * FROM route_asn_rules WHERE route_policy_id=${routePolicyId} AND asn=${asn} LIMIT 1`) as RouteAsnRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertRouteAsnRule(rule: RouteAsnRuleRecord): Promise<void> {
+		await db`INSERT INTO route_asn_rules (id,route_policy_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteRouteAsnRuleForRoute(id: string, routePolicyId: string): Promise<void> {
+		await db`DELETE FROM route_asn_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
 	},
 	async updateSiteNetworkDefaults(siteId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
 		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
@@ -1139,6 +1176,19 @@ export const repository = {
 	},
 	async deleteStreamCountryRuleForStream(id: string, streamId: string): Promise<void> {
 		await db`DELETE FROM stream_country_rules WHERE id=${id} AND stream_id=${streamId}`;
+	},
+	async streamAsnRules(streamId: string): Promise<StreamAsnRuleRecord[]> {
+		return (await db`SELECT * FROM stream_asn_rules WHERE stream_id=${streamId} ORDER BY asn ASC`) as StreamAsnRuleRecord[];
+	},
+	async streamAsnRuleByAsn(streamId: string, asn: number): Promise<StreamAsnRuleRecord | null> {
+		const rows = (await db`SELECT * FROM stream_asn_rules WHERE stream_id=${streamId} AND asn=${asn} LIMIT 1`) as StreamAsnRuleRecord[];
+		return rows[0] ?? null;
+	},
+	async insertStreamAsnRule(rule: StreamAsnRuleRecord): Promise<void> {
+		await db`INSERT INTO stream_asn_rules (id,stream_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+	},
+	async deleteStreamAsnRuleForStream(id: string, streamId: string): Promise<void> {
+		await db`DELETE FROM stream_asn_rules WHERE id=${id} AND stream_id=${streamId}`;
 	},
 	async updateStreamNetworkDefaults(streamId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
 		await db`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
@@ -1315,6 +1365,7 @@ export const repository = {
 		const protectionStatusFilter = query.protectionStatus ? db`AND protection_status=${query.protectionStatus}` : db``;
 		const originFilter = query.originId ? db`AND origin_id=${query.originId}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code, 'ZZ')=${query.countryCode}` : db``;
+		const asnFilter = query.asn ? db`AND asn=${query.asn}` : db``;
 		const methodFilter = query.method ? db`AND method=${query.method}` : db``;
 		const statusFilter =
 			query.statusGroup === "1xx"
@@ -1334,16 +1385,16 @@ export const repository = {
 		const offset = (query.page - 1) * query.pageSize;
 		const [countRow] = (await db`
       SELECT COUNT(*) AS count FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${asnFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
     `) as Array<{ count: number | string }>;
 		const items = (await db`
-      SELECT id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,origin_id,cache_status,
+      SELECT id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,
         protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,
         protection_matches_json,access_username,referer,referer_host,created_at,
         (CASE WHEN request_body IS NOT NULL THEN 1 ELSE 0 END) AS has_request_body,
         (CASE WHEN response_body IS NOT NULL THEN 1 ELSE 0 END) AS has_response_body
       FROM request_events
-      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
+      WHERE 1=1 ${siteFilter} ${searchFilter} ${countryFilter} ${asnFilter} ${decisionFilter} ${cacheStatusFilter} ${protectionStatusFilter} ${originFilter} ${methodFilter} ${statusFilter} ${sinceFilter} ${untilFilter}
       ORDER BY ${order}
       LIMIT ${query.pageSize} OFFSET ${offset}
     `) as Array<RequestEventRecord & { has_request_body: number; has_response_body: number }>;
@@ -1765,6 +1816,8 @@ export const repository = {
         SELECT created_at, action FROM ip_rules WHERE site_id=${siteId}
         UNION ALL
         SELECT created_at, action FROM country_rules WHERE site_id=${siteId}
+        UNION ALL
+        SELECT created_at, action FROM asn_rules WHERE site_id=${siteId}
       ) AS network_rules
       WHERE created_at >= ${since} AND created_at <= ${until}
       GROUP BY ${bucket}, action
@@ -1779,6 +1832,8 @@ export const repository = {
         SELECT action, expires_at FROM ip_rules WHERE site_id=${siteId}
         UNION ALL
         SELECT action, expires_at FROM country_rules WHERE site_id=${siteId}
+        UNION ALL
+        SELECT action, expires_at FROM asn_rules WHERE site_id=${siteId}
       ) AS network_rules
       GROUP BY action
     `) as Array<{ action: string; active: number | string; expired: number | string }>;
@@ -2057,13 +2112,16 @@ export const repository = {
 			(await db`SELECT COUNT(*) AS count FROM country_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
 				count: number | string;
 			}>;
+		const [asnRules] = (await db`SELECT COUNT(*) AS count FROM asn_rules WHERE (expires_at IS NULL OR expires_at > ${now}) ${ruleSiteFilter}`) as Array<{
+			count: number | string;
+		}>;
 		const requests = toNumber(eventStats?.requests);
 		const errors = toNumber(eventStats?.errors);
 		const cacheHits = toNumber(eventStats?.cache_hits);
 		const cacheMisses = toNumber(eventStats?.cache_misses);
 		return {
 			activeSessions: toNumber(sessions?.count),
-			activeRules: toNumber(ipRules?.count) + toNumber(countryRules?.count),
+			activeRules: toNumber(ipRules?.count) + toNumber(countryRules?.count) + toNumber(asnRules?.count),
 			cacheHitRatio: cacheHits + cacheMisses > 0 ? cacheHits / (cacheHits + cacheMisses) : 0,
 			blocked24h: toNumber(eventStats?.blocked),
 			requests24h: requests,
@@ -2116,6 +2174,36 @@ export const repository = {
       ORDER BY count DESC
     `) as Array<{ country_code: string; count: number | string }>;
 		return rows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) }));
+	},
+	async tabAsnMetrics(
+		siteScope: string | string[] | undefined,
+		since: number,
+		until: number,
+		scope: Exclude<TabMetricsScope, "bandwidth">,
+	): Promise<Array<{ asn: number; org: string; count: number }>> {
+		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
+		const siteFilter = siteScopeFilter(siteScope);
+		if (scope === "sessions") {
+			const rows = (await db`
+        SELECT COALESCE(asn, 0) AS asn, COALESCE(asn_org, 'Unknown') AS asn_org, COUNT(*) AS count
+        FROM access_sessions
+        WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+        GROUP BY COALESCE(asn, 0), COALESCE(asn_org, 'Unknown')
+        ORDER BY count DESC
+        LIMIT 25
+      `) as Array<{ asn: number | string; asn_org: string; count: number | string }>;
+			return rows.map((row) => ({ asn: toNumber(row.asn), org: row.asn_org, count: toNumber(row.count) }));
+		}
+		const scopeFilter = tabScopeFilter(scope);
+		const rows = (await db`
+      SELECT COALESCE(asn, 0) AS asn, COALESCE(asn_org, 'Unknown') AS asn_org, COUNT(*) AS count
+      FROM request_events
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
+      GROUP BY COALESCE(asn, 0), COALESCE(asn_org, 'Unknown')
+      ORDER BY count DESC
+      LIMIT 25
+    `) as Array<{ asn: number | string; asn_org: string; count: number | string }>;
+		return rows.map((row) => ({ asn: toNumber(row.asn), org: row.asn_org, count: toNumber(row.count) }));
 	},
 	async tabRefererMetrics(
 		siteScope: string | string[] | undefined,
@@ -2236,6 +2324,26 @@ export const repository = {
 	},
 	async updateSessionCountry(id: string, countryCode: string): Promise<void> {
 		await db`UPDATE access_sessions SET country_code=${countryCode} WHERE id=${id} AND country_code IS NULL`;
+	},
+	async eventsMissingAsn(limit: number): Promise<Array<{ id: string; ip: string }>> {
+		if (limit <= 0) return [];
+		return (await db`SELECT id, ip FROM request_events WHERE asn IS NULL ORDER BY created_at DESC LIMIT ${limit}`) as Array<{
+			id: string;
+			ip: string;
+		}>;
+	},
+	async sessionsMissingAsn(limit: number): Promise<Array<{ id: string; initial_ip: string }>> {
+		if (limit <= 0) return [];
+		return (await db`SELECT id, initial_ip FROM access_sessions WHERE asn IS NULL ORDER BY created_at DESC LIMIT ${limit}`) as Array<{
+			id: string;
+			initial_ip: string;
+		}>;
+	},
+	async updateEventAsn(id: string, asn: number, org: string): Promise<void> {
+		await db`UPDATE request_events SET asn=${asn}, asn_org=${org} WHERE id=${id} AND asn IS NULL`;
+	},
+	async updateSessionAsn(id: string, asn: number, org: string): Promise<void> {
+		await db`UPDATE access_sessions SET asn=${asn}, asn_org=${org} WHERE id=${id} AND asn IS NULL`;
 	},
 	async tlsSettings(siteId: string): Promise<SiteTlsSettingsRecord | null> {
 		const rows = (await db`SELECT * FROM site_tls_settings WHERE site_id=${siteId} LIMIT 1`) as SiteTlsSettingsRecord[];
@@ -2513,6 +2621,7 @@ export const repository = {
 			await transaction`DELETE FROM stream_origin_latency_minutes WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_ip_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_country_rules WHERE stream_id=${id}`;
+			await transaction`DELETE FROM stream_asn_rules WHERE stream_id=${id}`;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE stream_id=${id}`;
 			await transaction`DELETE FROM notification_outbox WHERE stream_id=${id}`;
 			await transaction`DELETE FROM notification_events WHERE stream_id=${id}`;
@@ -2633,17 +2742,18 @@ export const repository = {
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
+		const asnFilter = query.asn ? db`AND asn=${query.asn}` : db``;
 		const searchFilter = pattern
 			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR LOWER(COALESCE(username,'')) LIKE ${pattern} OR connection_id=${exactSearch} OR protection_rule_id=${exactSearchUpper})`
 			: db``;
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const [countRow] =
-			(await db`SELECT COUNT(*) AS count FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${searchFilter}`) as Array<{
+			(await db`SELECT COUNT(*) AS count FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${asnFilter} ${searchFilter}`) as Array<{
 				count: number | string;
 			}>;
 		const items =
-			(await db`SELECT * FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${searchFilter} ORDER BY ${order} LIMIT ${query.pageSize} OFFSET ${offset}`) as StreamEventRecord[];
+			(await db`SELECT * FROM stream_events WHERE created_at >= ${query.since} AND created_at <= ${query.until} ${streamFilter} ${protocolFilter} ${typeFilter} ${countryFilter} ${asnFilter} ${searchFilter} ORDER BY ${order} LIMIT ${query.pageSize} OFFSET ${offset}`) as StreamEventRecord[];
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async pagedStreamBandwidth(query: StreamBandwidthQuery): Promise<PageResult<StreamBandwidthRow>> {
@@ -2676,6 +2786,7 @@ export const repository = {
 		clientToUpstreamBytes: number;
 		upstreamToClientBytes: number;
 		countries: Array<{ countryCode: string; connections: number; bytes: number; blocked: number }>;
+		asns: Array<{ asn: number; org: string; connections: number; blocked: number }>;
 	}> {
 		const eventStreamFilter = streamScopeFilter(streamId);
 		const bandwidthStreamFilter = streamScopeFilter(streamId);
@@ -2724,6 +2835,28 @@ export const repository = {
 		for (const row of blockedCountries)
 			if (!countries.has(row.country_code))
 				countries.set(row.country_code, { countryCode: row.country_code, connections: 0, bytes: 0, blocked: toNumber(row.blocked) });
+		const connectionAsns =
+			(await db`SELECT COALESCE(asn,0) AS asn,COALESCE(asn_org,'Unknown') AS asn_org,COUNT(*) AS connections FROM stream_events WHERE event_type='connected' AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter} GROUP BY COALESCE(asn,0),COALESCE(asn_org,'Unknown')`) as Array<{
+				asn: number | string;
+				asn_org: string;
+				connections: number | string;
+			}>;
+		const blockedAsns =
+			(await db`SELECT COALESCE(asn,0) AS asn,COALESCE(asn_org,'Unknown') AS asn_org,COUNT(*) AS blocked FROM stream_events WHERE event_type='blocked' AND created_at >= ${since} AND created_at <= ${until} ${eventStreamFilter} GROUP BY COALESCE(asn,0),COALESCE(asn_org,'Unknown')`) as Array<{
+				asn: number | string;
+				asn_org: string;
+				blocked: number | string;
+			}>;
+		const blockedByAsn = new Map(blockedAsns.map((row) => [toNumber(row.asn), toNumber(row.blocked)]));
+		const asns = new Map<number, { asn: number; org: string; connections: number; blocked: number }>();
+		for (const row of connectionAsns) {
+			const asn = toNumber(row.asn);
+			asns.set(asn, { asn, org: row.asn_org, connections: toNumber(row.connections), blocked: blockedByAsn.get(asn) ?? 0 });
+		}
+		for (const row of blockedAsns) {
+			const asn = toNumber(row.asn);
+			if (!asns.has(asn)) asns.set(asn, { asn, org: row.asn_org, connections: 0, blocked: toNumber(row.blocked) });
+		}
 		return {
 			connections: toNumber(events?.connections),
 			disconnections: toNumber(events?.disconnections),
@@ -2733,6 +2866,7 @@ export const repository = {
 			clientToUpstreamBytes: toNumber(bandwidth?.client_to_upstream_bytes),
 			upstreamToClientBytes: toNumber(bandwidth?.upstream_to_client_bytes),
 			countries: [...countries.values()].sort((a, b) => b.bytes - a.bytes || b.connections - a.connections),
+			asns: [...asns.values()].sort((a, b) => b.connections - a.connections || b.blocked - a.blocked).slice(0, 25),
 		};
 	},
 	async streamMetrics(

@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS access_sessions (
   verification_summary_json TEXT NOT NULL,
   request_count BIGINT NOT NULL DEFAULT 0,
   country_code VARCHAR(2) NULL,
+  asn BIGINT NULL,
+  asn_org VARCHAR(255) NULL,
   access_user_id VARCHAR(64) NULL,
   authenticated_at BIGINT NULL,
   origin_id VARCHAR(64) NULL
@@ -180,6 +182,16 @@ CREATE TABLE IF NOT EXISTS country_rules (
   expires_at BIGINT NULL,
   UNIQUE(site_id, country_code)
 );
+CREATE TABLE IF NOT EXISTS asn_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  asn BIGINT NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(site_id, asn)
+);
 CREATE TABLE IF NOT EXISTS route_ip_rules (
   id VARCHAR(64) PRIMARY KEY,
   route_policy_id VARCHAR(64) NOT NULL,
@@ -198,6 +210,16 @@ CREATE TABLE IF NOT EXISTS route_country_rules (
   created_at BIGINT NOT NULL,
   expires_at BIGINT NULL,
   UNIQUE(route_policy_id, country_code)
+);
+CREATE TABLE IF NOT EXISTS route_asn_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  route_policy_id VARCHAR(64) NOT NULL,
+  asn BIGINT NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(route_policy_id, asn)
 );
 CREATE TABLE IF NOT EXISTS stream_ip_rules (
   id VARCHAR(64) PRIMARY KEY,
@@ -218,6 +240,16 @@ CREATE TABLE IF NOT EXISTS stream_country_rules (
   expires_at BIGINT NULL,
   UNIQUE(stream_id, country_code)
 );
+CREATE TABLE IF NOT EXISTS stream_asn_rules (
+  id VARCHAR(64) PRIMARY KEY,
+  stream_id VARCHAR(64) NOT NULL,
+  asn BIGINT NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  reason TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL,
+  UNIQUE(stream_id, asn)
+);
 CREATE TABLE IF NOT EXISTS request_events (
   id VARCHAR(64) PRIMARY KEY,
   site_id VARCHAR(64) NOT NULL,
@@ -229,6 +261,8 @@ CREATE TABLE IF NOT EXISTS request_events (
   decision VARCHAR(64) NOT NULL,
   latency_ms INTEGER NOT NULL,
   country_code VARCHAR(2) NULL,
+  asn BIGINT NULL,
+  asn_org VARCHAR(255) NULL,
   origin_id VARCHAR(64) NULL,
 	cache_status VARCHAR(16) NULL,
 	protection_status VARCHAR(16) NULL,
@@ -426,6 +460,8 @@ CREATE TABLE IF NOT EXISTS stream_events (
   client_ip VARCHAR(128) NULL,
   client_port INTEGER NULL,
   country_code VARCHAR(2) NULL,
+  asn BIGINT NULL,
+  asn_org VARCHAR(255) NULL,
   reason VARCHAR(255) NULL,
   error TEXT NULL,
   protection_rule_id VARCHAR(128) NULL,
@@ -650,6 +686,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_method_created ON request_events (site_id, method, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_ip_created ON request_events (site_id, ip, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_country_created ON request_events (site_id, country_code, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_asn_created ON request_events (site_id, asn, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_origin_created ON request_events (site_id, origin_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_cache_created ON request_events (site_id, cache_status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_created ON request_events (site_id, protection_status, created_at)",
@@ -669,6 +706,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_access_users_api_token ON access_users (api_token_hash)",
 	"CREATE INDEX IF NOT EXISTS idx_site_access_users_user ON site_access_users (user_id, site_id)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_country_created ON access_sessions (site_id, country_code, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_asn_created ON access_sessions (site_id, asn, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_access_sessions_site_terminal ON access_sessions (site_id, expires_at, revoked_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_created ON ip_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_action_created ON ip_rules (site_id, action, created_at)",
@@ -676,16 +714,22 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_ip_rules_site_rule_id ON ip_rules (site_id, rule_id)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_created ON country_rules (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_country_rules_site_action ON country_rules (site_id, action, country_code)",
+	"CREATE INDEX IF NOT EXISTS idx_asn_rules_site_created ON asn_rules (site_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_asn_rules_site_action ON asn_rules (site_id, action, asn)",
 	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_created ON route_ip_rules (route_policy_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_action_created ON route_ip_rules (route_policy_id, action, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_route_ip_rules_route_expiry ON route_ip_rules (route_policy_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_route_country_rules_route_created ON route_country_rules (route_policy_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_route_country_rules_route_action ON route_country_rules (route_policy_id, action, country_code)",
+	"CREATE INDEX IF NOT EXISTS idx_route_asn_rules_route_created ON route_asn_rules (route_policy_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_route_asn_rules_route_action ON route_asn_rules (route_policy_id, action, asn)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_created ON stream_ip_rules (stream_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_action_created ON stream_ip_rules (stream_id, action, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_ip_rules_stream_expiry ON stream_ip_rules (stream_id, expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_country_rules_stream_created ON stream_country_rules (stream_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_stream_country_rules_stream_action ON stream_country_rules (stream_id, action, country_code)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_asn_rules_stream_created ON stream_asn_rules (stream_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_stream_asn_rules_stream_action ON stream_asn_rules (stream_id, action, asn)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_steps_expiry ON challenge_steps (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_consumptions_created ON challenge_consumptions (consumed_at)",
@@ -922,6 +966,24 @@ async function ensureGeoIpColumns(): Promise<void> {
 	}
 }
 
+async function ensureAsnColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE request_events ADD COLUMN asn BIGINT NULL",
+		"ALTER TABLE request_events ADD COLUMN asn_org VARCHAR(255) NULL",
+		"ALTER TABLE access_sessions ADD COLUMN asn BIGINT NULL",
+		"ALTER TABLE access_sessions ADD COLUMN asn_org VARCHAR(255) NULL",
+		"ALTER TABLE stream_events ADD COLUMN asn BIGINT NULL",
+		"ALTER TABLE stream_events ADD COLUMN asn_org VARCHAR(255) NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAccessSessionColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE access_sessions ADD COLUMN access_user_id VARCHAR(64) NULL",
@@ -1104,6 +1166,7 @@ export async function migrate(): Promise<void> {
 	await ensureIpRuleColumns();
 	await ensureStreamColumns();
 	await ensureGeoIpColumns();
+	await ensureAsnColumns();
 	await ensureAccessUserColumns();
 	await ensureAccessSettingsColumns();
 	await ensureAccessSessionColumns();

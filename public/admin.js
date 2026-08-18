@@ -20,6 +20,7 @@ const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.admin.column-visibility";
 const COLUMN_REGISTRY = {
 	traffic: [
 		{ key: "country", label: "Country" },
+		{ key: "asn", label: "ASN" },
 		{ key: "method", label: "Method" },
 		{ key: "path", label: "Path" },
 		{ key: "referer", label: "Referrer" },
@@ -41,6 +42,7 @@ const COLUMN_REGISTRY = {
 	],
 	sessions: [
 		{ key: "country", label: "Country" },
+		{ key: "asn", label: "ASN" },
 		{ key: "created", label: "Created" },
 		{ key: "lastSeen", label: "Last seen" },
 		{ key: "expires", label: "Expires" },
@@ -264,14 +266,19 @@ let accessList = {
 	availableUsers: [],
 };
 let countryRules = [];
+let asnRules = [];
 let editingRoutePolicyId = null;
 let routeIpRules = [];
 let routeCountryRules = [];
+let routeAsnRules = [];
 let currentTls = null;
 let overviewRequestId = 0;
 let trafficRequestId = 0;
 let geoRequestId = 0;
 let topListRequestId = 0;
+let asnRequestId = 0;
+let asnScopeSelection = "requests";
+let asnMetrics = null;
 let selectedRangeFrom = 0;
 let selectedRangeTo = 0;
 let dateRangeIsAutomatic = true;
@@ -862,6 +869,16 @@ function countryBadge(codeInput) {
 	return `<span class="country-badge" title="${escapeHtml(name)}" aria-label="${escapeHtml(name)}">${escapeHtml(code)}</span>`;
 }
 
+function asnBadge(asn, org) {
+	if (!asn) {
+		const title = org || "Unknown";
+		return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">-</span>`;
+	}
+	const label = `AS${asn}`;
+	const title = org ? `${label} - ${org}` : label;
+	return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
 function refererLabel(host) {
 	if (!host) return '<span class="muted">Direct</span>';
 	if (host === "(same site)") return '<span class="muted">Same site</span>';
@@ -900,6 +917,7 @@ async function loadTraffic() {
 				status: byId("eventStatus").value,
 				origin: byId("eventOrigin").value,
 				country: byId("eventCountry").value,
+				asn: byId("eventAsn").value,
 				...rangeQuery(),
 			})}`,
 		);
@@ -929,6 +947,7 @@ async function loadTraffic() {
           <td>${formatDate(event.created_at)}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
           ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
+          ${isColumnVisible("traffic", "asn") ? `<td>${asnBadge(event.asn, event.asn_org)}</td>` : ""}
           ${isColumnVisible("traffic", "method") ? `<td><span class="method-badge">${escapeHtml(event.method)}</span></td>` : ""}
           ${isColumnVisible("traffic", "path") ? `<td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>` : ""}
           ${isColumnVisible("traffic", "referer") ? `<td class="referrer-cell" title="${escapeHtml(event.referer || "No referrer")}">${refererLabel(event.referer_host)}</td>` : ""}
@@ -1065,6 +1084,7 @@ async function loadSessions() {
 				search: byId("sessionSearch").value.trim(),
 				state: byId("sessionState").value,
 				country: byId("sessionCountry").value,
+				asn: byId("sessionAsn").value,
 				...rangeQuery(),
 			})}`,
 		);
@@ -1083,6 +1103,7 @@ async function loadSessions() {
           <td><code title="${escapeHtml(session.id)}">${escapeHtml(truncate(session.id, 24))}</code>${session.access_username ? `<span class="cell-subtext">${escapeHtml(session.access_username)}</span>` : ""}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${session.last_ip} (${countryDisplayName(session.country_code || "ZZ")})`)}">${escapeHtml(session.last_ip)}</code></td>
           ${isColumnVisible("sessions", "country") ? `<td>${countryBadge(session.country_code)}</td>` : ""}
+          ${isColumnVisible("sessions", "asn") ? `<td>${asnBadge(session.asn, session.asn_org)}</td>` : ""}
           ${isColumnVisible("sessions", "created") ? `<td>${formatDate(session.created_at)}</td>` : ""}
           ${isColumnVisible("sessions", "lastSeen") ? `<td>${formatDate(session.last_seen_at)}</td>` : ""}
           ${isColumnVisible("sessions", "expires") ? `<td>${formatDate(session.expires_at)}</td>` : ""}
@@ -1123,12 +1144,14 @@ async function loadRules() {
 	if (!selectedSiteId) {
 		byId("rules").innerHTML = `<tr><td colspan="${rulesColumnCount()}" class="empty-cell">Create or select a site before adding IP rules.</td></tr>`;
 		byId("countryRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding country rules.</td></tr>';
+		byId("asnRules").innerHTML = '<tr><td colspan="7" class="empty-cell">Create or select a site before adding ASN rules.</td></tr>';
 		byId("saveNetworkDefaults").disabled = true;
 		return;
 	}
 	byId("saveNetworkDefaults").disabled = false;
 	setTableLoading("rules", rulesColumnCount());
 	setTableLoading("countryRules", 7);
+	setTableLoading("asnRules", 7);
 	updateSortIndicators("panel-rules", state);
 	try {
 		const [result, networkPolicy] = await Promise.all([
@@ -1173,6 +1196,7 @@ async function loadRules() {
 	} catch (error) {
 		setTableError("rules", rulesColumnCount(), error);
 		setTableError("countryRules", 7, error);
+		setTableError("asnRules", 7, error);
 	}
 }
 
@@ -1180,6 +1204,7 @@ function applyNetworkPolicy(policy) {
 	byId("defaultIpAction").value = policy.defaultIpAction ?? "inherit";
 	byId("defaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
 	countryRules = policy.countryRules ?? [];
+	asnRules = policy.asnRules ?? [];
 	const warning = byId("geoPolicyWarning");
 	if (!policy.geoip?.enabled) {
 		warning.textContent = "GeoIP is disabled. Country rules are stored but not enforced until GeoIP is enabled.";
@@ -1190,7 +1215,20 @@ function applyNetworkPolicy(policy) {
 	} else {
 		warning.classList.add("hidden");
 	}
+	const asnWarning = byId("asnPolicyWarning");
+	if (asnWarning) {
+		if (!policy.geoip?.asn?.enabled) {
+			asnWarning.textContent = "The ASN database is disabled. ASN rules are stored but not enforced until it is enabled.";
+			asnWarning.classList.remove("hidden");
+		} else if (!policy.geoip.asn.available) {
+			asnWarning.textContent = policy.geoip.asn.error || "The ASN database is unavailable. ASN policy fails open until it becomes available.";
+			asnWarning.classList.remove("hidden");
+		} else {
+			asnWarning.classList.add("hidden");
+		}
+	}
 	renderCountryRules();
+	renderAsnRules();
 }
 
 function renderCountryRules() {
@@ -1215,6 +1253,32 @@ function renderCountryRules() {
       <td>${formatDate(rule.created_at)}</td>
       <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
       <td><button class="button danger compact" data-country-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
+function renderAsnRules() {
+	const body = byId("asnRules");
+	if (!selectedSiteId) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">Select a site before adding ASN rules.</td></tr>';
+		return;
+	}
+	if (asnRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="7" class="empty-cell">No ASN rules are configured.</td></tr>';
+		return;
+	}
+	body.innerHTML = asnRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td><code>AS${rule.asn}</code></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${formatDate(rule.created_at)}</td>
+      <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+      <td><button class="button danger compact" data-asn-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
     </tr>`;
 		})
 		.join("");
@@ -1904,6 +1968,7 @@ function resetSiteScopedPages() {
 		availableUsers: [],
 	};
 	countryRules = [];
+	asnRules = [];
 	resetRoutePolicyForm();
 }
 
@@ -2146,8 +2211,10 @@ function resetRoutePolicyForm() {
 	byId("routeDefaultCountryAction").value = "inherit";
 	routeIpRules = [];
 	routeCountryRules = [];
+	routeAsnRules = [];
 	renderRouteIpRules();
 	renderRouteCountryRules();
+	renderRouteAsnRules();
 	byId("routeIpRuleNetworkCidr").value = "";
 	byId("routeIpRuleAction").value = "block";
 	byId("routeIpRuleExpiresAt").value = "";
@@ -2156,6 +2223,10 @@ function resetRoutePolicyForm() {
 	byId("routeCountryRuleAction").value = "block";
 	byId("routeCountryRuleExpiresAt").value = "";
 	byId("routeCountryRuleReason").value = "";
+	byId("routeAsnRuleAsn").value = "";
+	byId("routeAsnRuleAction").value = "block";
+	byId("routeAsnRuleExpiresAt").value = "";
+	byId("routeAsnRuleReason").value = "";
 	byId("routeNetworkRulesSection").classList.add("hidden");
 	byId("routeNetworkRulesPlaceholder").classList.remove("hidden");
 	byId("routeWebSocketMode").value = "inherit";
@@ -2294,6 +2365,27 @@ function renderRouteCountryRules() {
 		.join("");
 }
 
+function renderRouteAsnRules() {
+	const body = byId("routeAsnRules");
+	if (routeAsnRules.length === 0) {
+		body.innerHTML = '<tr><td colspan="6" class="empty-cell">No ASN rules configured for this route.</td></tr>';
+		return;
+	}
+	body.innerHTML = routeAsnRules
+		.map((rule) => {
+			const currentState = ruleState(rule);
+			return `<tr class="rule-row ${currentState}">
+      <td><span class="badge ${currentState === "active" ? "ok" : "warn"}">${currentState}</span></td>
+      <td><code>AS${rule.asn}</code></td>
+      <td><span class="badge action-${escapeHtml(rule.action)}">${escapeHtml(networkActionLabel(rule.action))}</span></td>
+      <td title="${escapeHtml(rule.reason)}">${escapeHtml(truncate(rule.reason || "-", 56))}</td>
+      <td>${rule.expires_at === null ? "Never" : formatDate(rule.expires_at)}</td>
+      <td><button class="button danger compact" data-route-asn-rule-id="${escapeHtml(rule.id)}">Delete</button></td>
+    </tr>`;
+		})
+		.join("");
+}
+
 async function loadRouteNetworkRules() {
 	if (!editingRoutePolicyId) return;
 	const requestedId = editingRoutePolicyId;
@@ -2302,8 +2394,10 @@ async function loadRouteNetworkRules() {
 		if (editingRoutePolicyId !== requestedId) return;
 		routeIpRules = response.ipRules ?? [];
 		routeCountryRules = response.countryRules ?? [];
+		routeAsnRules = response.asnRules ?? [];
 		renderRouteIpRules();
 		renderRouteCountryRules();
+		renderRouteAsnRules();
 	} catch (error) {
 		showToast(error.message, "bad");
 	}
@@ -3571,6 +3665,39 @@ async function loadGeoMetrics() {
 	renderGeoMap();
 }
 
+async function loadAsnMetrics() {
+	const requestId = ++asnRequestId;
+	const scope = asnScopeSelection === "bandwidth" ? "requests" : asnScopeSelection;
+	const result = await api(`/asn-metrics-tab?scope=${scope}&${queryString(rangeQuery())}`);
+	if (requestId !== asnRequestId) return;
+	asnMetrics = result;
+	renderAsnList();
+}
+
+function renderAsnList() {
+	if (!asnMetrics) return;
+	const config = geoConfigForScope(asnScopeSelection === "bandwidth" ? "requests" : asnScopeSelection);
+	const items = asnMetrics.items ?? [];
+	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
+	const rangeLabel = rangeDurationLabel(asnMetrics.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
+	byId("asnSubtitle").textContent = `${config.label} by network provider (${rangeLabel})`;
+	byId("asnTotal").textContent = `${formatNumber(total)} ${config.unit}`;
+	byId("asnList").innerHTML =
+		items.length === 0
+			? '<p class="muted">No ASN data is available for this range.</p>'
+			: items
+					.map((item) => {
+						const label = item.asn ? `AS${item.asn} ${item.org ?? ""}`.trim() : item.org || "Unknown";
+						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;
+						return `<div class="geo-country-row"><div class="row between"><span title="${escapeHtml(label)}">${escapeHtml(truncate(label, 60))}</span><strong>${formatNumber(item.count)}</strong></div><div class="breakdown-track"><div style="width:${Math.max(1, percentage)}%"></div></div></div>`;
+					})
+					.join("");
+	const status = asnMetrics.status;
+	if (!status?.asn?.enabled) byId("asnSubtitle").title = "The ASN database is disabled.";
+	else if (!status.asn.available) byId("asnSubtitle").title = status.asn.error ?? "The ASN database is unavailable.";
+	else byId("asnSubtitle").title = "";
+}
+
 const TOP_LIST_KIND = {
 	referrers: {
 		endpoint: (config) => `referer-metrics-tab?scope=${config.refererScope}`,
@@ -3632,7 +3759,7 @@ async function loadTopList() {
 }
 
 async function refreshGeoAndReferrers() {
-	await Promise.all([loadGeoMetrics(), loadTopList()]);
+	await Promise.all([loadGeoMetrics(), loadTopList(), loadAsnMetrics()]);
 }
 
 function renderRefererList() {
@@ -3713,6 +3840,10 @@ function setActiveTab(name) {
 		topListScopeSelection = GEO_TAB_CONFIG[name].geoScope;
 		byId("topListMode").value = topListScopeSelection;
 	}
+	if (GEO_TAB_CONFIG[name].geoScope !== "bandwidth") {
+		asnScopeSelection = GEO_TAB_CONFIG[name].geoScope;
+		byId("asnMetricMode").value = asnScopeSelection;
+	}
 	void refreshGeoAndReferrers();
 	void loadMetrics();
 	if (name === "cache") void loadCacheMetrics();
@@ -3754,6 +3885,7 @@ function bindFilters() {
 		void loadTraffic();
 	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
+	byId("eventAsn").addEventListener("input", trafficSearch);
 	for (const id of ["eventDecision", "eventCacheStatus", "eventProtectionStatus", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
 		byId(id).addEventListener("change", () => {
 			tableState.traffic.page = 1;
@@ -3788,6 +3920,7 @@ function bindFilters() {
 		void loadSessions();
 	});
 	byId("sessionSearch").addEventListener("input", sessionSearch);
+	byId("sessionAsn").addEventListener("input", sessionSearch);
 	for (const id of ["sessionState", "sessionCountry"])
 		byId(id).addEventListener("change", () => {
 			tableState.sessions.page = 1;
@@ -4419,6 +4552,21 @@ async function handleBodyClick(event) {
 		return;
 	}
 
+	const asnRuleButton = event.target.closest("button[data-asn-rule-id]");
+	if (asnRuleButton) {
+		if (!confirm("Delete this ASN rule?")) return;
+		asnRuleButton.disabled = true;
+		try {
+			await api(`/asn-rules/${encodeURIComponent(asnRuleButton.dataset.asnRuleId)}`, { method: "DELETE" });
+			showToast("ASN rule deleted.");
+			await Promise.all([loadRules(), loadOverview(), loadMetrics()]);
+		} catch (error) {
+			asnRuleButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
 	const ruleButton = event.target.closest("button[data-rule-id]");
 	if (ruleButton) {
 		if (!confirm("Delete this IP rule?")) return;
@@ -4464,6 +4612,23 @@ async function handleBodyClick(event) {
 			await loadRouteNetworkRules();
 		} catch (error) {
 			routeCountryRuleButton.disabled = false;
+			showToast(error.message, "bad");
+		}
+		return;
+	}
+
+	const routeAsnRuleButton = event.target.closest("button[data-route-asn-rule-id]");
+	if (routeAsnRuleButton && editingRoutePolicyId) {
+		if (!confirm("Delete this route ASN rule?")) return;
+		routeAsnRuleButton.disabled = true;
+		try {
+			await api(`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/asn-rules/${encodeURIComponent(routeAsnRuleButton.dataset.routeAsnRuleId)}`, {
+				method: "DELETE",
+			});
+			showToast("Route ASN rule deleted.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			routeAsnRuleButton.disabled = false;
 			showToast(error.message, "bad");
 		}
 	}
@@ -4557,6 +4722,10 @@ function bindActions() {
 	byId("topListMode").addEventListener("change", (event) => {
 		topListScopeSelection = event.currentTarget.value;
 		void loadTopList();
+	});
+	byId("asnMetricMode").addEventListener("change", (event) => {
+		asnScopeSelection = event.currentTarget.value;
+		void loadAsnMetrics();
 	});
 	byId("dateTimeFormat").addEventListener("change", (event) => {
 		saveDateTimeFormat(event.currentTarget.value);
@@ -4808,6 +4977,29 @@ function bindActions() {
 			submit.disabled = false;
 		}
 	});
+	byId("asnRuleForm").addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const form = event.currentTarget;
+		const submit = form.querySelector('button[type="submit"]');
+		submit.disabled = true;
+		const data = Object.fromEntries(new FormData(form));
+		const expiration = String(data.expiresAt ?? "").trim();
+		data.expiresAt = expiration ? new Date(expiration).getTime() : null;
+		try {
+			await api("/asn-rules", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(data),
+			});
+			form.reset();
+			showToast("ASN rule added.");
+			await Promise.all([loadRules(), loadOverview(), loadMetrics()]);
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			submit.disabled = false;
+		}
+	});
 	byId("applyDateRange").addEventListener(
 		"click",
 		(event) =>
@@ -4898,6 +5090,38 @@ function bindActions() {
 			byId("routeCountryRuleReason").value = "";
 			byId("routeCountryRuleExpiresAt").value = "";
 			showToast("Route country rule added.");
+			await loadRouteNetworkRules();
+		} catch (error) {
+			showToast(error.message, "bad");
+		} finally {
+			submit.disabled = false;
+		}
+	});
+	byId("addRouteAsnRule").addEventListener("click", async (event) => {
+		if (!editingRoutePolicyId) return;
+		const submit = event.currentTarget;
+		if (!byId("routeAsnRuleAsn").value) {
+			showToast("Enter an ASN.", "bad");
+			return;
+		}
+		submit.disabled = true;
+		const expiration = byId("routeAsnRuleExpiresAt").value.trim();
+		const data = {
+			asn: byId("routeAsnRuleAsn").value,
+			action: byId("routeAsnRuleAction").value,
+			reason: byId("routeAsnRuleReason").value,
+			expiresAt: expiration ? new Date(expiration).getTime() : null,
+		};
+		try {
+			await api(`/route-policies/${encodeURIComponent(editingRoutePolicyId)}/asn-rules`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(data),
+			});
+			byId("routeAsnRuleAsn").value = "";
+			byId("routeAsnRuleReason").value = "";
+			byId("routeAsnRuleExpiresAt").value = "";
+			showToast("Route ASN rule added.");
 			await loadRouteNetworkRules();
 		} catch (error) {
 			showToast(error.message, "bad");

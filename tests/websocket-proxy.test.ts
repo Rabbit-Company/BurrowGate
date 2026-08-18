@@ -48,6 +48,8 @@ const accessSession: AccessSessionRecord = {
 	verification_summary_json: "{}",
 	request_count: 1,
 	country_code: "US",
+	asn: 15169,
+	asn_org: "Test ASN",
 	access_user_id: "user_ziga",
 	authenticated_at: Date.now(),
 	sso_sid: null,

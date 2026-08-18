@@ -1,8 +1,8 @@
 import { repository } from "../db/repository.ts";
-import type { CountryRuleRecord, DefaultNetworkAction, IpRuleAction, IpRuleRecord, SiteRecord } from "../types.ts";
+import type { AsnRuleRecord, CountryRuleRecord, DefaultNetworkAction, IpRuleAction, IpRuleRecord, SiteRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
-import { countryCodeForStorage } from "./geoip-service.ts";
+import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 import type { BanDurationSeverity } from "./http-policy-service.ts";
 import type { ManagedProtectionMatch } from "./managed-protection-service.ts";
 import { notificationService } from "./notification-service.ts";
@@ -15,6 +15,7 @@ interface CachedIpRule {
 interface CachedNetworkRules {
 	ipRules: CachedIpRule[];
 	countryRules: Map<string, CountryRuleRecord>;
+	asnRules: Map<number, AsnRuleRecord>;
 }
 
 const ruleCache = new Map<string, Promise<CachedNetworkRules>>();
@@ -22,13 +23,14 @@ const ruleCache = new Map<string, Promise<CachedNetworkRules>>();
 async function rulesForSite(siteId: string): Promise<CachedNetworkRules> {
 	let cached = ruleCache.get(siteId);
 	if (!cached) {
-		cached = Promise.all([repository.rules(siteId), repository.countryRules(siteId)])
-			.then(([ipRules, countryRules]) => ({
+		cached = Promise.all([repository.rules(siteId), repository.countryRules(siteId), repository.asnRules(siteId)])
+			.then(([ipRules, countryRules, asnRules]) => ({
 				ipRules: ipRules
 					.map((rule) => ({ rule, cidr: parseCidr(rule.network_cidr) }))
 					.filter((item): item is CachedIpRule => item.cidr !== null)
 					.sort((left, right) => right.cidr.prefix - left.cidr.prefix || right.rule.created_at - left.rule.created_at),
 				countryRules: new Map(countryRules.map((rule) => [rule.country_code, rule])),
+				asnRules: new Map(asnRules.map((rule) => [rule.asn, rule])),
 			}))
 			.catch((error) => {
 				ruleCache.delete(siteId);
@@ -43,7 +45,7 @@ export function invalidateNetworkPolicy(siteId: string): void {
 	ruleCache.delete(siteId);
 }
 
-export type NetworkDecisionSource = "ip-rule" | "country-rule" | "country-default" | "ip-default" | "route";
+export type NetworkDecisionSource = "ip-rule" | "asn-rule" | "country-rule" | "country-default" | "ip-default" | "route";
 export type NetworkDecisionScope = "site" | "route";
 
 export interface NetworkDecision {
@@ -52,6 +54,8 @@ export interface NetworkDecision {
 	scope: NetworkDecisionScope;
 	expiresAt: number | null;
 	countryCode: string | null;
+	asn: number | null;
+	asnOrg: string | null;
 	reason: string | null;
 	routePolicyId: string | null;
 }
@@ -68,6 +72,8 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 	const now = Date.now();
 	const rules = await rulesForSite(site.id);
 	const ipRule = ip === "unknown" ? null : (rules.ipRules.find((item) => active(item.rule, now) && cidrContains(item.cidr, ip))?.rule ?? null);
+	const { asn, org: asnOrg } = ip === "unknown" ? { asn: null, org: null } : asnForStorage(ip);
+	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
 
 	if (ipRule) {
 		return {
@@ -75,13 +81,32 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 			source: "ip-rule",
 			scope: "site",
 			expiresAt: ipRule.expires_at,
-			countryCode: null,
+			countryCode,
+			asn,
+			asnOrg,
 			reason: ipRule.reason || `Matched IP rule ${ipRule.network_cidr}`,
 			routePolicyId: null,
 		};
 	}
 
-	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
+	if (asn !== null) {
+		const candidateAsnRule = rules.asnRules.get(asn) ?? null;
+		const asnRule = candidateAsnRule && active(candidateAsnRule, now) ? candidateAsnRule : null;
+		if (asnRule) {
+			return {
+				action: asnRule.action,
+				source: "asn-rule",
+				scope: "site",
+				expiresAt: asnRule.expires_at,
+				countryCode,
+				asn,
+				asnOrg,
+				reason: asnRule.reason || `Matched ASN rule AS${asn}`,
+				routePolicyId: null,
+			};
+		}
+	}
+
 	if (countryCode) {
 		const candidateCountryRule = rules.countryRules.get(countryCode) ?? null;
 		const countryRule = candidateCountryRule && active(candidateCountryRule, now) ? candidateCountryRule : null;
@@ -92,6 +117,8 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 				scope: "site",
 				expiresAt: countryRule.expires_at,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: countryRule.reason || `Matched country rule ${countryCode}`,
 				routePolicyId: null,
 			};
@@ -105,6 +132,8 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 				scope: "site",
 				expiresAt: null,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: `Default country action for ${countryCode}`,
 				routePolicyId: null,
 			};
@@ -119,6 +148,8 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 			scope: "site",
 			expiresAt: null,
 			countryCode,
+			asn,
+			asnOrg,
 			reason: "Default IP action",
 			routePolicyId: null,
 		};
@@ -130,6 +161,8 @@ export async function evaluateIp(site: SiteRecord, ip: string): Promise<NetworkD
 		scope: "site",
 		expiresAt: null,
 		countryCode,
+		asn,
+		asnOrg,
 		reason: null,
 		routePolicyId: null,
 	};
@@ -245,6 +278,28 @@ export async function addCountryRule(
 		expires_at: expiresAt,
 	};
 	await repository.insertCountryRule(record);
+	invalidateNetworkPolicy(siteId);
+	return record;
+}
+
+export async function addAsnRule(siteId: string, asnInput: unknown, action: IpRuleAction, reason: string, expiresAt: number | null): Promise<AsnRuleRecord> {
+	const asn = Number(asnInput);
+	if (!Number.isInteger(asn) || asn <= 0) throw new Error("ASN must be a positive whole number");
+	const existing = await repository.asnRuleByAsn(siteId, asn);
+	if (existing && active(existing, Date.now())) {
+		throw new Error(`An active rule for AS${asn} already exists`);
+	}
+	if (existing) await repository.deleteAsnRuleForSite(existing.id, siteId);
+	const record: AsnRuleRecord = {
+		id: randomId("asn-rule"),
+		site_id: siteId,
+		asn,
+		action,
+		reason,
+		created_at: Date.now(),
+		expires_at: expiresAt,
+	};
+	await repository.insertAsnRule(record);
 	invalidateNetworkPolicy(siteId);
 	return record;
 }

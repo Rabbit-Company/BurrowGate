@@ -314,6 +314,8 @@ export interface AccessSessionRecord {
 	verification_summary_json: string;
 	request_count: number;
 	country_code: string | null;
+	asn: number | null;
+	asn_org: string | null;
 	access_user_id: string | null;
 	authenticated_at: number | null;
 	origin_id?: string | null;
@@ -465,6 +467,8 @@ export interface StreamEventRecord {
 	client_ip: string | null;
 	client_port: number | null;
 	country_code: string | null;
+	asn: number | null;
+	asn_org: string | null;
 	reason: string | null;
 	error: string | null;
 	protection_rule_id: string | null;
@@ -536,6 +540,16 @@ export interface CountryRuleRecord {
 	expires_at: number | null;
 }
 
+export interface AsnRuleRecord {
+	id: string;
+	site_id: string;
+	asn: number;
+	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
 export interface RouteIpRuleRecord {
 	id: string;
 	route_policy_id: string;
@@ -550,6 +564,16 @@ export interface RouteCountryRuleRecord {
 	id: string;
 	route_policy_id: string;
 	country_code: string;
+	action: IpRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
+export interface RouteAsnRuleRecord {
+	id: string;
+	route_policy_id: string;
+	asn: number;
 	action: IpRuleAction;
 	reason: string;
 	created_at: number;
@@ -576,6 +600,16 @@ export interface StreamCountryRuleRecord {
 	expires_at: number | null;
 }
 
+export interface StreamAsnRuleRecord {
+	id: string;
+	stream_id: string;
+	asn: number;
+	action: StreamRuleAction;
+	reason: string;
+	created_at: number;
+	expires_at: number | null;
+}
+
 export type HttpCacheStatus = "hit" | "miss" | "bypass";
 export type RequestProtectionStatus = "clean" | "monitored" | "blocked";
 
@@ -590,6 +624,8 @@ export interface RequestEventRecord {
 	decision: string;
 	latency_ms: number;
 	country_code: string | null;
+	asn: number | null;
+	asn_org: string | null;
 	origin_id?: string | null;
 	cache_status: HttpCacheStatus | null;
 	protection_status: RequestProtectionStatus | null;

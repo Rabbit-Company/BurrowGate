@@ -4,7 +4,7 @@ import { fromBase64Url, hmacSha256Hex, randomId, randomToken, sha256Hex, timingS
 import { config, secureCookieForRequest } from "../config.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { decryptSecret, encryptSecret } from "./secret-encryption-service.ts";
-import { countryCodeForStorage } from "./geoip-service.ts";
+import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 
 export interface AccessUserInput {
 	username?: unknown;
@@ -583,6 +583,7 @@ export async function resolveApiTokenAccess(
 		await repository.touchSession(existing.id, ip, now);
 		return { session: existing, user };
 	}
+	const asn = asnForStorage(ip);
 	const record: AccessSessionRecord = {
 		id: randomId("sess"),
 		site_id: site.id,
@@ -597,6 +598,8 @@ export async function resolveApiTokenAccess(
 		verification_summary_json: JSON.stringify({ method: "api-token" }),
 		request_count: 0,
 		country_code: countryCodeForStorage(ip),
+		asn: asn.asn,
+		asn_org: asn.org,
 		access_user_id: user.id,
 		authenticated_at: now,
 		sso_sid: null,

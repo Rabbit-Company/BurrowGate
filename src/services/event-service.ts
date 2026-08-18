@@ -2,7 +2,7 @@ import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import { normalizeHost } from "../utils/http.ts";
 import { randomId } from "../utils/crypto.ts";
-import { countryCodeForStorage } from "./geoip-service.ts";
+import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 import type { HttpCacheStatus, SiteRecord } from "../types.ts";
 import type { ManagedProtectionMatch, ManagedProtectionSeverity, ManagedProtectionStatus } from "./managed-protection-service.ts";
@@ -43,6 +43,8 @@ export async function recordEvent(input: {
 	decision: string;
 	latencyMs: number;
 	countryCode?: string | null;
+	asn?: number | null;
+	asnOrg?: string | null;
 	originId?: string | null;
 	cacheStatus?: HttpCacheStatus | null;
 	protectionStatus?: ManagedProtectionStatus | null;
@@ -64,6 +66,7 @@ export async function recordEvent(input: {
 	openMetrics.recordHttpRequest(input);
 	if (input.protectionStatus) openMetrics.recordHttpProtectionRequest(input.siteId, input.protectionStatus);
 	try {
+		const resolvedAsn = input.asn === undefined || input.asnOrg === undefined ? asnForStorage(input.ip) : { asn: input.asn, org: input.asnOrg };
 		await repository.insertEvent({
 			id: input.requestId || randomId("evt"),
 			site_id: input.siteId,
@@ -75,6 +78,8 @@ export async function recordEvent(input: {
 			decision: input.decision,
 			latency_ms: input.latencyMs,
 			country_code: input.countryCode === undefined ? countryCodeForStorage(input.ip) : input.countryCode,
+			asn: input.asn === undefined ? resolvedAsn.asn : input.asn,
+			asn_org: input.asnOrg === undefined ? resolvedAsn.org : input.asnOrg,
 			origin_id: input.originId ?? null,
 			cache_status: input.cacheStatus ?? null,
 			protection_status: input.protectionStatus ?? null,

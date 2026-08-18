@@ -22,16 +22,16 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - SHA-256 browser proof of work
 - Opaque and revocable visitor sessions
 - TOTP and WebAuthn (security key) two-factor authentication for dashboard and access-list accounts, with per-site WebAuthn credential scoping
-- IPv4, IPv6, CIDR, and country pass, bypass, block, and challenge rules
+- IPv4, IPv6, CIDR, ASN, and country pass, bypass, block, and challenge rules
 - Site-wide and per-route default IP and country actions for allowlists and blocklists, with route rules taking precedence over the site's
 - Signed origin verification headers
 - Optional per-site/per-route request and response body capture, bounded by size and content type with a self-expiring window, viewable per request from Recent Traffic
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
-- Stream connection logs, live TCP/UDP peers, GeoIP enrichment, and bandwidth by IP and incoming port
+- Stream connection logs, live TCP/UDP peers, GeoIP and ASN enrichment, and bandwidth by IP and incoming port
 - Per-site traffic retention
-- Country-level GeoIP analytics with an interactive SVG world map
-- Country codes, country filters, and country tooltips in traffic and session tables
+- Country-level GeoIP analytics with an interactive SVG world map, and a "Top ASNs" list by network provider
+- Country codes, ASNs, country filters, ASN filters, and country/ASN tooltips in traffic and session tables
 - Per-site customizable HTML or JSON error responses
 - Multi-origin load balancing with priority failover, round robin, weighted round robin, session affinity, and deterministic IP fallback
 - Per-origin health checks, automatic unhealthy-origin removal, and optional 503 maintenance mode
@@ -206,8 +206,10 @@ Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases)
 | `BG_PENDING_CHANGE_POLL_INTERVAL_SECONDS` | `15`                                 | Interval between checks for due scheduled Site/Stream changes                              |
 | `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                      |
 | `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
-| `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP reader cache entries                                                         |
-| `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when the MMDB file is not available yet                                     |
+| `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP/ASN reader cache entries                                                     |
+| `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when a MMDB file is not available yet                                       |
+| `BG_GEOIP_ASN_ENABLED`                    | same as `BG_GEOIP_ENABLED`           | Enable ASN enrichment                                                                      |
+| `BG_GEOIP_ASN_DATABASE_PATH`              | `./data/geoip/GeoLite2-ASN.mmdb`     | Local MaxMind ASN database path                                                            |
 | `BG_OPENMETRICS_ENABLED`                  | `false`                              | Expose `/_burrowgate/metrics` for Prometheus-compatible scraping                           |
 | `BG_OPENMETRICS_TOKEN`                    | empty                                | Optional bearer token protecting the OpenMetrics endpoint                                  |
 | `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                       |
@@ -271,11 +273,11 @@ Environment settings only seed an empty database. Existing sites are managed fro
 
 ## GeoIP Analytics
 
-BurrowGate can store an ISO country code with each request event, visitor session, and bandwidth bucket. The dashboard renders an interactive SVG world map for request volume, newly created sessions, and client bandwidth.
+BurrowGate can store an ISO country code and an ASN (with organization name) with each request event, visitor session, and stream event; bandwidth buckets keep the country code only. The dashboard renders an interactive SVG world map for request volume, newly created sessions, and client bandwidth by country, plus a "Top ASNs" list by network provider.
 
-Lookups use a local `GeoLite2-Country.mmdb` file. BurrowGate reuses one database reader, keeps a bounded LRU cache, and stores only the two-letter country code. It does not call an external GeoIP API for each request.
+Lookups use local `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` files. BurrowGate reuses one reader per database, keeps a bounded LRU cache for each, and stores only the two-letter country code, the ASN, and its organization name. It does not call an external GeoIP API for each request. Either database can be enabled independently; a missing or disabled ASN database just means ASN rules never match and no ASN data is recorded, without affecting country lookups.
 
-The included optional Compose profile runs MaxMind's official database updater:
+The included optional Compose profile runs MaxMind's official database updater for both databases:
 
 ```env
 MAXMIND_ACCOUNT_ID=123456
@@ -298,17 +300,18 @@ See [`docs/BANDWIDTH.md`](docs/BANDWIDTH.md).
 
 ## Network Policies
 
-Each site, and each route policy, can define a default IP action, a default country action, explicit IP or CIDR rules, and explicit country rules. This supports blocklists, deny-by-default allowlists, and trusted clients that bypass browser verification - either site-wide or scoped to a single route, such as allowing one trusted IP on an API endpoint while blocking everyone else.
+Each site, and each route policy, can define a default IP action, a default country action, explicit IP or CIDR rules, explicit ASN rules, and explicit country rules. This supports blocklists, deny-by-default allowlists, and trusted clients that bypass browser verification - either site-wide or scoped to a single route, such as allowing one trusted IP on an API endpoint while blocking everyone else.
 
 A route's network policy is checked first and takes precedence over the site's for requests matching that route; a route with nothing configured falls back to the site's policy:
 
 1. Longest matching IP or CIDR rule
-2. Explicit country rule
-3. Default country action
-4. Default IP action
-5. Route policy access mode
+2. Explicit ASN rule
+3. Explicit country rule
+4. Default country action
+5. Default IP action
+6. Route policy access mode
 
-Country policy fails open when the GeoIP database is unavailable. IP rules and the default IP action continue to apply.
+There is no default ASN action - only explicit ASN allow/block/challenge/pass rules, falling through to country policy and the defaults when no ASN rule matches. Country and ASN policy each fail open independently when their respective GeoIP database is unavailable. IP rules and the default IP action continue to apply regardless.
 
 See [`docs/NETWORK_POLICIES.md`](docs/NETWORK_POLICIES.md).
 
@@ -448,7 +451,7 @@ See [`docs/TLS.md`](docs/TLS.md).
 
 Open the **Streams** dashboard from the switcher at the top of the control panel. Each stream has a name (used throughout the dashboard instead of a bare port number) and configures an incoming port, forward host and port, TCP and/or UDP, optional TCP TLS termination, an optional TCP origin health check, and its own monitoring-retention period.
 
-The dashboard provides live TCP connections and UDP peers, connect/disconnect and error logs, client country, and payload totals grouped by IP, incoming port, and protocol. Because UDP has no transport connection lifecycle, BurrowGate opens a synthetic peer session on the first datagram and closes it after the configured inactivity timeout.
+The dashboard provides live TCP connections and UDP peers, connect/disconnect and error logs, client country and ASN, and payload totals grouped by IP, incoming port, and protocol. Because UDP has no transport connection lifecycle, BurrowGate opens a synthetic peer session on the first datagram and closes it after the configured inactivity timeout.
 
 With the default `network_mode: host` Compose configuration, every stream port you create from the dashboard is immediately reachable on the host with no Compose changes or container restart. Firewall the host to only expose the ports you intend to publish.
 
@@ -520,7 +523,7 @@ The dashboard includes:
 - challenge-gated access lists with reusable users and signed upstream identity
 - cross-site request and latency comparison
 - an "All websites"/"All streams" option in the site and Stream selectors, combining statistics, graphs, and tables across every site or Stream a user can access
-- interactive country map for requests and newly created sessions
+- interactive country map for requests and newly created sessions, plus a "Top ASNs" list by network provider
 - server-side pagination, search, filters, and sorting
 - exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions
 - drag-to-select time ranges directly on time-series graphs
@@ -530,7 +533,7 @@ The dashboard includes:
 
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 
-Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and notification delivery, connectivity ping checks, Stream origin health checks, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP status, and process memory. It deliberately excludes paths, client IPs, countries, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
+Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and notification delivery, connectivity ping checks, Stream origin health checks, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP and ASN database status, and process memory. It deliberately excludes paths, client IPs, countries, ASNs, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
 
 Managed request protection defaults to monitor mode and can be configured per site or overridden per route. Its dashboard separates clean, would-block, and blocked traffic and records versioned rule metadata without storing matching input values. See [`docs/MANAGED_PROTECTION.md`](docs/MANAGED_PROTECTION.md).
 

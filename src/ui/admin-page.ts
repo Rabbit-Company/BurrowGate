@@ -188,6 +188,16 @@ export function adminPage(): string {
   </div>
 </section>
 
+<section class="card asn-card">
+  <div class="pad row between responsive">
+    <div><h2>Top ASNs</h2><p id="asnSubtitle" class="muted">Requests by network provider for the selected range</p></div>
+    <select id="asnMetricMode" class="select select-small"><option value="requests">Requests</option><option value="sessions">Sessions created</option><option value="blocked">Blocked requests</option><option value="protection">Matched requests</option><option value="cache">Cache hits</option><option value="access">Authentication events</option><option value="routes">Route enforcement actions</option><option value="sites">Requests (all sites)</option></select>
+  </div>
+  <div class="pad-topless row between"><span class="muted">Top networks</span><strong id="asnTotal">0</strong></div>
+  <div id="asnList" class="geo-country-list pad-topless"><p class="muted">No ASN data is available.</p></div>
+  <p class="geo-attribution muted pad-topless">ASN data: <a href="https://www.maxmind.com" target="_blank" rel="noreferrer">MaxMind GeoLite2</a></p>
+</section>
+
 <section id="refererCard" class="card pad">
   <div class="row between responsive">
     <div><h2 id="refererTitle">Top referrers</h2><p id="refererSubtitle" class="muted">External referring domains for the selected range</p></div>
@@ -220,9 +230,10 @@ export function adminPage(): string {
       <label><span>Status</span><select id="eventStatus" class="select"><option value="">All</option><option value="1xx">1xx</option><option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
       <label id="eventOriginFilter" class="hidden"><span>Origin</span><select id="eventOrigin" class="select"><option value="">All origins</option></select></label>
       <label><span>Country</span><select id="eventCountry" class="select country-select"><option value="">All countries</option></select></label>
+      <label><span>ASN</span><input id="eventAsn" class="input" type="number" min="1" step="1" placeholder="e.g. 15169"></label>
       <label><span>Rows</span><select id="eventPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th data-column="traffic:country">${sortButton("Country", "country_code")}</th><th data-column="traffic:method">${sortButton("Method", "method")}</th><th data-column="traffic:path">${sortButton("Path", "path")}</th><th data-column="traffic:referer">Referrer</th><th id="eventOriginColumnHeader" data-column="traffic:origin" class="hidden">Origin</th><th data-column="traffic:status">${sortButton("Status", "status")}</th><th data-column="traffic:decision">${sortButton("Decision", "decision")}</th><th data-column="traffic:cache">${sortButton("Cache", "cache_status")}</th><th data-column="traffic:protection">${sortButton("Protection", "protection_status")}</th><th data-column="traffic:latency">${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="11" class="empty-cell">Loading...</td></tr></tbody></table></div>
+		<div class="table-wrap"><table class="table"><thead><tr><th>${sortButton("Time", "created_at")}</th><th>${sortButton("IP", "ip")}</th><th data-column="traffic:country">${sortButton("Country", "country_code")}</th><th data-column="traffic:asn">${sortButton("ASN", "asn")}</th><th data-column="traffic:method">${sortButton("Method", "method")}</th><th data-column="traffic:path">${sortButton("Path", "path")}</th><th data-column="traffic:referer">Referrer</th><th id="eventOriginColumnHeader" data-column="traffic:origin" class="hidden">Origin</th><th data-column="traffic:status">${sortButton("Status", "status")}</th><th data-column="traffic:decision">${sortButton("Decision", "decision")}</th><th data-column="traffic:cache">${sortButton("Cache", "cache_status")}</th><th data-column="traffic:protection">${sortButton("Protection", "protection_status")}</th><th data-column="traffic:latency">${sortButton("Latency", "latency_ms")}</th></tr></thead><tbody id="events"><tr><td colspan="12" class="empty-cell">Loading...</td></tr></tbody></table></div>
     ${pagination("events")}
   </article>
 </section>
@@ -304,21 +315,23 @@ export function adminPage(): string {
       <label class="search-field"><span>Search</span><input id="sessionSearch" class="input" placeholder="ID, IP, user..."></label>
       <label><span>State</span><select id="sessionState" class="select"><option value="">All</option><option value="active">Active</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label>
       <label><span>Country</span><select id="sessionCountry" class="select country-select"><option value="">All countries</option></select></label>
+      <label><span>ASN</span><input id="sessionAsn" class="input" type="number" min="1" step="1" placeholder="e.g. 15169"></label>
       <label><span>Rows</span><select id="sessionPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>
     </div>
-    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Session</th><th>${sortButton("Last IP", "last_ip")}</th><th data-column="sessions:country">${sortButton("Country", "country_code")}</th><th data-column="sessions:created">${sortButton("Created", "created_at")}</th><th data-column="sessions:lastSeen">${sortButton("Last seen", "last_seen_at")}</th><th data-column="sessions:expires">${sortButton("Expires", "expires_at")}</th><th data-column="sessions:requests">${sortButton("Requests", "request_count")}</th><th></th></tr></thead><tbody id="sessions"><tr><td colspan="9" class="empty-cell">Open the tab to load sessions.</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Session</th><th>${sortButton("Last IP", "last_ip")}</th><th data-column="sessions:country">${sortButton("Country", "country_code")}</th><th data-column="sessions:asn">${sortButton("ASN", "asn")}</th><th data-column="sessions:created">${sortButton("Created", "created_at")}</th><th data-column="sessions:lastSeen">${sortButton("Last seen", "last_seen_at")}</th><th data-column="sessions:expires">${sortButton("Expires", "expires_at")}</th><th data-column="sessions:requests">${sortButton("Requests", "request_count")}</th><th></th></tr></thead><tbody id="sessions"><tr><td colspan="10" class="empty-cell">Open the tab to load sessions.</td></tr></tbody></table></div>
     ${pagination("sessions")}
   </article>
 </section>
 
 <section id="panel-rules" class="tab-panel hidden">
   <article class="card network-defaults-card">
-    <div class="pad section-heading"><div><h2>Default network actions</h2><p class="muted">Explicit IP rules override country rules. Country rules override these defaults.</p></div><button id="saveNetworkDefaults" class="button" type="button">Save</button></div>
+    <div class="pad section-heading"><div><h2>Default network actions</h2><p class="muted">Explicit IP rules override ASN rules, which override country rules, which override these defaults.</p></div><button id="saveNetworkDefaults" class="button" type="button">Save</button></div>
     <div class="network-defaults-grid pad-topless">
       <label><span>Default IP action</span><select id="defaultIpAction" class="select"><option value="inherit">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="block">Block all IPs</option><option value="challenge">Require challenge</option></select><small class="muted">Set to Block all IPs and add Allow and follow route policy rules to create an IP whitelist.</small></label>
       <label><span>Default country action</span><select id="defaultCountryAction" class="select"><option value="inherit">Use IP default</option><option value="allow">Allow and bypass verification</option><option value="block">Block all countries</option><option value="challenge">Require challenge</option></select><small class="muted">Set to Block all countries and add Allow and follow route policy rules to create a country whitelist.</small></label>
     </div>
     <p id="geoPolicyWarning" class="notice muted hidden"></p>
+    <p id="asnPolicyWarning" class="notice muted hidden"></p>
   </article>
 
   <article class="card rule-create-card">
@@ -339,6 +352,11 @@ export function adminPage(): string {
   <article class="card country-rule-card">
     <div class="pad"><h2>Add a country rule</h2><form id="countryRuleForm" class="country-rule-form"><label><span>Country</span><select id="countryRuleCountry" class="select country-select" name="countryCode" required><option value="">Select country</option></select></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="pass">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
     <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Country</th><th>Action</th><th>Reason</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody id="countryRules"><tr><td colspan="7" class="empty-cell">Open the tab to load country rules.</td></tr></tbody></table></div>
+  </article>
+
+  <article class="card country-rule-card">
+    <div class="pad"><h2>Add an ASN rule</h2><form id="asnRuleForm" class="country-rule-form"><label><span>ASN</span><input id="asnRuleAsn" class="input" type="number" min="1" step="1" name="asn" placeholder="e.g. 15169" required></label><label><span>Action</span><select class="select" name="action"><option value="block">Block</option><option value="pass">Allow and follow route policy</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input class="input" type="datetime-local" name="expiresAt"></label><label class="reason-field"><span>Reason</span><input class="input" name="reason" placeholder="Optional reason"></label><button class="button align-end" type="submit">Add rule</button></form></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>ASN</th><th>Action</th><th>Reason</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody id="asnRules"><tr><td colspan="7" class="empty-cell">Open the tab to load ASN rules.</td></tr></tbody></table></div>
   </article>
 </section>
 
@@ -380,8 +398,8 @@ export function adminPage(): string {
           <section class="error-response-editor hidden" data-route-editor-panel="network">
             <div class="section-heading error-response-heading"><div><h3>IP and country policy</h3><p class="muted">Rules here apply only to requests matching this route, and take precedence over the site's network rules.</p></div></div>
             <div class="site-form-grid">
-              <label><span>Default IP action</span><select id="routeDefaultIpAction" class="select"><option value="inherit">Inherit site policy</option><option value="allow">Allow and bypass verification</option><option value="block">Block all IPs</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no IP or country rule below matches.</small></label>
-              <label><span>Default country action</span><select id="routeDefaultCountryAction" class="select"><option value="inherit">Use route IP default</option><option value="allow">Allow and bypass verification</option><option value="block">Block all countries</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no country rule below matches and no IP rule matched either.</small></label>
+              <label><span>Default IP action</span><select id="routeDefaultIpAction" class="select"><option value="inherit">Inherit site policy</option><option value="allow">Allow and bypass verification</option><option value="block">Block all IPs</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no IP, ASN, or country rule below matches.</small></label>
+              <label><span>Default country action</span><select id="routeDefaultCountryAction" class="select"><option value="inherit">Use route IP default</option><option value="allow">Allow and bypass verification</option><option value="block">Block all countries</option><option value="challenge">Require challenge</option></select><small class="muted">Applies when no country rule below matches and no IP or ASN rule matched either.</small></label>
             </div>
             <p id="routeNetworkRulesPlaceholder" class="muted">Save this route policy before adding IP or country rules.</p>
             <div id="routeNetworkRulesSection" class="hidden">
@@ -391,6 +409,9 @@ export function adminPage(): string {
               <div class="section-heading error-response-heading"><div><h3>Country rules</h3></div></div>
               <div id="routeCountryRuleForm" class="country-rule-form"><label><span>Country</span><select id="routeCountryRuleCountry" class="select country-select"><option value="">Select country</option></select></label><label><span>Action</span><select id="routeCountryRuleAction" class="select"><option value="block">Block</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input id="routeCountryRuleExpiresAt" class="input" type="datetime-local"></label><label class="reason-field"><span>Reason</span><input id="routeCountryRuleReason" class="input" placeholder="Optional reason"></label><button id="addRouteCountryRule" class="button align-end" type="button">Add rule</button></div>
               <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>Country</th><th>Action</th><th>Reason</th><th>Expires</th><th></th></tr></thead><tbody id="routeCountryRules"><tr><td colspan="6" class="empty-cell">No country rules configured for this route.</td></tr></tbody></table></div>
+              <div class="section-heading error-response-heading"><div><h3>ASN rules</h3></div></div>
+              <div id="routeAsnRuleForm" class="country-rule-form"><label><span>ASN</span><input id="routeAsnRuleAsn" class="input" type="number" min="1" step="1" placeholder="e.g. 15169"></label><label><span>Action</span><select id="routeAsnRuleAction" class="select"><option value="block">Block</option><option value="pass">Allow and follow route</option><option value="allow">Allow and bypass verification</option><option value="challenge">Require challenge</option></select></label><label><span>Expires</span><input id="routeAsnRuleExpiresAt" class="input" type="datetime-local"></label><label class="reason-field"><span>Reason</span><input id="routeAsnRuleReason" class="input" placeholder="Optional reason"></label><button id="addRouteAsnRule" class="button align-end" type="button">Add rule</button></div>
+              <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th>ASN</th><th>Action</th><th>Reason</th><th>Expires</th><th></th></tr></thead><tbody id="routeAsnRules"><tr><td colspan="6" class="empty-cell">No ASN rules configured for this route.</td></tr></tbody></table></div>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="websocket">

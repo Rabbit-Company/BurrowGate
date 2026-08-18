@@ -18,7 +18,7 @@ import { streamHealthManager } from "../services/stream-health-service.ts";
 import { streamProxyManager } from "../services/stream-proxy-service.ts";
 import { flushStreamMonitoring } from "../services/stream-monitoring-service.ts";
 import { geoIpStatus } from "../services/geoip-service.ts";
-import { addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
+import { addStreamAsnRule, addStreamCountryRule, addStreamIpRule, invalidateStreamNetworkPolicy } from "../services/stream-ip-rule-service.ts";
 import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
 import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
 import { resolveStreamBandwidthPolicy, serializeStreamBandwidthPolicy } from "../services/stream-bandwidth-policy-service.ts";
@@ -161,6 +161,7 @@ function eventSortBy(
 	| "incoming_port"
 	| "client_ip"
 	| "country_code"
+	| "asn"
 	| "reason"
 	| "protection_rule_id"
 	| "connection_id"
@@ -172,6 +173,7 @@ function eventSortBy(
 		value === "incoming_port" ||
 		value === "client_ip" ||
 		value === "country_code" ||
+		value === "asn" ||
 		value === "reason" ||
 		value === "protection_rule_id" ||
 		value === "connection_id" ||
@@ -625,6 +627,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
+		const asn = Number(stringParam(url, "asn"));
 		return jsonResponse(
 			await repository.pagedStreamEvents({
 				streamId: scopeStreamId,
@@ -634,6 +637,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				protocol: protocolParam(url),
 				eventType: eventTypeParam(url),
 				countryCode: stringParam(url, "country")?.toUpperCase(),
+				...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
 				sortBy: eventSortBy(url),
 				sortDirection: sortDirection(url),
 				...selectedRange,
@@ -676,6 +680,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			defaultIpAction: selection.stream.default_ip_action ?? "inherit",
 			defaultCountryAction: selection.stream.default_country_action ?? "inherit",
 			countryRules: await repository.streamCountryRules(selection.stream.id),
+			asnRules: await repository.streamAsnRules(selection.stream.id),
 			geoip: geoIpStatus(),
 		});
 	});
@@ -767,6 +772,66 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			resourceType: "stream_country_rule",
 			resourceId: ctx.params.id!,
 			summary: `Deleted a country rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse({ deleted: true });
+	});
+
+	app.post("/_burrowgate/api/admin/streams/asn-rules", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const asnRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (asnRuleDenied) return asnRuleDenied;
+		const body = (await ctx.req.json()) as { asn?: number | string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
+		if (!body.asn || !["allow", "block"].includes(body.action ?? "")) {
+			return jsonResponse({ error: "Invalid ASN rule" }, 400);
+		}
+		const expiresAt = body.expiresAt === null || body.expiresAt === undefined || body.expiresAt === "" ? null : Number(body.expiresAt);
+		if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+			return jsonResponse({ error: "Expiration must be in the future" }, 400);
+		}
+		try {
+			const rule = await addStreamAsnRule(selection.stream.id, body.asn, body.action!, body.reason ?? "", expiresAt);
+			await streamProxyManager.enforceNetworkPolicy(selection.stream);
+			await recordAdminAudit({
+				actor: user,
+				action: "stream_asn_rule.create",
+				resourceType: "stream_asn_rule",
+				resourceId: rule.id,
+				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(rule, 201);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/streams/asn-rules/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const selection = await selectedStream(new URL(ctx.req.url), user);
+		if (selection.error) return selection.error;
+		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const asnRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
+		if (asnRuleDenied) return asnRuleDenied;
+		await repository.deleteStreamAsnRuleForStream(ctx.params.id!, selection.stream.id);
+		invalidateStreamNetworkPolicy(selection.stream.id);
+		await recordAdminAudit({
+			actor: user,
+			action: "stream_asn_rule.delete",
+			resourceType: "stream_asn_rule",
+			resourceId: ctx.params.id!,
+			summary: `Deleted an ASN rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse({ deleted: true });

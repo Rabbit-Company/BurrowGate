@@ -1,8 +1,16 @@
 import { repository } from "../db/repository.ts";
-import type { DefaultNetworkAction, IpRuleAction, RouteCountryRuleRecord, RouteIpRuleRecord, RoutePolicyRecord, SiteRecord } from "../types.ts";
+import type {
+	DefaultNetworkAction,
+	IpRuleAction,
+	RouteAsnRuleRecord,
+	RouteCountryRuleRecord,
+	RouteIpRuleRecord,
+	RoutePolicyRecord,
+	SiteRecord,
+} from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
-import { countryCodeForStorage } from "./geoip-service.ts";
+import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 import { evaluateIp, type NetworkDecision } from "./ip-rule-service.ts";
 
 interface CachedRouteIpRule {
@@ -13,6 +21,7 @@ interface CachedRouteIpRule {
 interface CachedRouteNetworkRules {
 	ipRules: CachedRouteIpRule[];
 	countryRules: Map<string, RouteCountryRuleRecord>;
+	asnRules: Map<number, RouteAsnRuleRecord>;
 }
 
 const ruleCache = new Map<string, Promise<CachedRouteNetworkRules>>();
@@ -20,13 +29,14 @@ const ruleCache = new Map<string, Promise<CachedRouteNetworkRules>>();
 async function rulesForRoute(routePolicyId: string): Promise<CachedRouteNetworkRules> {
 	let cached = ruleCache.get(routePolicyId);
 	if (!cached) {
-		cached = Promise.all([repository.routeIpRules(routePolicyId), repository.routeCountryRules(routePolicyId)])
-			.then(([ipRules, countryRules]) => ({
+		cached = Promise.all([repository.routeIpRules(routePolicyId), repository.routeCountryRules(routePolicyId), repository.routeAsnRules(routePolicyId)])
+			.then(([ipRules, countryRules, asnRules]) => ({
 				ipRules: ipRules
 					.map((rule) => ({ rule, cidr: parseCidr(rule.network_cidr) }))
 					.filter((item): item is CachedRouteIpRule => item.cidr !== null)
 					.sort((left, right) => right.cidr.prefix - left.cidr.prefix || right.rule.created_at - left.rule.created_at),
 				countryRules: new Map(countryRules.map((rule) => [rule.country_code, rule])),
+				asnRules: new Map(asnRules.map((rule) => [rule.asn, rule])),
 			}))
 			.catch((error) => {
 				ruleCache.delete(routePolicyId);
@@ -53,6 +63,8 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 	const now = Date.now();
 	const rules = await rulesForRoute(route.id);
 	const ipRule = ip === "unknown" ? null : (rules.ipRules.find((item) => active(item.rule, now) && cidrContains(item.cidr, ip))?.rule ?? null);
+	const { asn, org: asnOrg } = ip === "unknown" ? { asn: null, org: null } : asnForStorage(ip);
+	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
 
 	if (ipRule) {
 		return {
@@ -60,13 +72,32 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 			source: "ip-rule",
 			scope: "route",
 			expiresAt: ipRule.expires_at,
-			countryCode: null,
+			countryCode,
+			asn,
+			asnOrg,
 			reason: ipRule.reason || `Matched route IP rule ${ipRule.network_cidr}`,
 			routePolicyId: route.id,
 		};
 	}
 
-	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
+	if (asn !== null) {
+		const candidateAsnRule = rules.asnRules.get(asn) ?? null;
+		const asnRule = candidateAsnRule && active(candidateAsnRule, now) ? candidateAsnRule : null;
+		if (asnRule) {
+			return {
+				action: asnRule.action,
+				source: "asn-rule",
+				scope: "route",
+				expiresAt: asnRule.expires_at,
+				countryCode,
+				asn,
+				asnOrg,
+				reason: asnRule.reason || `Matched route ASN rule AS${asn}`,
+				routePolicyId: route.id,
+			};
+		}
+	}
+
 	if (countryCode) {
 		const candidateCountryRule = rules.countryRules.get(countryCode) ?? null;
 		const countryRule = candidateCountryRule && active(candidateCountryRule, now) ? candidateCountryRule : null;
@@ -77,6 +108,8 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 				scope: "route",
 				expiresAt: countryRule.expires_at,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: countryRule.reason || `Matched route country rule ${countryCode}`,
 				routePolicyId: route.id,
 			};
@@ -90,6 +123,8 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 				scope: "route",
 				expiresAt: null,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: `Default route country action for ${countryCode}`,
 				routePolicyId: route.id,
 			};
@@ -104,6 +139,8 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 			scope: "route",
 			expiresAt: null,
 			countryCode,
+			asn,
+			asnOrg,
 			reason: "Default route IP action",
 			routePolicyId: route.id,
 		};
@@ -115,6 +152,8 @@ export async function evaluateRouteIp(route: RoutePolicyRecord, ip: string): Pro
 		scope: "route",
 		expiresAt: null,
 		countryCode,
+		asn,
+		asnOrg,
 		reason: null,
 		routePolicyId: route.id,
 	};
@@ -174,6 +213,34 @@ export async function addRouteCountryRule(
 		expires_at: expiresAt,
 	};
 	await repository.insertRouteCountryRule(record);
+	invalidateRouteNetworkPolicy(routePolicyId);
+	return record;
+}
+
+export async function addRouteAsnRule(
+	routePolicyId: string,
+	asnInput: unknown,
+	action: IpRuleAction,
+	reason: string,
+	expiresAt: number | null,
+): Promise<RouteAsnRuleRecord> {
+	const asn = Number(asnInput);
+	if (!Number.isInteger(asn) || asn <= 0) throw new Error("ASN must be a positive whole number");
+	const existing = await repository.routeAsnRuleByAsn(routePolicyId, asn);
+	if (existing && active(existing, Date.now())) {
+		throw new Error(`An active rule for AS${asn} already exists`);
+	}
+	if (existing) await repository.deleteRouteAsnRuleForRoute(existing.id, routePolicyId);
+	const record: RouteAsnRuleRecord = {
+		id: randomId("route_asn_rule"),
+		route_policy_id: routePolicyId,
+		asn,
+		action,
+		reason,
+		created_at: Date.now(),
+		expires_at: expiresAt,
+	};
+	await repository.insertRouteAsnRule(record);
 	invalidateRouteNetworkPolicy(routePolicyId);
 	return record;
 }

@@ -5,7 +5,7 @@ import { Logger } from "../logger.ts";
 import type { StreamEventRecord, StreamProtocol, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { streamCertificateTlsOption } from "./certificate-service.ts";
-import { lookupCountryCode } from "./geoip-service.ts";
+import { asnForStorage, lookupAsn, lookupCountryCode } from "./geoip-service.ts";
 import { banStreamIpForBandwidthLimit, banStreamIpForProtectionMatch, evaluateStreamIp } from "./stream-ip-rule-service.ts";
 import { checkStreamConnectionRate } from "./stream-rate-limit-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
@@ -41,6 +41,8 @@ interface TcpConnection {
 	clientIp: string;
 	clientPort: number;
 	countryCode: string | null;
+	asn: number | null;
+	asnOrg: string | null;
 	clientToUpstreamBytes: number;
 	upstreamToClientBytes: number;
 	toUpstream: Uint8Array[];
@@ -74,6 +76,8 @@ interface UdpPeer {
 	clientIp: string;
 	clientPort: number;
 	countryCode: string | null;
+	asn: number | null;
+	asnOrg: string | null;
 	openedAt: number;
 	lastActivityAt: number;
 	clientToUpstreamBytes: number;
@@ -123,6 +127,8 @@ export interface ActiveStreamConnection {
 	clientIp: string;
 	clientPort: number;
 	countryCode: string | null;
+	asn: number | null;
+	asnOrg: string | null;
 	connectedAt: number;
 	lastActivityAt: number;
 	clientToUpstreamBytes: number;
@@ -222,6 +228,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason,
 				error: null,
 				protection_rule_id: result.primaryMatch.ruleId,
@@ -250,6 +258,8 @@ export class StreamProxyManager {
 					client_ip: peer.clientIp,
 					client_port: peer.clientPort,
 					country_code: peer.countryCode,
+					asn: peer.asn,
+					asn_org: peer.asnOrg,
 					reason,
 					error: null,
 					protection_rule_id: result.primaryMatch.ruleId,
@@ -376,6 +386,8 @@ export class StreamProxyManager {
 				client_ip: null,
 				client_port: null,
 				country_code: null,
+				asn: null,
+				asn_org: null,
 				reason: "listener activation failed",
 				error: runtimeError(error),
 				client_to_upstream_bytes: 0,
@@ -457,6 +469,8 @@ export class StreamProxyManager {
 			client_ip: connection.clientIp,
 			client_port: connection.clientPort,
 			country_code: connection.countryCode,
+			asn: connection.asn,
+			asn_org: connection.asnOrg,
 			reason,
 			error: null,
 			protection_rule_id: null,
@@ -543,6 +557,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason,
 				error: error.message,
 				client_to_upstream_bytes: connection.clientToUpstreamBytes,
@@ -559,6 +575,8 @@ export class StreamProxyManager {
 			client_ip: connection.clientIp,
 			client_port: connection.clientPort,
 			country_code: connection.countryCode,
+			asn: connection.asn,
+			asn_org: connection.asnOrg,
 			reason,
 			error: error?.message ?? null,
 			client_to_upstream_bytes: connection.clientToUpstreamBytes,
@@ -600,6 +618,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
@@ -617,6 +637,8 @@ export class StreamProxyManager {
 			client_ip: connection.clientIp,
 			client_port: connection.clientPort,
 			country_code: connection.countryCode,
+			asn: connection.asn,
+			asn_org: connection.asnOrg,
 			reason: tls ? "TLS terminated" : "raw TCP",
 			error: null,
 			client_to_upstream_bytes: 0,
@@ -711,6 +733,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason,
 				error: null,
 				protection_rule_id: result.primaryMatch.ruleId,
@@ -731,6 +755,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason: result.primaryMatch.title,
 				error: null,
 				protection_rule_id: result.primaryMatch.ruleId,
@@ -766,6 +792,8 @@ export class StreamProxyManager {
 			client_ip: clientIp,
 			client_port: null,
 			country_code: lookupCountryCode(clientIp),
+			asn: asnForStorage(clientIp).asn,
+			asn_org: asnForStorage(clientIp).org,
 			reason: result.primaryMatch.title,
 			error: null,
 			protection_rule_id: result.primaryMatch.ruleId,
@@ -844,6 +872,7 @@ export class StreamProxyManager {
 				open: async (client) => {
 					const clientIp = client.remoteAddress;
 					recordStreamConnectionAttempt(record.id, clientIp);
+					const asnLookup = lookupAsn(clientIp);
 					const connection: TcpConnection = {
 						id: randomId("stream_conn"),
 						record,
@@ -854,6 +883,8 @@ export class StreamProxyManager {
 						clientIp,
 						clientPort: client.remotePort,
 						countryCode: lookupCountryCode(clientIp),
+						asn: asnLookup?.asn ?? null,
+						asnOrg: asnLookup?.org ?? null,
 						clientToUpstreamBytes: 0,
 						upstreamToClientBytes: 0,
 						toUpstream: [],
@@ -924,6 +955,8 @@ export class StreamProxyManager {
 				client_ip: peer.clientIp,
 				client_port: peer.clientPort,
 				country_code: peer.countryCode,
+				asn: peer.asn,
+				asn_org: peer.asnOrg,
 				reason: `UDP amplification guard: reply throttled beyond ${ratio}x request bytes`,
 				error: null,
 				client_to_upstream_bytes: peer.clientToUpstreamBytes,
@@ -967,12 +1000,15 @@ export class StreamProxyManager {
 			upstream.close();
 			throw new Error("UDP stream was closed while creating a peer");
 		}
+		const asnLookup = lookupAsn(clientIp);
 		peer = {
 			id,
 			record: runtime.record,
 			clientIp,
 			clientPort,
 			countryCode: lookupCountryCode(clientIp),
+			asn: asnLookup?.asn ?? null,
+			asnOrg: asnLookup?.org ?? null,
 			openedAt: Date.now(),
 			lastActivityAt: Date.now(),
 			clientToUpstreamBytes: 0,
@@ -992,6 +1028,8 @@ export class StreamProxyManager {
 			client_ip: peer.clientIp,
 			client_port: peer.clientPort,
 			country_code: peer.countryCode,
+			asn: peer.asn,
+			asn_org: peer.asnOrg,
 			reason: "first datagram",
 			error: null,
 			client_to_upstream_bytes: 0,
@@ -1045,6 +1083,8 @@ export class StreamProxyManager {
 			client_ip: peer.clientIp,
 			client_port: peer.clientPort,
 			country_code: peer.countryCode,
+			asn: peer.asn,
+			asn_org: peer.asnOrg,
 			reason,
 			error: null,
 			protection_rule_id: null,
@@ -1115,6 +1155,8 @@ export class StreamProxyManager {
 						client_ip: clientIp,
 						client_port: clientPort,
 						country_code: lookupCountryCode(clientIp),
+						asn: asnForStorage(clientIp).asn,
+						asn_org: asnForStorage(clientIp).org,
 						reason: blockedReason,
 						error: null,
 						protection_rule_id: protectionRuleId,
@@ -1133,6 +1175,8 @@ export class StreamProxyManager {
 						client_ip: clientIp,
 						client_port: clientPort,
 						country_code: lookupCountryCode(clientIp),
+						asn: asnForStorage(clientIp).asn,
+						asn_org: asnForStorage(clientIp).org,
 						reason: monitoredReason,
 						error: null,
 						protection_rule_id: protectionRuleId,
@@ -1197,6 +1241,8 @@ export class StreamProxyManager {
 				client_ip: peer.clientIp,
 				client_port: peer.clientPort,
 				country_code: peer.countryCode,
+				asn: peer.asn,
+				asn_org: peer.asnOrg,
 				reason,
 				error: error.message,
 				client_to_upstream_bytes: peer.clientToUpstreamBytes,
@@ -1212,6 +1258,8 @@ export class StreamProxyManager {
 			client_ip: peer.clientIp,
 			client_port: peer.clientPort,
 			country_code: peer.countryCode,
+			asn: peer.asn,
+			asn_org: peer.asnOrg,
 			reason,
 			error: error?.message ?? null,
 			client_to_upstream_bytes: peer.clientToUpstreamBytes,
@@ -1288,6 +1336,8 @@ export class StreamProxyManager {
 				clientIp: connection.clientIp,
 				clientPort: connection.clientPort,
 				countryCode: connection.countryCode,
+				asn: connection.asn,
+				asnOrg: connection.asnOrg,
 				connectedAt: connection.openedAt,
 				lastActivityAt: connection.lastActivityAt,
 				clientToUpstreamBytes: connection.clientToUpstreamBytes,
@@ -1303,6 +1353,8 @@ export class StreamProxyManager {
 				clientIp: peer.clientIp,
 				clientPort: peer.clientPort,
 				countryCode: peer.countryCode,
+				asn: peer.asn,
+				asnOrg: peer.asnOrg,
 				connectedAt: peer.openedAt,
 				lastActivityAt: peer.lastActivityAt,
 				clientToUpstreamBytes: peer.clientToUpstreamBytes,
@@ -1334,6 +1386,8 @@ export class StreamProxyManager {
 				client_ip: connection.clientIp,
 				client_port: connection.clientPort,
 				country_code: connection.countryCode,
+				asn: connection.asn,
+				asn_org: connection.asnOrg,
 				reason: decision.reason ?? "Blocked by network rule",
 				error: null,
 				client_to_upstream_bytes: 0,
@@ -1361,6 +1415,8 @@ export class StreamProxyManager {
 				client_ip: peer.clientIp,
 				client_port: peer.clientPort,
 				country_code: peer.countryCode,
+				asn: peer.asn,
+				asn_org: peer.asnOrg,
 				reason: decision.reason ?? "Blocked by network rule",
 				error: null,
 				client_to_upstream_bytes: 0,

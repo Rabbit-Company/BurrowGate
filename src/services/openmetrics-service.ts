@@ -269,7 +269,7 @@ export class BurrowGateOpenMetrics {
 		this.geoIp = new Gauge({
 			name: "geoip_database",
 			help: "GeoIP feature and database availability",
-			labelNames: ["state"],
+			labelNames: ["state", "dimension"],
 			registry: this.registry,
 		});
 		this.originHealthState = new Gauge({
@@ -475,10 +475,10 @@ export class BurrowGateOpenMetrics {
 		this.configuredStreams.labels({ protocol: "udp" }).set(streams.filter((stream) => stream.udp_enabled === 1).length);
 	}
 
-	setGeoIpState(enabled: boolean, available: boolean): void {
+	setGeoIpState(dimension: "country" | "asn", enabled: boolean, available: boolean): void {
 		if (!this.enabled) return;
-		this.geoIp.labels({ state: "enabled" }).set(enabled ? 1 : 0);
-		this.geoIp.labels({ state: "available" }).set(available ? 1 : 0);
+		this.geoIp.labels({ state: "enabled", dimension }).set(enabled ? 1 : 0);
+		this.geoIp.labels({ state: "available", dimension }).set(available ? 1 : 0);
 	}
 
 	setOriginHealth(siteId: string, state: OriginHealthState): void {
@@ -570,7 +570,8 @@ export async function openMetricsResponse(request: Request): Promise<Response> {
 	let collectionError = false;
 	openMetrics.refreshProcessMetrics();
 	const geoIp = geoIpStatus();
-	openMetrics.setGeoIpState(geoIp.enabled, geoIp.available);
+	openMetrics.setGeoIpState("country", geoIp.enabled, geoIp.available);
+	openMetrics.setGeoIpState("asn", geoIp.asn.enabled, geoIp.asn.available);
 	try {
 		const [sites, streams] = await Promise.all([repository.allSites(), repository.allStreams()]);
 		openMetrics.setConfiguredResources(sites, streams);

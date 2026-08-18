@@ -127,6 +127,8 @@ export const config = {
 		cacheEntries: envNumber("BG_GEOIP_CACHE_ENTRIES", 4_096, 1, 1_000_000),
 		backfillBatchSize: envNumber("BG_GEOIP_BACKFILL_BATCH_SIZE", 500, 0, 10_000),
 		retrySeconds: envNumber("BG_GEOIP_RETRY_SECONDS", 30, 5, 3_600),
+		asnEnabled: envBoolean("BG_GEOIP_ASN_ENABLED", envBoolean("BG_GEOIP_ENABLED", true)),
+		asnDatabasePath: process.env.BG_GEOIP_ASN_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-ASN.mmdb`,
 	},
 	openMetrics: {
 		enabled: envBoolean("BG_OPENMETRICS_ENABLED", false),

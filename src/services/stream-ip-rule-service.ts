@@ -1,8 +1,8 @@
 import { repository } from "../db/repository.ts";
-import type { StreamCountryRuleRecord, StreamDefaultNetworkAction, StreamIpRuleRecord, StreamRecord, StreamRuleAction } from "../types.ts";
+import type { StreamAsnRuleRecord, StreamCountryRuleRecord, StreamDefaultNetworkAction, StreamIpRuleRecord, StreamRecord, StreamRuleAction } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { cidrContains, parseCidr, type ParsedCidr } from "../utils/ip.ts";
-import { countryCodeForStorage } from "./geoip-service.ts";
+import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 import type { BanDurationSeverity } from "./http-policy-service.ts";
 import { notificationService } from "./notification-service.ts";
 import type { StreamProtectionMatch } from "./stream-protection-service.ts";
@@ -15,6 +15,7 @@ interface CachedStreamIpRule {
 interface CachedStreamNetworkRules {
 	ipRules: CachedStreamIpRule[];
 	countryRules: Map<string, StreamCountryRuleRecord>;
+	asnRules: Map<number, StreamAsnRuleRecord>;
 }
 
 const ruleCache = new Map<string, Promise<CachedStreamNetworkRules>>();
@@ -22,13 +23,14 @@ const ruleCache = new Map<string, Promise<CachedStreamNetworkRules>>();
 async function rulesForStream(streamId: string): Promise<CachedStreamNetworkRules> {
 	let cached = ruleCache.get(streamId);
 	if (!cached) {
-		cached = Promise.all([repository.streamRules(streamId), repository.streamCountryRules(streamId)])
-			.then(([ipRules, countryRules]) => ({
+		cached = Promise.all([repository.streamRules(streamId), repository.streamCountryRules(streamId), repository.streamAsnRules(streamId)])
+			.then(([ipRules, countryRules, asnRules]) => ({
 				ipRules: ipRules
 					.map((rule) => ({ rule, cidr: parseCidr(rule.network_cidr) }))
 					.filter((item): item is CachedStreamIpRule => item.cidr !== null)
 					.sort((left, right) => right.cidr.prefix - left.cidr.prefix || right.rule.created_at - left.rule.created_at),
 				countryRules: new Map(countryRules.map((rule) => [rule.country_code, rule])),
+				asnRules: new Map(asnRules.map((rule) => [rule.asn, rule])),
 			}))
 			.catch((error) => {
 				ruleCache.delete(streamId);
@@ -43,14 +45,17 @@ export function invalidateStreamNetworkPolicy(streamId: string): void {
 	ruleCache.delete(streamId);
 }
 
-export type StreamNetworkDecisionSource = "ip-rule" | "country-rule" | "country-default" | "ip-default" | "route";
+export type StreamNetworkDecisionSource = "ip-rule" | "asn-rule" | "country-rule" | "country-default" | "ip-default" | "route";
 
 export interface StreamNetworkDecision {
 	action: StreamRuleAction | null;
 	source: StreamNetworkDecisionSource;
 	ipRule: StreamIpRuleRecord | null;
+	asnRule: StreamAsnRuleRecord | null;
 	countryRule: StreamCountryRuleRecord | null;
 	countryCode: string | null;
+	asn: number | null;
+	asnOrg: string | null;
 	reason: string | null;
 }
 
@@ -66,19 +71,41 @@ export async function evaluateStreamIp(stream: StreamRecord, ip: string): Promis
 	const now = Date.now();
 	const rules = await rulesForStream(stream.id);
 	const ipRule = ip === "unknown" ? null : (rules.ipRules.find((item) => active(item.rule, now) && cidrContains(item.cidr, ip))?.rule ?? null);
+	const { asn, org: asnOrg } = ip === "unknown" ? { asn: null, org: null } : asnForStorage(ip);
+	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
 
 	if (ipRule) {
 		return {
 			action: ipRule.action,
 			source: "ip-rule",
 			ipRule,
+			asnRule: null,
 			countryRule: null,
-			countryCode: null,
+			countryCode,
+			asn,
+			asnOrg,
 			reason: ipRule.reason || `Matched IP rule ${ipRule.network_cidr}`,
 		};
 	}
 
-	const countryCode = ip === "unknown" ? null : countryCodeForStorage(ip);
+	if (asn !== null) {
+		const candidateAsnRule = rules.asnRules.get(asn) ?? null;
+		const asnRule = candidateAsnRule && active(candidateAsnRule, now) ? candidateAsnRule : null;
+		if (asnRule) {
+			return {
+				action: asnRule.action,
+				source: "asn-rule",
+				ipRule: null,
+				asnRule,
+				countryRule: null,
+				countryCode,
+				asn,
+				asnOrg,
+				reason: asnRule.reason || `Matched ASN rule AS${asn}`,
+			};
+		}
+	}
+
 	if (countryCode) {
 		const candidateCountryRule = rules.countryRules.get(countryCode) ?? null;
 		const countryRule = candidateCountryRule && active(candidateCountryRule, now) ? candidateCountryRule : null;
@@ -87,8 +114,11 @@ export async function evaluateStreamIp(stream: StreamRecord, ip: string): Promis
 				action: countryRule.action,
 				source: "country-rule",
 				ipRule: null,
+				asnRule: null,
 				countryRule,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: countryRule.reason || `Matched country rule ${countryCode}`,
 			};
 		}
@@ -99,8 +129,11 @@ export async function evaluateStreamIp(stream: StreamRecord, ip: string): Promis
 				action: countryDefault,
 				source: "country-default",
 				ipRule: null,
+				asnRule: null,
 				countryRule: null,
 				countryCode,
+				asn,
+				asnOrg,
 				reason: `Default country action for ${countryCode}`,
 			};
 		}
@@ -112,8 +145,11 @@ export async function evaluateStreamIp(stream: StreamRecord, ip: string): Promis
 			action: ipDefault,
 			source: "ip-default",
 			ipRule: null,
+			asnRule: null,
 			countryRule: null,
 			countryCode,
+			asn,
+			asnOrg,
 			reason: "Default IP action",
 		};
 	}
@@ -122,8 +158,11 @@ export async function evaluateStreamIp(stream: StreamRecord, ip: string): Promis
 		action: null,
 		source: "route",
 		ipRule: null,
+		asnRule: null,
 		countryRule: null,
 		countryCode,
+		asn,
+		asnOrg,
 		reason: null,
 	};
 }
@@ -232,6 +271,34 @@ export async function addStreamCountryRule(
 		expires_at: expiresAt,
 	};
 	await repository.insertStreamCountryRule(record);
+	invalidateStreamNetworkPolicy(streamId);
+	return record;
+}
+
+export async function addStreamAsnRule(
+	streamId: string,
+	asnInput: unknown,
+	action: StreamRuleAction,
+	reason: string,
+	expiresAt: number | null,
+): Promise<StreamAsnRuleRecord> {
+	const asn = Number(asnInput);
+	if (!Number.isInteger(asn) || asn <= 0) throw new Error("ASN must be a positive whole number");
+	const existing = await repository.streamAsnRuleByAsn(streamId, asn);
+	if (existing && active(existing, Date.now())) {
+		throw new Error(`An active rule for AS${asn} already exists`);
+	}
+	if (existing) await repository.deleteStreamAsnRuleForStream(existing.id, streamId);
+	const record: StreamAsnRuleRecord = {
+		id: randomId("stream_asn_rule"),
+		stream_id: streamId,
+		asn,
+		action,
+		reason,
+		created_at: Date.now(),
+		expires_at: expiresAt,
+	};
+	await repository.insertStreamAsnRule(record);
 	invalidateStreamNetworkPolicy(streamId);
 	return record;
 }

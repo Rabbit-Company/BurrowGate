@@ -42,7 +42,7 @@ Renewing a selected ACME certificate reloads the affected stream listener. A cer
 
 ## Monitoring
 
-For every TCP connection BurrowGate records the client IP and country when the socket opens and closes. It also records upstream failures, disconnect reason, and bytes successfully forwarded in both directions.
+For every TCP connection BurrowGate records the client IP, country, and ASN when the socket opens and closes. It also records upstream failures, disconnect reason, and bytes successfully forwarded in both directions.
 
 UDP has no native connection lifecycle. BurrowGate therefore creates a peer session for each client IP and source port when its first datagram arrives. The peer receives a dedicated connected upstream UDP socket so replies return to the correct client. After `BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS` without activity, the peer is closed and a disconnect event is recorded.
 

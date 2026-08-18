@@ -2025,3 +2025,19 @@ form.grid label {
 		grid-template-columns: 1fr;
 	}
 }
+
+#streamAsnCard {
+	margin-bottom: 20px;
+}
+
+#streamRefererCard {
+	margin-bottom: 20px;
+}
+
+.asn-card {
+	margin-bottom: 20px;
+}
+
+#refererCard {
+	margin-bottom: 20px;
+}
