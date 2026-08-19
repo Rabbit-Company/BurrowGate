@@ -678,6 +678,10 @@ export interface RequestEventRecord {
 	response_body: string | null;
 	response_body_truncated: number | null;
 	response_content_type: string | null;
+	request_headers: string | null;
+	request_headers_truncated: number | null;
+	response_headers: string | null;
+	response_headers_truncated: number | null;
 	created_at: number;
 }
 

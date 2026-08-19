@@ -27,6 +27,7 @@ function policyWithBandwidthLimit(scopeId: string): ResolvedHttpPolicy {
 		banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
 		bandwidthLimit: { enabled: true, maxBytes: 1_000, windowSeconds: 60, banSeconds: 900, scopeId },
 		bodyCapture: { mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: ["*"] },
+		headerCapture: { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null },
 	};
 }
 

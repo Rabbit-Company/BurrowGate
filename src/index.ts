@@ -52,8 +52,9 @@ import { connectivityMonitor } from "./services/connectivity-monitor-service.ts"
 import { systemMonitor } from "./services/system-monitor-service.ts";
 import { notificationService } from "./services/notification-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
-import { isBodyCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
+import { isBodyCaptureActive, isHeaderCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
 import { tapBodyForCapture, type CapturedBody } from "./services/body-capture-service.ts";
+import { captureHeaders } from "./services/header-capture-service.ts";
 import { staticAssetCache } from "./services/static-cache-service.ts";
 import {
 	inspectManagedRequest,
@@ -489,6 +490,9 @@ async function gateway(ctx: any): Promise<Response> {
 		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
 			response = appendSetCookies(response, clearAccessIdentityCookies(request));
 		}
+		const headerCaptureActive = isHeaderCaptureActive(route.http.headerCapture);
+		const capturedCacheRequestHeaders = headerCaptureActive ? captureHeaders(request.headers, route.http.headerCapture) : null;
+		const capturedCacheResponseHeaders = headerCaptureActive ? captureHeaders(response.headers, route.http.headerCapture) : null;
 		await recordEvent({
 			...eventBase,
 			sessionId: session?.id ?? null,
@@ -498,6 +502,10 @@ async function gateway(ctx: any): Promise<Response> {
 			originId: cacheLookup.originId ?? null,
 			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
+			requestHeaders: capturedCacheRequestHeaders?.json ?? null,
+			requestHeadersTruncated: capturedCacheRequestHeaders?.truncated ?? null,
+			responseHeaders: capturedCacheResponseHeaders?.json ?? null,
+			responseHeadersTruncated: capturedCacheResponseHeaders?.truncated ?? null,
 		});
 		if (bodyCaptureActive && route.http.bodyCapture.maxResponseBytes > 0) {
 			const requestId = eventBase.requestId;
@@ -570,6 +578,9 @@ async function gateway(ctx: any): Promise<Response> {
 		} else if (accessIdentityCookieNames.some((name) => request.headers.get("cookie")?.includes(`${name}=`))) {
 			response = appendSetCookies(response, clearAccessIdentityCookies(request));
 		}
+		const headerCaptureActive = isHeaderCaptureActive(route.http.headerCapture);
+		const capturedProxyRequestHeaders = headerCaptureActive ? captureHeaders(request.headers, route.http.headerCapture) : null;
+		const capturedProxyResponseHeaders = headerCaptureActive ? captureHeaders(response.headers, route.http.headerCapture) : null;
 		await recordEvent({
 			...eventBase,
 			sessionId: session?.id ?? null,
@@ -582,6 +593,10 @@ async function gateway(ctx: any): Promise<Response> {
 			requestBody: capturedRequestBody?.text ?? null,
 			requestBodyTruncated: capturedRequestBody?.truncated ?? null,
 			requestContentType: capturedRequestBody?.contentType ?? null,
+			requestHeaders: capturedProxyRequestHeaders?.json ?? null,
+			requestHeadersTruncated: capturedProxyRequestHeaders?.truncated ?? null,
+			responseHeaders: capturedProxyResponseHeaders?.json ?? null,
+			responseHeadersTruncated: capturedProxyResponseHeaders?.truncated ?? null,
 		});
 		if (capturedResponseBody) {
 			const requestId = eventBase.requestId;
@@ -591,6 +606,7 @@ async function gateway(ctx: any): Promise<Response> {
 		}
 		return appendRateLimitHeaders(response, rateLimit.headers);
 	} catch (error) {
+		const capturedErrorRequestHeaders = isHeaderCaptureActive(route.http.headerCapture) ? captureHeaders(request.headers, route.http.headerCapture) : null;
 		if (error instanceof RequestBodyTooLargeError) {
 			await recordEvent({
 				...eventBase,
@@ -601,6 +617,8 @@ async function gateway(ctx: any): Promise<Response> {
 				originId: selectedOrigin.id,
 				accessUsername: accessUser?.username ?? null,
 				latencyMs: Math.round(performance.now() - started),
+				requestHeaders: capturedErrorRequestHeaders?.json ?? null,
+				requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
 			});
 			return siteErrorResponse(site, request, {
 				status: 413,
@@ -621,6 +639,8 @@ async function gateway(ctx: any): Promise<Response> {
 			originId: selectedOrigin.id,
 			accessUsername: accessUser?.username ?? null,
 			latencyMs: Math.round(performance.now() - started),
+			requestHeaders: capturedErrorRequestHeaders?.json ?? null,
+			requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
 		});
 		Logger.error("Origin proxy failed", { error });
 		return siteErrorResponse(

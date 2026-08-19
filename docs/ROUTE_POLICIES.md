@@ -139,3 +139,15 @@ the site value; `0` for a size explicitly disables capture for that direction.
 
 See [`BODY_CAPTURE.md`](BODY_CAPTURE.md) for size limits, content-type filtering,
 expiration, compressed-body handling, and the Recent Traffic detail view.
+
+## Header capture overrides
+
+The site HTTP policy defines the default header-capture mode, whether
+`Authorization`/`Cookie`/`Set-Cookie` are redacted, an additional list of
+redacted header names, and an expiration. A route can inherit, enable, or
+disable capture and independently override every other value, the same way
+body capture overrides work above.
+
+See [`HEADER_CAPTURE.md`](HEADER_CAPTURE.md) for redaction defaults,
+expiration, and the Recent Traffic detail view, and [`RESEND.md`](RESEND.md)
+for replaying a captured request from the dashboard.

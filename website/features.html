@@ -273,8 +273,13 @@
 							<p>Full visibility, exportable to your existing stack.</p>
 							<ul>
 								<li>Paginated, filterable, sortable traffic, session, route, rule, and site monitoring</li>
-								<li>Click any Recent Traffic row for full request detail, including captured bodies when enabled</li>
+								<li>
+									Click any Recent Traffic row for full request detail, including captured bodies and headers when enabled, with a Resend action to replay it
+								</li>
 								<li>Optional per-site/per-route body capture, bounded by size and content type with a self-expiring window</li>
+								<li>
+									Optional per-site/per-route header capture, with default Authorization/Cookie/Set-Cookie redaction and a configurable extra redaction list
+								</li>
 								<li>Bandwidth split between client-side and upstream, by site, IP, protocol, and country</li>
 								<li>Internet connectivity graph - pings public DNS resolvers directly from the host to tell a network blip from an origin problem</li>
 								<li>

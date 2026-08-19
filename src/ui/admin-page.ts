@@ -376,7 +376,7 @@ export function adminPage(): string {
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="protection" aria-selected="false">Protection</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="http" aria-selected="false">HTTP</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="cache" aria-selected="false">Cache</button>
-          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="bodyCapture" aria-selected="false">Body capture</button>
+          <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="bodyCapture" aria-selected="false">Body &amp; header capture</button>
           <button class="site-editor-tab" role="tab" type="button" data-route-editor-tab="rate" aria-selected="false">Rate limiting</button>
         </nav>
         <form id="routePolicyForm" class="site-form">
@@ -479,6 +479,13 @@ export function adminPage(): string {
               <label><span>Maximum response body (bytes)</span><input id="routeHttpBodyCaptureMaxResponse" class="input" type="number" min="0" step="1" placeholder="Inherit site"><small class="muted">Blank inherits the site value. 0 disables response body capture.</small></label>
               <label><span>Expires at</span><input id="routeHttpBodyCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. Blank inherits the site expiration, if any.</small></label>
               <label class="site-origin-field"><span>Content types to capture</span><textarea id="routeHttpBodyCaptureContentTypes" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Inherit site content types"></textarea><small class="muted">Comma or whitespace separated, e.g. <code>application/json</code>. Use <code>*</code> for any text-based type. Blank inherits.</small></label>
+            </div>
+            <div class="section-heading error-response-heading"><div><h3>Header capture</h3><p class="muted">Override header capture for requests matching this route.</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Header capture mode</span><select id="routeHttpHeaderCaptureMode" class="select"><option value="inherit">Inherit site default</option><option value="enabled">Enable</option><option value="disabled">Disable</option></select><small class="muted">The route override applies only when this policy matches.</small></label>
+              <label><span>Redact Authorization/Cookie</span><select id="routeHttpHeaderCaptureRedactAuth" class="select"><option value="">Inherit site default</option><option value="true">Redact</option><option value="false">Capture in full</option></select></label>
+              <label><span>Expires at</span><input id="routeHttpHeaderCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. Blank inherits the site expiration, if any.</small></label>
+              <label class="site-origin-field"><span>Additional headers to redact</span><textarea id="routeHttpHeaderCaptureRedactedHeaders" class="input code-input compact-code-input" rows="3" spellcheck="false" placeholder="Inherit site list"></textarea><small class="muted">Comma or whitespace separated. Blank inherits.</small></label>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="rate">
@@ -657,6 +664,13 @@ export function adminPage(): string {
               <label><span>Maximum response body (bytes)</span><input id="siteHttpBodyCaptureMaxResponse" class="input" type="number" min="0" step="1" required><small class="muted">0 disables response body capture.</small></label>
               <label><span>Expires at</span><input id="siteHttpBodyCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. New captures stop after this time; already-captured bodies are unaffected.</small></label>
               <label class="site-origin-field"><span>Content types to capture</span><textarea id="siteHttpBodyCaptureContentTypes" class="input code-input compact-code-input" rows="4" spellcheck="false" required></textarea><small class="muted">Comma or whitespace separated, e.g. <code>application/json</code>. Use <code>*</code> for any text-based type.</small></label>
+            </div>
+            <div class="section-heading error-response-heading"><div><h3>Header capture</h3><p class="muted">Store request and response headers so they can be inspected, and requests resent, from Recent traffic. Disabled by default.</p></div></div>
+            <label class="check-row"><input id="siteHttpHeaderCaptureEnabled" type="checkbox"><span><strong>Enable header capture</strong><small class="muted">Set an expiration if you only need this temporarily.</small></span></label>
+            <div id="siteHttpHeaderCaptureSettings" class="site-form-grid hidden">
+              <label class="check-row"><input id="siteHttpHeaderCaptureRedactAuth" type="checkbox"><span><strong>Redact Authorization, Cookie, and Set-Cookie</strong><small class="muted">Recommended. The header name is still captured; only the value is hidden.</small></span></label>
+              <label><span>Expires at</span><input id="siteHttpHeaderCaptureExpiresAt" class="input" type="datetime-local"><small class="muted">Optional. New captures stop after this time; already-captured headers are unaffected.</small></label>
+              <label class="site-origin-field"><span>Additional headers to redact</span><textarea id="siteHttpHeaderCaptureRedactedHeaders" class="input code-input compact-code-input" rows="3" spellcheck="false"></textarea><small class="muted">Comma or whitespace separated, e.g. <code>x-api-key</code>.</small></label>
             </div>
             <div class="section-heading error-response-heading"><div><h3>Header policies</h3><p class="muted">Change headers at the origin boundary. BurrowGate keeps routing, framing, forwarding, and signed identity headers under proxy control.</p></div></div>
             <div class="site-form-grid">

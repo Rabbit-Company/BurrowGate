@@ -97,7 +97,8 @@ import { loadBalancer } from "../services/load-balancer-service.ts";
 import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
 import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
 import { staticAssetCache } from "../services/static-cache-service.ts";
-import { instanceBodyCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
+import { instanceBodyCaptureDefaults, instanceHeaderCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
+import { resendCapturedRequest, ResendTargetError } from "../services/resend-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
 import {
 	isAdministrator,
@@ -647,6 +648,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			websocketDefaults: instanceWebSocketDefaults(),
 			httpCacheDefaults: instanceStaticCacheDefaults(),
 			bodyCaptureDefaults: instanceBodyCaptureDefaults(),
+			headerCaptureDefaults: instanceHeaderCaptureDefaults(),
 			managedProtection: managedRuleSetCatalog(),
 			errorResponseDefaults: {
 				mode: "json",
@@ -2596,6 +2598,41 @@ export function registerAdminRoutes(app: Web<any>): void {
 			protection_matches: protectionMatches(event.protection_matches_json),
 			origin_name: origin?.name ?? null,
 		});
+	});
+
+	app.post("/_burrowgate/api/admin/events/:id/resend", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const event = await repository.eventById(ctx.params.id);
+		if (!event) return jsonResponse({ error: "Event not found" }, 404);
+		const denied = requireLevel(await siteAccessLevel(user, event.site_id), "manage");
+		if (denied) return denied;
+		const site = await repository.siteById(event.site_id);
+		if (!site) return jsonResponse({ error: "Site not found" }, 404);
+		let input: { headers?: Record<string, string>; body?: string };
+		try {
+			input = await ctx.req.json();
+		} catch {
+			input = {};
+		}
+		try {
+			const result = await resendCapturedRequest(event, site, { headers: input.headers, body: input.body });
+			await recordAdminAudit({
+				actor: user,
+				action: "event.resend",
+				resourceType: "site",
+				resourceId: site.id,
+				summary: `Resent captured request ${event.method} ${event.path} (site ${site.name})`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse(result);
+		} catch (error) {
+			if (error instanceof ResendTargetError) return jsonResponse({ error: error.message }, 502);
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to resend request" }, 400);
+		}
 	});
 
 	app.get("/_burrowgate/api/admin/bandwidth", async (ctx) => {

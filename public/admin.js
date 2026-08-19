@@ -249,6 +249,7 @@ let bodyCaptureDefaults = {
 	],
 	instanceMaxBytesCeiling: 1048576,
 };
+let headerCaptureDefaults = { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null };
 let managedProtection = { defaultRuleSetId: "burrowgate-core", items: [] };
 let errorResponseOptionsLoaded = false;
 let selectedSiteId = "";
@@ -401,6 +402,19 @@ function parseBodyCaptureContentTypes(id, nullable) {
 	return nullable ? null : [...bodyCaptureDefaults.contentTypes];
 }
 
+function parseHeaderCaptureRedactedHeaders(id, nullable) {
+	const names = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toLowerCase())
+				.filter(Boolean),
+		),
+	];
+	if (names.length > 0) return names;
+	return nullable ? null : [];
+}
+
 function parseRuleIds(id) {
 	return [
 		...new Set(
@@ -473,6 +487,16 @@ function readHttpPolicy(prefix, routeOverrides) {
 			expiresAt: parseDateTimeLocal(`${prefix}BodyCaptureExpiresAt`),
 			contentTypes: parseBodyCaptureContentTypes(`${prefix}BodyCaptureContentTypes`, routeOverrides),
 		},
+		headerCapture: {
+			mode: routeOverrides ? byId(`${prefix}HeaderCaptureMode`).value : byId(`${prefix}HeaderCaptureEnabled`).checked ? "enabled" : "disabled",
+			redactAuthHeaders: routeOverrides
+				? byId(`${prefix}HeaderCaptureRedactAuth`).value === ""
+					? null
+					: byId(`${prefix}HeaderCaptureRedactAuth`).value === "true"
+				: byId(`${prefix}HeaderCaptureRedactAuth`).checked,
+			redactedHeaders: parseHeaderCaptureRedactedHeaders(`${prefix}HeaderCaptureRedactedHeaders`, routeOverrides),
+			expiresAt: parseDateTimeLocal(`${prefix}HeaderCaptureExpiresAt`),
+		},
 	};
 }
 
@@ -538,8 +562,21 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 	byId(`${prefix}BodyCaptureExpiresAt`).value = bodyCapture.expiresAt == null ? "" : toDateTimeLocal(bodyCapture.expiresAt);
 	byId(`${prefix}BodyCaptureContentTypes`).value =
 		routeOverrides && bodyCapture.contentTypes == null ? "" : (bodyCapture.contentTypes ?? bodyCaptureDefaults.contentTypes).join(", ");
+	const headerCapture =
+		http.headerCapture ?? (routeOverrides ? { mode: "inherit", redactAuthHeaders: null, redactedHeaders: null, expiresAt: null } : headerCaptureDefaults);
+	if (routeOverrides) byId(`${prefix}HeaderCaptureMode`).value = headerCapture.mode ?? "inherit";
+	else byId(`${prefix}HeaderCaptureEnabled`).checked = headerCapture.mode === "enabled";
+	if (routeOverrides) {
+		byId(`${prefix}HeaderCaptureRedactAuth`).value =
+			headerCapture.redactAuthHeaders === null || headerCapture.redactAuthHeaders === undefined ? "" : String(headerCapture.redactAuthHeaders);
+	} else {
+		byId(`${prefix}HeaderCaptureRedactAuth`).checked = headerCapture.redactAuthHeaders ?? headerCaptureDefaults.redactAuthHeaders;
+	}
+	byId(`${prefix}HeaderCaptureExpiresAt`).value = headerCapture.expiresAt == null ? "" : toDateTimeLocal(headerCapture.expiresAt);
+	byId(`${prefix}HeaderCaptureRedactedHeaders`).value = (headerCapture.redactedHeaders ?? []).join(", ");
 	if (!routeOverrides) updateSiteHttpCacheControls();
 	if (!routeOverrides) updateSiteHttpBodyCaptureControls();
+	if (!routeOverrides) updateSiteHttpHeaderCaptureControls();
 	if (!routeOverrides) updateSiteProtectionControls();
 }
 
@@ -976,26 +1013,127 @@ function bodySection(label, body, truncated, contentType) {
 	}<pre class="event-detail-pre">${escapeHtml(body)}</pre></div>`;
 }
 
+function parseCapturedHeadersJson(json) {
+	if (!json) return [];
+	try {
+		const parsed = JSON.parse(json);
+		return Array.isArray(parsed) ? parsed.filter((entry) => Array.isArray(entry) && entry.length === 2) : [];
+	} catch {
+		return [];
+	}
+}
+
+function headersSection(label, headersJson, truncated) {
+	const entries = parseCapturedHeadersJson(headersJson);
+	if (entries.length === 0) {
+		return `<div class="event-detail-body"><h3>${label}</h3><p class="muted">No ${label.toLowerCase()} were captured for this request. Header capture may be disabled or expired.</p></div>`;
+	}
+	const rows = entries
+		.map(
+			([name, value]) =>
+				`<tr><td>${escapeHtml(name)}</td><td>${value === "[redacted]" ? '<span class="badge warn">redacted</span>' : escapeHtml(value)}</td></tr>`,
+		)
+		.join("");
+	return `<div class="event-detail-body"><h3>${label}${truncated ? ' <span class="badge warn">truncated</span>' : ""}</h3><table class="event-detail-headers"><tbody>${rows}</tbody></table></div>`;
+}
+
+function resendPanel(event) {
+	const method = event.method.toUpperCase();
+	const requestHeaders = parseCapturedHeadersJson(event.request_headers);
+	const headerFields = requestHeaders
+		.map(([name, value]) => {
+			const redacted = value === "[redacted]";
+			return `<label class="resend-header-row"><span>${escapeHtml(name)}</span><input class="input" data-header-name="${escapeHtml(name)}" value="${
+				redacted ? "" : escapeHtml(value)
+			}" placeholder="${redacted ? "Redacted - enter a value to send" : ""}"></label>`;
+		})
+		.join("");
+	return `<div class="event-detail-body">
+    <h3>Resend</h3>
+    <p class="muted">Replays this request back through BurrowGate with the headers and body below. Redacted headers are left blank and must be filled in.</p>
+    ${requestHeaders.length ? `<div class="site-form-grid">${headerFields}</div>` : '<p class="muted">No request headers were captured to resend.</p>'}
+    <div class="small-top-margin"><label><span>Additional / override headers</span><textarea id="resendExtraHeaders" class="input code-input compact-code-input" rows="3" spellcheck="false" placeholder="Content-Type: application/json"></textarea><small class="muted">One <code>Name: value</code> rule per line. Not needed if the header is already listed above.</small></label></div>
+    <div class="small-top-margin"><label><span>Body</span><textarea id="resendBody" class="input code-input compact-code-input" rows="4">${escapeHtml(event.request_body ?? "")}</textarea></label></div>
+    <button class="small-top-margin button${["GET", "HEAD"].includes(method) ? "" : " danger"}" type="button" data-resend-event="${escapeHtml(event.id)}" data-method="${escapeHtml(method)}">Resend ${escapeHtml(method)} request</button>
+    <div id="resendResult"></div>
+  </div>`;
+}
+
+const HOP_NOT_FOLLOWED_LABELS = {
+	"redirect-limit": "redirect limit reached, not followed",
+	"off-site": "points to a different host, not followed",
+	"unparseable-location": "invalid location, not followed",
+	"no-location": "redirect had no location header",
+};
+
+function hopChainSection(hops) {
+	if (!hops || hops.length <= 1) return "";
+	const rows = hops
+		.map((hop, index) => {
+			const note = !hop.followed && hop.notFollowedReason ? HOP_NOT_FOLLOWED_LABELS[hop.notFollowedReason] : "";
+			return `<tr><td>Hop ${index + 1}${index === hops.length - 1 ? " (final)" : ""}<br><span class="muted">${escapeHtml(hop.method)} ${escapeHtml(hop.path)}</span></td><td><span class="badge ${statusClass(hop.status)}">${hop.status}</span>${
+				hop.location ? `<br><span class="muted">${escapeHtml(hop.location)}</span>` : ""
+			}${note ? `<br><span class="badge warn">${escapeHtml(note)}</span>` : ""}</td></tr>`;
+		})
+		.join("");
+	return `<div class="event-detail-body"><h3>Redirect chain</h3><table class="event-detail-headers"><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderResendResult(result) {
+	const headerRows = result.headers.map(([name, value]) => `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(value)}</td></tr>`).join("");
+	return `${hopChainSection(result.hops)}
+  <div class="event-detail-body">
+    <h3>Response <span class="badge ${statusClass(result.status)}">${result.status}</span></h3>
+    <table class="event-detail-headers"><tbody>${headerRows}</tbody></table>
+    <pre class="event-detail-pre">${escapeHtml(result.body)}${result.bodyTruncated ? "\n…truncated" : ""}</pre>
+  </div>`;
+}
+
+function severityBadgeClass(severity) {
+	return severity === "critical" || severity === "high" ? "bad" : severity === "medium" ? "warn" : "info";
+}
+
+function protectionMatchesSection(matches) {
+	if (!matches || matches.length === 0) return "";
+	const rows = matches
+		.map(
+			(match) =>
+				`<tr><td>${escapeHtml(match.ruleId ?? "-")}<br><span class="muted">${escapeHtml(match.title ?? "")}</span></td><td>${escapeHtml(match.category ?? "-")}</td><td><span class="badge ${severityBadgeClass(match.severity)}">${escapeHtml(match.severity ?? "-")}</span></td><td>${escapeHtml(match.location ?? "-")}</td></tr>`,
+		)
+		.join("");
+	return `<div class="event-detail-body"><h3>Managed protection matches</h3><table class="event-detail-headers"><tbody>${rows}</tbody></table></div>`;
+}
+
 function renderEventDetail(event) {
 	const rows = [
+		["Request ID", escapeHtml(event.id)],
 		["Time", escapeHtml(formatDate(event.created_at))],
 		["Method", escapeHtml(event.method)],
 		["Path", escapeHtml(event.path)],
 		["Status", String(event.status)],
 		["Decision", escapeHtml(event.decision)],
 		["IP", escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)],
+		["ASN", asnBadge(event.asn, event.asn_org)],
 		["Session", event.session_id ? escapeHtml(event.session_id) : "-"],
 		["User", event.access_username ? escapeHtml(event.access_username) : "-"],
 		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
 		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-"],
 		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-"],
+		["Protection rule", event.protection_rule_id ? escapeHtml(event.protection_rule_id) : "-"],
+		["Protection category", event.protection_category ? escapeHtml(event.protection_category) : "-"],
+		["Protection severity", event.protection_severity ? escapeHtml(event.protection_severity) : "-"],
+		["Protection ruleset", event.protection_ruleset_id ? escapeHtml(`${event.protection_ruleset_id} ${event.protection_ruleset_version ?? ""}`.trim()) : "-"],
 		["Referrer", event.referer ? escapeHtml(event.referer) : "-"],
 		["Latency", escapeHtml(formatDuration(event.latency_ms))],
 	];
 	return `
     <div class="event-detail-grid">${rows.map(([label, value]) => `<div><span class="muted">${label}</span><div>${value}</div></div>`).join("")}</div>
+    ${protectionMatchesSection(event.protection_matches)}
     ${bodySection("Request body", event.request_body, event.request_body_truncated === 1, event.request_content_type)}
     ${bodySection("Response body", event.response_body, event.response_body_truncated === 1, event.response_content_type)}
+    ${headersSection("Request headers", event.request_headers, event.request_headers_truncated === 1)}
+    ${headersSection("Response headers", event.response_headers, event.response_headers_truncated === 1)}
+    ${resendPanel(event)}
   `;
 }
 
@@ -1008,6 +1146,40 @@ async function openEventDetail(id) {
 		container.innerHTML = renderEventDetail(event);
 	} catch (error) {
 		container.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+	}
+}
+
+async function handleResendClick(button) {
+	const method = button.dataset.method;
+	if (!["GET", "HEAD"].includes(method)) {
+		if (!confirm(`Resend this ${method} request? If the endpoint has side effects (creating or modifying data), this may repeat them.`)) return;
+	}
+	const panel = button.closest(".event-detail-body");
+	const headers = {};
+	for (const input of panel.querySelectorAll("[data-header-name]")) {
+		if (input.value.trim() !== "") headers[input.dataset.headerName] = input.value;
+	}
+	const bodyField = panel.querySelector("#resendBody");
+	const resultContainer = panel.querySelector("#resendResult");
+	try {
+		for (const { name, value } of parseHeaderAssignments("resendExtraHeaders", "Additional headers")) headers[name] = value;
+	} catch (error) {
+		resultContainer.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+		return;
+	}
+	button.disabled = true;
+	resultContainer.innerHTML = '<p class="muted"><span class="spinner"></span> Sending...</p>';
+	try {
+		const result = await api(
+			`/events/${encodeURIComponent(button.dataset.resendEvent)}/resend`,
+			{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ headers, body: bodyField ? bodyField.value : undefined }) },
+			false,
+		);
+		resultContainer.innerHTML = renderResendResult(result);
+	} catch (error) {
+		resultContainer.innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+	} finally {
+		button.disabled = false;
 	}
 }
 
@@ -1708,6 +1880,10 @@ function updateSiteHttpBodyCaptureControls() {
 	byId("siteHttpBodyCaptureSettings").classList.toggle("hidden", !byId("siteHttpBodyCaptureEnabled").checked);
 }
 
+function updateSiteHttpHeaderCaptureControls() {
+	byId("siteHttpHeaderCaptureSettings").classList.toggle("hidden", !byId("siteHttpHeaderCaptureEnabled").checked);
+}
+
 function updateSiteProtectionControls() {
 	const mode = byId("siteHttpProtectionMode").value;
 	const badge = byId("siteProtectionModeBadge");
@@ -1913,6 +2089,7 @@ async function loadSites() {
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
 	httpCacheDefaults = response.httpCacheDefaults ?? httpCacheDefaults;
 	bodyCaptureDefaults = response.bodyCaptureDefaults ?? bodyCaptureDefaults;
+	headerCaptureDefaults = response.headerCaptureDefaults ?? headerCaptureDefaults;
 	managedProtection = response.managedProtection ?? managedProtection;
 	const protectionRulesetSelect = byId("siteHttpProtectionRuleset");
 	const selectedProtectionRuleset = protectionRulesetSelect.value;
@@ -4259,6 +4436,11 @@ async function handleBodyClick(event) {
 		await openEventDetail(eventRow.dataset.eventId);
 		return;
 	}
+	const resendButton = event.target.closest("button[data-resend-event]");
+	if (resendButton) {
+		await handleResendClick(resendButton);
+		return;
+	}
 	const userPermissionsButton = event.target.closest("button[data-user-permissions]");
 	if (userPermissionsButton) {
 		openUserPermissions(userPermissionsButton.dataset.userPermissions);
@@ -4829,6 +5011,7 @@ function bindActions() {
 	});
 	byId("siteHttpCacheEnabled").addEventListener("change", updateSiteHttpCacheControls);
 	byId("siteHttpBodyCaptureEnabled").addEventListener("change", updateSiteHttpBodyCaptureControls);
+	byId("siteHttpHeaderCaptureEnabled").addEventListener("change", updateSiteHttpHeaderCaptureControls);
 	byId("siteHttpProtectionMode").addEventListener("change", updateSiteProtectionControls);
 	byId("siteHttpProtectionRuleset").addEventListener("change", updateSiteProtectionControls);
 	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));

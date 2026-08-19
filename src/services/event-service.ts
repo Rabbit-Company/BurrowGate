@@ -61,6 +61,10 @@ export async function recordEvent(input: {
 	requestBody?: string | null;
 	requestBodyTruncated?: boolean | null;
 	requestContentType?: string | null;
+	requestHeaders?: string | null;
+	requestHeadersTruncated?: boolean | null;
+	responseHeaders?: string | null;
+	responseHeadersTruncated?: boolean | null;
 }): Promise<void> {
 	if (blockedSiteIds.has(input.siteId)) return;
 	openMetrics.recordHttpRequest(input);
@@ -98,6 +102,12 @@ export async function recordEvent(input: {
 			response_body: null,
 			response_body_truncated: null,
 			response_content_type: null,
+			request_headers: input.requestHeaders ?? null,
+			request_headers_truncated:
+				input.requestHeadersTruncated === undefined || input.requestHeadersTruncated === null ? null : input.requestHeadersTruncated ? 1 : 0,
+			response_headers: input.responseHeaders ?? null,
+			response_headers_truncated:
+				input.responseHeadersTruncated === undefined || input.responseHeadersTruncated === null ? null : input.responseHeadersTruncated ? 1 : 0,
 			created_at: Date.now(),
 		});
 	} catch (error) {

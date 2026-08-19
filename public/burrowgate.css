@@ -1216,6 +1216,29 @@ form.grid label {
 	gap: 8px;
 	margin-bottom: 8px;
 }
+.event-detail-headers {
+	width: 100%;
+	border-collapse: collapse;
+	border: 1px solid #374151;
+	border-radius: 10px;
+	overflow: hidden;
+	font-size: 12px;
+}
+.event-detail-headers td {
+	padding: 8px 12px;
+	border-top: 1px solid #374151;
+	vertical-align: top;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.event-detail-headers tr:first-child td {
+	border-top: none;
+}
+.event-detail-headers td:first-child {
+	color: #94a3b8;
+	white-space: nowrap;
+	width: 1%;
+}
 .check-row {
 	display: flex !important;
 	grid-template-columns: none !important;
@@ -2040,4 +2063,8 @@ form.grid label {
 
 #refererCard {
 	margin-bottom: 20px;
+}
+
+.small-top-margin {
+	margin-top: 12px;
 }

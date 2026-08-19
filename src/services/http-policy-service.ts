@@ -74,6 +74,23 @@ export interface RouteBodyCapturePolicy {
 	expiresAt: number | null;
 }
 
+export type SiteHeaderCaptureMode = "disabled" | "enabled";
+export type RouteHeaderCaptureMode = "inherit" | SiteHeaderCaptureMode;
+
+export interface SiteHeaderCapturePolicy {
+	mode: SiteHeaderCaptureMode;
+	redactAuthHeaders: boolean;
+	redactedHeaders: string[];
+	expiresAt: number | null;
+}
+
+export interface RouteHeaderCapturePolicy {
+	mode: RouteHeaderCaptureMode;
+	redactAuthHeaders: boolean | null;
+	redactedHeaders: string[] | null;
+	expiresAt: number | null;
+}
+
 export type BanDurationSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SiteBanDurationsPolicy {
@@ -154,6 +171,7 @@ export interface SiteHttpPolicyView {
 	banDurations: SiteBanDurationsPolicy;
 	bandwidthLimit: SiteBandwidthLimitPolicy;
 	bodyCapture: SiteBodyCapturePolicy;
+	headerCapture: SiteHeaderCapturePolicy;
 }
 
 export interface RouteHttpPolicyView {
@@ -165,6 +183,7 @@ export interface RouteHttpPolicyView {
 	banDurations: RouteBanDurationsPolicy;
 	bandwidthLimit: RouteBandwidthLimitPolicy;
 	bodyCapture: RouteBodyCapturePolicy;
+	headerCapture: RouteHeaderCapturePolicy;
 }
 
 export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection" | "bandwidthLimit"> {
@@ -252,6 +271,7 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 		expiresAt: null,
 		contentTypes: [...DEFAULT_BODY_CAPTURE_CONTENT_TYPES],
 	},
+	headerCapture: { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null },
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
@@ -263,6 +283,7 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	banDurations: { low: null, medium: null, high: null, critical: null },
 	bandwidthLimit: { enabled: null, maxBytes: null, windowSeconds: null, banSeconds: null },
 	bodyCapture: { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null },
+	headerCapture: { mode: "inherit", redactAuthHeaders: null, redactedHeaders: null, expiresAt: null },
 });
 
 function protectionMode(
@@ -486,6 +507,60 @@ function parseRouteBodyCapture(value: unknown): RouteBodyCapturePolicy {
 	};
 }
 
+function headerCaptureMode(
+	value: unknown,
+	route: boolean,
+	fallback: SiteHeaderCaptureMode | RouteHeaderCaptureMode,
+): SiteHeaderCaptureMode | RouteHeaderCaptureMode {
+	if (value === undefined) return fallback;
+	const mode = String(value).trim().toLowerCase();
+	if (mode === "enabled" || mode === "disabled" || (route && mode === "inherit")) return mode as SiteHeaderCaptureMode | RouteHeaderCaptureMode;
+	throw new Error(`Header capture mode must be ${route ? "inherit, enabled, or disabled" : "enabled or disabled"}`);
+}
+
+function headerCaptureBoolean(value: unknown, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value === "boolean") return value;
+	if (value === "true" || value === "1" || value === 1) return true;
+	if (value === "false" || value === "0" || value === 0 || value === "") return false;
+	throw new Error("Header capture redact auth headers must be a boolean");
+}
+
+function routeHeaderCaptureBoolean(value: unknown): boolean | null {
+	if (value === undefined || value === null || value === "") return null;
+	return headerCaptureBoolean(value, false);
+}
+
+function headerCaptureRedactedHeaders(value: unknown, nullable: boolean, fallback: readonly string[] | null): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = (Array.isArray(value) ? value : String(value).split(/[\s,]+/u)).map((item) => String(item).trim()).filter(Boolean);
+	const names = [...new Set(raw.map((item) => normalizedHeaderName(item, "Header capture redacted header")))];
+	if (names.length > 32) throw new Error("Header capture redacted headers supports at most 32 values");
+	return names;
+}
+
+function parseSiteHeaderCapture(value: unknown): SiteHeaderCapturePolicy {
+	const defaults = defaultSitePolicy().headerCapture;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: headerCaptureMode(input.mode, false, defaults.mode) as SiteHeaderCaptureMode,
+		redactAuthHeaders: headerCaptureBoolean(input.redactAuthHeaders, defaults.redactAuthHeaders),
+		redactedHeaders: headerCaptureRedactedHeaders(input.redactedHeaders, false, defaults.redactedHeaders)!,
+		expiresAt: bodyCaptureExpiresAt(input.expiresAt, defaults.expiresAt),
+	};
+}
+
+function parseRouteHeaderCapture(value: unknown): RouteHeaderCapturePolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return {
+		mode: headerCaptureMode(input.mode, true, "inherit") as RouteHeaderCaptureMode,
+		redactAuthHeaders: routeHeaderCaptureBoolean(input.redactAuthHeaders),
+		redactedHeaders: headerCaptureRedactedHeaders(input.redactedHeaders, true, null),
+		expiresAt: bodyCaptureExpiresAt(input.expiresAt, null),
+	};
+}
+
 function objectValue(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
 	return value as Record<string, unknown>;
@@ -572,6 +647,7 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 		banDurations: parseSiteBanDurations(input.banDurations),
 		bandwidthLimit: parseSiteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseSiteBodyCapture(input.bodyCapture),
+		headerCapture: parseSiteHeaderCapture(input.headerCapture),
 	};
 }
 
@@ -591,6 +667,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 		banDurations: parseRouteBanDurations(input.banDurations),
 		bandwidthLimit: parseRouteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseRouteBodyCapture(input.bodyCapture),
+		headerCapture: parseRouteHeaderCapture(input.headerCapture),
 	};
 }
 
@@ -621,6 +698,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Site ban duration policy");
 	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Site bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Site body capture policy");
+	const suppliedHeaderCapture = value.headerCapture === undefined ? {} : objectValue(value.headerCapture, "Site header capture policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -631,6 +709,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
 			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
+			headerCapture: { ...current.headerCapture, ...suppliedHeaderCapture },
 		}),
 	);
 }
@@ -646,6 +725,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const suppliedBanDurations = value.banDurations === undefined ? {} : objectValue(value.banDurations, "Route ban duration policy");
 	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Route bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Route body capture policy");
+	const suppliedHeaderCapture = value.headerCapture === undefined ? {} : objectValue(value.headerCapture, "Route header capture policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -656,6 +736,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
 			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
+			headerCapture: { ...current.headerCapture, ...suppliedHeaderCapture },
 		}),
 	);
 }
@@ -724,10 +805,20 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			expiresAt: routePolicy.bodyCapture.expiresAt ?? sitePolicy.bodyCapture.expiresAt,
 			contentTypes: routePolicy.bodyCapture.contentTypes ?? sitePolicy.bodyCapture.contentTypes,
 		},
+		headerCapture: {
+			mode: routePolicy.headerCapture.mode === "inherit" ? sitePolicy.headerCapture.mode : routePolicy.headerCapture.mode,
+			redactAuthHeaders: routePolicy.headerCapture.redactAuthHeaders ?? sitePolicy.headerCapture.redactAuthHeaders,
+			redactedHeaders: routePolicy.headerCapture.redactedHeaders ?? sitePolicy.headerCapture.redactedHeaders,
+			expiresAt: routePolicy.headerCapture.expiresAt ?? sitePolicy.headerCapture.expiresAt,
+		},
 	};
 }
 
 export function isBodyCaptureActive(policy: SiteBodyCapturePolicy): boolean {
+	return policy.mode === "enabled" && (policy.expiresAt === null || policy.expiresAt > Date.now());
+}
+
+export function isHeaderCaptureActive(policy: SiteHeaderCapturePolicy): boolean {
 	return policy.mode === "enabled" && (policy.expiresAt === null || policy.expiresAt > Date.now());
 }
 
@@ -775,4 +866,8 @@ export function instanceBodyCaptureDefaults(): SiteBodyCapturePolicy & { instanc
 		...defaultSitePolicy().bodyCapture,
 		instanceMaxBytesCeiling: bodyCaptureByteCeiling,
 	};
+}
+
+export function instanceHeaderCaptureDefaults(): SiteHeaderCapturePolicy {
+	return { ...defaultSitePolicy().headerCapture };
 }

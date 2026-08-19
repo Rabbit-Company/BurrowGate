@@ -1132,6 +1132,10 @@ async function ensureRequestEventColumns(): Promise<void> {
 		`ALTER TABLE request_events ADD COLUMN response_body ${largeTextType} NULL`,
 		"ALTER TABLE request_events ADD COLUMN response_body_truncated INTEGER NULL",
 		"ALTER TABLE request_events ADD COLUMN response_content_type VARCHAR(255) NULL",
+		"ALTER TABLE request_events ADD COLUMN request_headers TEXT NULL",
+		"ALTER TABLE request_events ADD COLUMN request_headers_truncated INTEGER NULL",
+		"ALTER TABLE request_events ADD COLUMN response_headers TEXT NULL",
+		"ALTER TABLE request_events ADD COLUMN response_headers_truncated INTEGER NULL",
 	]) {
 		try {
 			await db.unsafe(statement);

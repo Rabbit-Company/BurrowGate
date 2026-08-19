@@ -74,6 +74,7 @@ const headerPolicy: ResolvedHttpPolicy = {
 	banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
 	bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600, scopeId: "site-test" },
 	bodyCapture: { mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: ["*"] },
+	headerCapture: { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null },
 };
 
 describe("reverse-proxy compression", () => {

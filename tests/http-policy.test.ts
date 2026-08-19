@@ -10,7 +10,9 @@ import {
 	serializeSiteHttpPolicy,
 	siteHttpPolicyView,
 	instanceBodyCaptureDefaults,
+	instanceHeaderCaptureDefaults,
 	instanceStaticCacheDefaults,
+	isHeaderCaptureActive,
 } from "../src/services/http-policy-service.ts";
 
 function site(httpPolicy?: string | null): SiteRecord {
@@ -69,6 +71,7 @@ describe("HTTP header and request-limit policies", () => {
 	test("defaults sites to no header changes and unlimited requests", () => {
 		const { maxEntries: _maxEntries, maxBytes: _maxBytes, instanceMaxObjectBytes: _instanceMaxObjectBytes, ...cache } = instanceStaticCacheDefaults();
 		const { instanceMaxBytesCeiling: _instanceMaxBytesCeiling, ...bodyCapture } = instanceBodyCaptureDefaults();
+		const headerCapture = instanceHeaderCaptureDefaults();
 		expect(siteHttpPolicyView(site(null))).toEqual({
 			requestHeaders: { set: [], remove: [] },
 			responseHeaders: { set: [], remove: [] },
@@ -78,6 +81,7 @@ describe("HTTP header and request-limit policies", () => {
 			banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
 			bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600 },
 			bodyCapture,
+			headerCapture,
 		});
 	});
 
@@ -257,6 +261,43 @@ describe("body capture policy", () => {
 	});
 });
 
+describe("header capture policy", () => {
+	test("defaults to disabled with auth redaction on", () => {
+		const view = siteHttpPolicyView(site(null));
+		expect(view.headerCapture.mode).toBe("disabled");
+		expect(view.headerCapture.redactAuthHeaders).toBe(true);
+		expect(view.headerCapture.redactedHeaders).toEqual([]);
+		expect(view.headerCapture.expiresAt).toBeNull();
+	});
+
+	test("lets a route enable capture and override redaction while inheriting the extra redacted list", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ headerCapture: { mode: "disabled", redactedHeaders: "x-api-key" } });
+		const routePolicy = serializeRouteHttpPolicy({ headerCapture: { mode: "enabled", redactAuthHeaders: false } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.headerCapture.mode).toBe("enabled");
+		expect(resolved.headerCapture.redactAuthHeaders).toBe(false);
+		expect(resolved.headerCapture.redactedHeaders).toEqual(["x-api-key"]);
+	});
+
+	test("route without an override inherits the site's expiration", () => {
+		const expiresAt = Date.now() + 3_600_000;
+		const sitePolicy = serializeSiteHttpPolicy({ headerCapture: { mode: "enabled", expiresAt } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(serializeRouteHttpPolicy({})));
+		expect(resolved.headerCapture.expiresAt).toBe(expiresAt);
+	});
+
+	test("rejects an invalid mode", () => {
+		expect(() => serializeSiteHttpPolicy({ headerCapture: { mode: "sometimes" } })).toThrow("Header capture mode");
+		expect(() => serializeRouteHttpPolicy({ headerCapture: { mode: "sometimes" } })).toThrow("Header capture mode");
+	});
+
+	test("normalizes redacted header names to lowercase and rejects invalid tokens", () => {
+		const view = siteHttpPolicyView(site(serializeSiteHttpPolicy({ headerCapture: { redactedHeaders: "X-Api-Key, X-Internal-Token" } })));
+		expect(view.headerCapture.redactedHeaders).toEqual(["x-api-key", "x-internal-token"]);
+		expect(() => serializeSiteHttpPolicy({ headerCapture: { redactedHeaders: "bad@header" } })).toThrow();
+	});
+});
+
 describe("isBodyCaptureActive", () => {
 	test("is false when disabled even without an expiration", () => {
 		expect(isBodyCaptureActive({ mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: [] })).toBe(false);
@@ -276,5 +317,19 @@ describe("isBodyCaptureActive", () => {
 		expect(isBodyCaptureActive({ mode: "enabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: Date.now() - 1_000, contentTypes: [] })).toBe(
 			false,
 		);
+	});
+});
+
+describe("isHeaderCaptureActive", () => {
+	test("is false when disabled even without an expiration", () => {
+		expect(isHeaderCaptureActive({ mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null })).toBe(false);
+	});
+
+	test("is true when enabled with no expiration", () => {
+		expect(isHeaderCaptureActive({ mode: "enabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null })).toBe(true);
+	});
+
+	test("is false once the expiration has passed", () => {
+		expect(isHeaderCaptureActive({ mode: "enabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: Date.now() - 1_000 })).toBe(false);
 	});
 });
