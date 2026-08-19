@@ -92,6 +92,7 @@ import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { appendSetCookies, htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
 import { blockSiteBandwidth, flushBandwidthMetrics, resumeSiteBandwidth } from "../services/bandwidth-service.ts";
 import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts";
+import { updateCheckManager } from "../services/update-check-service.ts";
 import { originHealthManager } from "../services/origin-health-service.ts";
 import { loadBalancer } from "../services/load-balancer-service.ts";
 import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
@@ -605,6 +606,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 		"/_burrowgate/static/admin.js",
 		() =>
 			new Response(Bun.file("public/admin.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
+			}),
+	);
+
+	app.get(
+		"/_burrowgate/static/update-check.js",
+		() =>
+			new Response(Bun.file("public/update-check.js"), {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
 			}),
 	);
@@ -1937,6 +1946,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 			site: selection.site ? siteView(selection.site) : null,
 			originHealth: selection.site ? originHealthManager.summary(selection.site.id) : null,
 		});
+	});
+
+	app.get("/_burrowgate/api/admin/update-status", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		return jsonResponse(updateCheckManager.get());
 	});
 
 	app.get("/_burrowgate/api/admin/metrics", async (ctx) => {

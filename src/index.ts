@@ -66,6 +66,7 @@ import { loadManagedRuleSets } from "./services/managed-ruleset-loader.ts";
 import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
 import { registerPendingChangeApplier, startPendingChangeScheduler } from "./services/pending-change-service.ts";
 import { applyPendingStreamChange } from "./services/stream-service.ts";
+import { updateCheckManager } from "./services/update-check-service.ts";
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -87,6 +88,7 @@ connectivityMonitor.start();
 systemMonitor.start();
 notificationService.start();
 firewallSyncService.start();
+updateCheckManager.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
 startStreamMonitoring();

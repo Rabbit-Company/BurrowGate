@@ -146,6 +146,10 @@ export const config = {
 		enabled: envBoolean("BG_OPENMETRICS_ENABLED", false),
 		token: process.env.BG_OPENMETRICS_TOKEN?.trim() || null,
 	},
+	updateCheck: {
+		enabled: envBoolean("BG_UPDATE_CHECK_ENABLED", true),
+		intervalHours: envNumber("BG_UPDATE_CHECK_INTERVAL_HOURS", 1, 1, 168),
+	},
 	maintenance: {
 		intervalSeconds: envNumber("BG_MAINTENANCE_INTERVAL_SECONDS", 3_600, 60, 86_400),
 		cleanupIntervalSeconds: envNumber("BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS", 60, 10, 86_400),

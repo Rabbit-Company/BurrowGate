@@ -251,6 +251,6 @@ export function streamsAdminPage(): string {
     </div>
   </div>
 </div>
-<div id="toast" class="toast hidden" role="status"></div></main><script src="/_burrowgate/static/chart.umd.js"></script><script type="module" src="/_burrowgate/static/streams-admin.js"></script>`,
+<div id="toast" class="toast hidden" role="status"></div></main><script src="/_burrowgate/static/chart.umd.js"></script><script type="module" src="/_burrowgate/static/streams-admin.js"></script><script src="/_burrowgate/static/update-check.js"></script>`,
 	);
 }

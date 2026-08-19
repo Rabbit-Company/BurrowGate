@@ -115,6 +115,6 @@ ${notificationCard("streamNotif", "Stream", "Alerts for a TCP/UDP stream: origin
 ${notificationLogCard("siteNotif", "Site", SITE_EVENT_TYPES)}
 ${notificationLogCard("streamNotif", "Stream", STREAM_EVENT_TYPES)}
 </div>
-<div id="toast" class="toast hidden" role="status"></div></main><script type="module" src="/_burrowgate/static/notifications-admin.js"></script>`,
+<div id="toast" class="toast hidden" role="status"></div></main><script type="module" src="/_burrowgate/static/notifications-admin.js"></script><script src="/_burrowgate/static/update-check.js"></script>`,
 	);
 }

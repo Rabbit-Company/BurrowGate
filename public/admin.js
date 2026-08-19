@@ -709,12 +709,10 @@ function initializeDateRange() {
 	}
 }
 
-function applyAutomaticRetentionDateRange() {
+function applyAutomaticDateRange() {
 	if (!dateRangeIsAutomatic) return;
-	const retentionDays = Number(selectedSite()?.eventRetentionDays ?? defaultEventRetentionDays);
-	const normalizedDays = Number.isFinite(retentionDays) ? Math.min(365, Math.max(1, Math.floor(retentionDays))) : 7;
 	const to = Date.now();
-	setDateRangeInputs(to - normalizedDays * 24 * 3_600_000, to);
+	setDateRangeInputs(to - 24 * 3_600_000, to);
 }
 
 function readDateRangeInputs() {
@@ -2118,7 +2116,7 @@ async function loadSites() {
 	const requestedValid = requestedId !== null && sites.some((site) => site.id === requestedId);
 	if (!currentValid) selectedSiteId = requestedValid ? requestedId : "";
 	persistSiteSelection();
-	applyAutomaticRetentionDateRange();
+	applyAutomaticDateRange();
 	renderSiteSelector();
 	renderSites();
 	if (loadedTabs.has("access")) renderAccessList();
@@ -2186,7 +2184,7 @@ async function chooseSite(id) {
 	if ((id !== "" && !sites.some((site) => site.id === id)) || selectedSiteId === id) return;
 	selectedSiteId = id;
 	persistSiteSelection();
-	applyAutomaticRetentionDateRange();
+	applyAutomaticDateRange();
 	renderSiteSelector();
 	await reloadSelectedSite();
 }

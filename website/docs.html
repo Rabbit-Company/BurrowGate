@@ -597,6 +597,25 @@ docker compose up -d</code></pre>
 							</div>
 							<p>Prometheus and OpenTelemetry Collector export reference.</p>
 						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/UPDATE_CHECKS.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Update Notifications</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>How the dashboard checks GitHub Releases and shows an update badge with release notes.</p>
+						</a>
 					</div>
 				</div>
 			</section>
@@ -672,6 +691,11 @@ docker compose up -d</code></pre>
 									<td><code>BG_OPENMETRICS_ENABLED</code></td>
 									<td class="default"><code>false</code></td>
 									<td>Expose <code>/_burrowgate/metrics</code> for Prometheus-compatible scraping</td>
+								</tr>
+								<tr>
+									<td><code>BG_UPDATE_CHECK_ENABLED</code></td>
+									<td class="default"><code>true</code></td>
+									<td>Check GitHub Releases hourly and show a dashboard update badge</td>
 								</tr>
 								<tr>
 									<td><code>BG_DEFAULT_POW_DIFFICULTY</code></td>

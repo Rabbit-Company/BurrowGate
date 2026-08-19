@@ -41,6 +41,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller, local nftables, OVH's per-IP edge firewall, or an AWS VPC Network ACL, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
 - Per-site customizable HTML challenge pages
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
+- In-dashboard update notifications, checking GitHub Releases hourly for a newer stable version
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
 
@@ -173,6 +174,10 @@ services:
 
 Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases) for what changed before upgrading, especially across major versions.
 
+## Update Notifications
+
+BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPDATE_CHECK_INTERVAL_HOURS`, default `1`) and shows an **Update available** badge next to the version number in the dashboard header when one is found. Clicking it opens the release notes and a link to the release on GitHub - there is no automatic download or restart. Disable the check entirely with `BG_UPDATE_CHECK_ENABLED=false`, useful for air-gapped deployments. See [`docs/UPDATE_CHECKS.md`](docs/UPDATE_CHECKS.md).
+
 ## Configuration
 
 | Variable                                  | Default                              | Description                                                                                |
@@ -214,6 +219,8 @@ Check the [releases page](https://github.com/Rabbit-Company/BurrowGate/releases)
 | `BG_GEOIP_ASN_DATABASE_PATH`              | `./data/geoip/GeoLite2-ASN.mmdb`     | Local MaxMind ASN database path                                                            |
 | `BG_OPENMETRICS_ENABLED`                  | `false`                              | Expose `/_burrowgate/metrics` for Prometheus-compatible scraping                           |
 | `BG_OPENMETRICS_TOKEN`                    | empty                                | Optional bearer token protecting the OpenMetrics endpoint                                  |
+| `BG_UPDATE_CHECK_ENABLED`                 | `true`                               | Check GitHub Releases for a newer version and show a dashboard badge                       |
+| `BG_UPDATE_CHECK_INTERVAL_HOURS`          | `1`                                  | How often to check for a newer version                                                     |
 | `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                       |
 | `BG_WEBSOCKET_ENABLED`                    | `true`                               | Enable WebSocket proxying                                                                  |
 | `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS`       | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
@@ -539,7 +546,7 @@ The dashboard includes:
 - an "All websites"/"All streams" option in the site and Stream selectors, combining statistics, graphs, and tables across every site or Stream a user can access
 - interactive country map for requests and newly created sessions, plus a "Top ASNs" list by network provider
 - server-side pagination, search, filters, and sorting
-- exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions
+- exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions, defaulting to the last 24 hours on load and on every site/Stream switch regardless of configured retention, so opening the dashboard never triggers a full-retention query
 - drag-to-select time ranges directly on time-series graphs
 - click-through detail on every Recent Traffic row, including captured request/response bodies and headers when enabled, with a Resend action to replay the request from the dashboard (see [Resend](#resend))
 - internet connectivity latency, pinging public DNS resolvers directly from the BurrowGate host to help distinguish an origin problem from a network problem, with its own up/down webhook notifications (see [Notifications](#notifications))

@@ -287,7 +287,10 @@
 									correctly in both bare-metal and Docker deployments
 								</li>
 								<li>Interactive GeoIP world map for requests and new sessions, plus a Top ASNs list by network provider</li>
-								<li>Exact date-time range selection and drag-to-select directly on graphs</li>
+								<li>
+									Exact date-time range selection and drag-to-select directly on graphs, defaulting to the last 24 hours so opening the dashboard stays fast
+									regardless of configured retention
+								</li>
 								<li>Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint</li>
 							</ul>
 						</div>
@@ -325,6 +328,7 @@
 								<li>Production-ready Docker Compose deployment with an optional GeoIP-updater profile</li>
 								<li>Per-site traffic retention from 1 to 365 days with automatic maintenance cleanup</li>
 								<li>Certificate and ACME private keys encrypted at rest with AES-256-GCM</li>
+								<li>In-dashboard update notifications, checking GitHub Releases hourly for a newer stable version with release notes shown on click</li>
 							</ul>
 						</div>
 					</div>
