@@ -60,6 +60,7 @@ import type {
 	OriginBackendHealthStatusRecord,
 	OriginBackendHealthEventRecord,
 	LatencyCheckResult,
+	SystemMetricSample,
 } from "../types.ts";
 
 export type SortDirection = "asc" | "desc";
@@ -1351,6 +1352,300 @@ export const repository = {
 		}
 		return deletedRowCount(
 			await db`DELETE FROM connectivity_ping_minutes WHERE ctid IN (SELECT ctid FROM connectivity_ping_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+		);
+	},
+	async addSystemMetricSample(bucketStart: number, sample: SystemMetricSample): Promise<void> {
+		const cpu = Math.max(0, Math.min(100, sample.cpuPct));
+		const memoryUsed = Math.max(0, Math.round(sample.memoryUsedBytes));
+		const memoryTotal = Math.max(0, Math.round(sample.memoryTotalBytes));
+		const diskUsed = Math.max(0, Math.round(sample.diskUsedBytes));
+		const diskTotal = Math.max(0, Math.round(sample.diskTotalBytes));
+		const rxBps = Math.max(0, sample.networkRxBps);
+		const txBps = Math.max(0, sample.networkTxBps);
+		if (isMySqlDatabase()) {
+			await db`INSERT INTO system_metrics_minutes
+				(bucket_start,cpu_min_pct,cpu_max_pct,cpu_sum_pct,memory_min_bytes,memory_max_bytes,memory_sum_bytes,memory_total_bytes,disk_min_bytes,disk_max_bytes,disk_sum_bytes,disk_total_bytes,network_rx_min_bps,network_rx_max_bps,network_rx_sum_bps,network_tx_min_bps,network_tx_max_bps,network_tx_sum_bps,sample_count)
+				VALUES (${bucketStart},${cpu},${cpu},${cpu},${memoryUsed},${memoryUsed},${memoryUsed},${memoryTotal},${diskUsed},${diskUsed},${diskUsed},${diskTotal},${rxBps},${rxBps},${rxBps},${txBps},${txBps},${txBps},1)
+				ON DUPLICATE KEY UPDATE
+				cpu_min_pct = CASE WHEN cpu_min_pct <= ${cpu} THEN cpu_min_pct ELSE ${cpu} END,
+				cpu_max_pct = CASE WHEN cpu_max_pct >= ${cpu} THEN cpu_max_pct ELSE ${cpu} END,
+				cpu_sum_pct = cpu_sum_pct + ${cpu},
+				memory_min_bytes = CASE WHEN memory_min_bytes <= ${memoryUsed} THEN memory_min_bytes ELSE ${memoryUsed} END,
+				memory_max_bytes = CASE WHEN memory_max_bytes >= ${memoryUsed} THEN memory_max_bytes ELSE ${memoryUsed} END,
+				memory_sum_bytes = memory_sum_bytes + ${memoryUsed},
+				memory_total_bytes = ${memoryTotal},
+				disk_min_bytes = CASE WHEN disk_min_bytes <= ${diskUsed} THEN disk_min_bytes ELSE ${diskUsed} END,
+				disk_max_bytes = CASE WHEN disk_max_bytes >= ${diskUsed} THEN disk_max_bytes ELSE ${diskUsed} END,
+				disk_sum_bytes = disk_sum_bytes + ${diskUsed},
+				disk_total_bytes = ${diskTotal},
+				network_rx_min_bps = CASE WHEN network_rx_min_bps <= ${rxBps} THEN network_rx_min_bps ELSE ${rxBps} END,
+				network_rx_max_bps = CASE WHEN network_rx_max_bps >= ${rxBps} THEN network_rx_max_bps ELSE ${rxBps} END,
+				network_rx_sum_bps = network_rx_sum_bps + ${rxBps},
+				network_tx_min_bps = CASE WHEN network_tx_min_bps <= ${txBps} THEN network_tx_min_bps ELSE ${txBps} END,
+				network_tx_max_bps = CASE WHEN network_tx_max_bps >= ${txBps} THEN network_tx_max_bps ELSE ${txBps} END,
+				network_tx_sum_bps = network_tx_sum_bps + ${txBps},
+				sample_count = sample_count + 1`;
+			return;
+		}
+		await db`INSERT INTO system_metrics_minutes
+			(bucket_start,cpu_min_pct,cpu_max_pct,cpu_sum_pct,memory_min_bytes,memory_max_bytes,memory_sum_bytes,memory_total_bytes,disk_min_bytes,disk_max_bytes,disk_sum_bytes,disk_total_bytes,network_rx_min_bps,network_rx_max_bps,network_rx_sum_bps,network_tx_min_bps,network_tx_max_bps,network_tx_sum_bps,sample_count)
+			VALUES (${bucketStart},${cpu},${cpu},${cpu},${memoryUsed},${memoryUsed},${memoryUsed},${memoryTotal},${diskUsed},${diskUsed},${diskUsed},${diskTotal},${rxBps},${rxBps},${rxBps},${txBps},${txBps},${txBps},1)
+			ON CONFLICT (bucket_start) DO UPDATE SET
+			cpu_min_pct = CASE WHEN system_metrics_minutes.cpu_min_pct <= excluded.cpu_min_pct THEN system_metrics_minutes.cpu_min_pct ELSE excluded.cpu_min_pct END,
+			cpu_max_pct = CASE WHEN system_metrics_minutes.cpu_max_pct >= excluded.cpu_max_pct THEN system_metrics_minutes.cpu_max_pct ELSE excluded.cpu_max_pct END,
+			cpu_sum_pct = system_metrics_minutes.cpu_sum_pct + excluded.cpu_sum_pct,
+			memory_min_bytes = CASE WHEN system_metrics_minutes.memory_min_bytes <= excluded.memory_min_bytes THEN system_metrics_minutes.memory_min_bytes ELSE excluded.memory_min_bytes END,
+			memory_max_bytes = CASE WHEN system_metrics_minutes.memory_max_bytes >= excluded.memory_max_bytes THEN system_metrics_minutes.memory_max_bytes ELSE excluded.memory_max_bytes END,
+			memory_sum_bytes = system_metrics_minutes.memory_sum_bytes + excluded.memory_sum_bytes,
+			memory_total_bytes = excluded.memory_total_bytes,
+			disk_min_bytes = CASE WHEN system_metrics_minutes.disk_min_bytes <= excluded.disk_min_bytes THEN system_metrics_minutes.disk_min_bytes ELSE excluded.disk_min_bytes END,
+			disk_max_bytes = CASE WHEN system_metrics_minutes.disk_max_bytes >= excluded.disk_max_bytes THEN system_metrics_minutes.disk_max_bytes ELSE excluded.disk_max_bytes END,
+			disk_sum_bytes = system_metrics_minutes.disk_sum_bytes + excluded.disk_sum_bytes,
+			disk_total_bytes = excluded.disk_total_bytes,
+			network_rx_min_bps = CASE WHEN system_metrics_minutes.network_rx_min_bps <= excluded.network_rx_min_bps THEN system_metrics_minutes.network_rx_min_bps ELSE excluded.network_rx_min_bps END,
+			network_rx_max_bps = CASE WHEN system_metrics_minutes.network_rx_max_bps >= excluded.network_rx_max_bps THEN system_metrics_minutes.network_rx_max_bps ELSE excluded.network_rx_max_bps END,
+			network_rx_sum_bps = system_metrics_minutes.network_rx_sum_bps + excluded.network_rx_sum_bps,
+			network_tx_min_bps = CASE WHEN system_metrics_minutes.network_tx_min_bps <= excluded.network_tx_min_bps THEN system_metrics_minutes.network_tx_min_bps ELSE excluded.network_tx_min_bps END,
+			network_tx_max_bps = CASE WHEN system_metrics_minutes.network_tx_max_bps >= excluded.network_tx_max_bps THEN system_metrics_minutes.network_tx_max_bps ELSE excluded.network_tx_max_bps END,
+			network_tx_sum_bps = system_metrics_minutes.network_tx_sum_bps + excluded.network_tx_sum_bps,
+			sample_count = system_metrics_minutes.sample_count + excluded.sample_count`;
+	},
+	async systemMetrics(
+		since: number,
+		until: number,
+		bucketMs: number,
+	): Promise<{
+		series: Array<{
+			bucket: number;
+			cpuMinPct: number | null;
+			cpuAvgPct: number | null;
+			cpuMaxPct: number | null;
+			memoryMinBytes: number | null;
+			memoryAvgBytes: number | null;
+			memoryMaxBytes: number | null;
+			memoryTotalBytes: number | null;
+			diskMinBytes: number | null;
+			diskAvgBytes: number | null;
+			diskMaxBytes: number | null;
+			diskTotalBytes: number | null;
+			networkRxMinBps: number | null;
+			networkRxAvgBps: number | null;
+			networkRxMaxBps: number | null;
+			networkTxMinBps: number | null;
+			networkTxAvgBps: number | null;
+			networkTxMaxBps: number | null;
+		}>;
+		summary: {
+			cpuMinPct: number | null;
+			cpuAvgPct: number | null;
+			cpuMaxPct: number | null;
+			memoryMinBytes: number | null;
+			memoryAvgBytes: number | null;
+			memoryMaxBytes: number | null;
+			memoryTotalBytes: number | null;
+			diskMinBytes: number | null;
+			diskAvgBytes: number | null;
+			diskMaxBytes: number | null;
+			diskTotalBytes: number | null;
+			networkRxMinBps: number | null;
+			networkRxAvgBps: number | null;
+			networkRxMaxBps: number | null;
+			networkTxMinBps: number | null;
+			networkTxAvgBps: number | null;
+			networkTxMaxBps: number | null;
+		};
+	}> {
+		const minuteSince = Math.floor(since / 60_000) * 60_000;
+		const bucket = metricBucketExpression("bucket_start", bucketMs);
+		const rows = (await db`
+      SELECT ${bucket} * ${bucketMs} AS bucket,
+        MIN(cpu_min_pct) AS cpu_min_pct, MAX(cpu_max_pct) AS cpu_max_pct, COALESCE(SUM(cpu_sum_pct),0) AS cpu_sum_pct,
+        MIN(memory_min_bytes) AS memory_min_bytes, MAX(memory_max_bytes) AS memory_max_bytes, COALESCE(SUM(memory_sum_bytes),0) AS memory_sum_bytes, MAX(memory_total_bytes) AS memory_total_bytes,
+        MIN(disk_min_bytes) AS disk_min_bytes, MAX(disk_max_bytes) AS disk_max_bytes, COALESCE(SUM(disk_sum_bytes),0) AS disk_sum_bytes, MAX(disk_total_bytes) AS disk_total_bytes,
+        MIN(network_rx_min_bps) AS network_rx_min_bps, MAX(network_rx_max_bps) AS network_rx_max_bps, COALESCE(SUM(network_rx_sum_bps),0) AS network_rx_sum_bps,
+        MIN(network_tx_min_bps) AS network_tx_min_bps, MAX(network_tx_max_bps) AS network_tx_max_bps, COALESCE(SUM(network_tx_sum_bps),0) AS network_tx_sum_bps,
+        COALESCE(SUM(sample_count),0) AS sample_count
+      FROM system_metrics_minutes
+      WHERE bucket_start >= ${minuteSince} AND bucket_start <= ${until}
+      GROUP BY ${bucket}
+      ORDER BY bucket ASC
+    `) as Array<{
+			bucket: number | string;
+			cpu_min_pct: number | string | null;
+			cpu_max_pct: number | string | null;
+			cpu_sum_pct: number | string;
+			memory_min_bytes: number | string | null;
+			memory_max_bytes: number | string | null;
+			memory_sum_bytes: number | string;
+			memory_total_bytes: number | string | null;
+			disk_min_bytes: number | string | null;
+			disk_max_bytes: number | string | null;
+			disk_sum_bytes: number | string;
+			disk_total_bytes: number | string | null;
+			network_rx_min_bps: number | string | null;
+			network_rx_max_bps: number | string | null;
+			network_rx_sum_bps: number | string;
+			network_tx_min_bps: number | string | null;
+			network_tx_max_bps: number | string | null;
+			network_tx_sum_bps: number | string;
+			sample_count: number | string;
+		}>;
+		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({
+			bucket: value,
+			cpuMinPct: null as number | null,
+			cpuAvgPct: null as number | null,
+			cpuMaxPct: null as number | null,
+			memoryMinBytes: null as number | null,
+			memoryAvgBytes: null as number | null,
+			memoryMaxBytes: null as number | null,
+			memoryTotalBytes: null as number | null,
+			diskMinBytes: null as number | null,
+			diskAvgBytes: null as number | null,
+			diskMaxBytes: null as number | null,
+			diskTotalBytes: null as number | null,
+			networkRxMinBps: null as number | null,
+			networkRxAvgBps: null as number | null,
+			networkRxMaxBps: null as number | null,
+			networkTxMinBps: null as number | null,
+			networkTxAvgBps: null as number | null,
+			networkTxMaxBps: null as number | null,
+		}));
+		const byBucket = new Map(points.map((point) => [point.bucket, point]));
+		const totals = {
+			cpuMin: null as number | null,
+			cpuMax: null as number | null,
+			cpuSum: 0,
+			memoryMin: null as number | null,
+			memoryMax: null as number | null,
+			memorySum: 0,
+			memoryTotal: null as number | null,
+			diskMin: null as number | null,
+			diskMax: null as number | null,
+			diskSum: 0,
+			diskTotal: null as number | null,
+			networkRxSum: 0,
+			networkRxMin: null as number | null,
+			networkRxMax: null as number | null,
+			networkTxSum: 0,
+			networkTxMin: null as number | null,
+			networkTxMax: null as number | null,
+			sampleCount: 0,
+		};
+		for (const row of rows) {
+			const sampleCount = toNumber(row.sample_count);
+			const point = byBucket.get(toNumber(row.bucket));
+			if (point) {
+				point.cpuMinPct = row.cpu_min_pct === null ? null : toNumber(row.cpu_min_pct);
+				point.cpuMaxPct = row.cpu_max_pct === null ? null : toNumber(row.cpu_max_pct);
+				point.cpuAvgPct = sampleCount > 0 ? toNumber(row.cpu_sum_pct) / sampleCount : null;
+				point.memoryMinBytes = row.memory_min_bytes === null ? null : toNumber(row.memory_min_bytes);
+				point.memoryMaxBytes = row.memory_max_bytes === null ? null : toNumber(row.memory_max_bytes);
+				point.memoryAvgBytes = sampleCount > 0 ? toNumber(row.memory_sum_bytes) / sampleCount : null;
+				point.memoryTotalBytes = row.memory_total_bytes === null ? null : toNumber(row.memory_total_bytes);
+				point.diskMinBytes = row.disk_min_bytes === null ? null : toNumber(row.disk_min_bytes);
+				point.diskMaxBytes = row.disk_max_bytes === null ? null : toNumber(row.disk_max_bytes);
+				point.diskAvgBytes = sampleCount > 0 ? toNumber(row.disk_sum_bytes) / sampleCount : null;
+				point.diskTotalBytes = row.disk_total_bytes === null ? null : toNumber(row.disk_total_bytes);
+				point.networkRxMinBps = row.network_rx_min_bps === null ? null : toNumber(row.network_rx_min_bps);
+				point.networkRxMaxBps = row.network_rx_max_bps === null ? null : toNumber(row.network_rx_max_bps);
+				point.networkRxAvgBps = sampleCount > 0 ? toNumber(row.network_rx_sum_bps) / sampleCount : null;
+				point.networkTxMinBps = row.network_tx_min_bps === null ? null : toNumber(row.network_tx_min_bps);
+				point.networkTxMaxBps = row.network_tx_max_bps === null ? null : toNumber(row.network_tx_max_bps);
+				point.networkTxAvgBps = sampleCount > 0 ? toNumber(row.network_tx_sum_bps) / sampleCount : null;
+			}
+			totals.cpuMin =
+				row.cpu_min_pct === null ? totals.cpuMin : totals.cpuMin === null ? toNumber(row.cpu_min_pct) : Math.min(totals.cpuMin, toNumber(row.cpu_min_pct));
+			totals.cpuMax =
+				row.cpu_max_pct === null ? totals.cpuMax : totals.cpuMax === null ? toNumber(row.cpu_max_pct) : Math.max(totals.cpuMax, toNumber(row.cpu_max_pct));
+			totals.cpuSum += toNumber(row.cpu_sum_pct);
+			totals.memoryMin =
+				row.memory_min_bytes === null
+					? totals.memoryMin
+					: totals.memoryMin === null
+						? toNumber(row.memory_min_bytes)
+						: Math.min(totals.memoryMin, toNumber(row.memory_min_bytes));
+			totals.memoryMax =
+				row.memory_max_bytes === null
+					? totals.memoryMax
+					: totals.memoryMax === null
+						? toNumber(row.memory_max_bytes)
+						: Math.max(totals.memoryMax, toNumber(row.memory_max_bytes));
+			totals.memorySum += toNumber(row.memory_sum_bytes);
+			totals.memoryTotal = row.memory_total_bytes === null ? totals.memoryTotal : toNumber(row.memory_total_bytes);
+			totals.diskMin =
+				row.disk_min_bytes === null
+					? totals.diskMin
+					: totals.diskMin === null
+						? toNumber(row.disk_min_bytes)
+						: Math.min(totals.diskMin, toNumber(row.disk_min_bytes));
+			totals.diskMax =
+				row.disk_max_bytes === null
+					? totals.diskMax
+					: totals.diskMax === null
+						? toNumber(row.disk_max_bytes)
+						: Math.max(totals.diskMax, toNumber(row.disk_max_bytes));
+			totals.diskSum += toNumber(row.disk_sum_bytes);
+			totals.diskTotal = row.disk_total_bytes === null ? totals.diskTotal : toNumber(row.disk_total_bytes);
+			totals.networkRxSum += toNumber(row.network_rx_sum_bps);
+			totals.networkRxMin =
+				row.network_rx_min_bps === null
+					? totals.networkRxMin
+					: totals.networkRxMin === null
+						? toNumber(row.network_rx_min_bps)
+						: Math.min(totals.networkRxMin, toNumber(row.network_rx_min_bps));
+			totals.networkRxMax =
+				row.network_rx_max_bps === null
+					? totals.networkRxMax
+					: totals.networkRxMax === null
+						? toNumber(row.network_rx_max_bps)
+						: Math.max(totals.networkRxMax, toNumber(row.network_rx_max_bps));
+			totals.networkTxSum += toNumber(row.network_tx_sum_bps);
+			totals.networkTxMin =
+				row.network_tx_min_bps === null
+					? totals.networkTxMin
+					: totals.networkTxMin === null
+						? toNumber(row.network_tx_min_bps)
+						: Math.min(totals.networkTxMin, toNumber(row.network_tx_min_bps));
+			totals.networkTxMax =
+				row.network_tx_max_bps === null
+					? totals.networkTxMax
+					: totals.networkTxMax === null
+						? toNumber(row.network_tx_max_bps)
+						: Math.max(totals.networkTxMax, toNumber(row.network_tx_max_bps));
+			totals.sampleCount += sampleCount;
+		}
+		const summary = {
+			cpuMinPct: totals.cpuMin,
+			cpuAvgPct: totals.sampleCount > 0 ? totals.cpuSum / totals.sampleCount : null,
+			cpuMaxPct: totals.cpuMax,
+			memoryMinBytes: totals.memoryMin,
+			memoryAvgBytes: totals.sampleCount > 0 ? totals.memorySum / totals.sampleCount : null,
+			memoryMaxBytes: totals.memoryMax,
+			memoryTotalBytes: totals.memoryTotal,
+			diskMinBytes: totals.diskMin,
+			diskAvgBytes: totals.sampleCount > 0 ? totals.diskSum / totals.sampleCount : null,
+			diskMaxBytes: totals.diskMax,
+			diskTotalBytes: totals.diskTotal,
+			networkRxMinBps: totals.networkRxMin,
+			networkRxAvgBps: totals.sampleCount > 0 ? totals.networkRxSum / totals.sampleCount : null,
+			networkRxMaxBps: totals.networkRxMax,
+			networkTxMinBps: totals.networkTxMin,
+			networkTxAvgBps: totals.sampleCount > 0 ? totals.networkTxSum / totals.sampleCount : null,
+			networkTxMaxBps: totals.networkTxMax,
+		};
+		return { series: points, summary };
+	},
+	async deleteSystemMetricsBeforeBatch(cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(await db`DELETE FROM system_metrics_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit}`);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM system_metrics_minutes WHERE rowid IN (SELECT rowid FROM system_metrics_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM system_metrics_minutes WHERE ctid IN (SELECT ctid FROM system_metrics_minutes WHERE bucket_start < ${cutoff} ORDER BY bucket_start ASC LIMIT ${limit})`,
 		);
 	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {

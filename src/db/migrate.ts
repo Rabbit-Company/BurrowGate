@@ -629,6 +629,27 @@ CREATE TABLE IF NOT EXISTS connectivity_ping_minutes (
   timeout_count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (target, bucket_start)
 );
+CREATE TABLE IF NOT EXISTS system_metrics_minutes (
+  bucket_start BIGINT PRIMARY KEY,
+  cpu_min_pct DOUBLE PRECISION NULL,
+  cpu_max_pct DOUBLE PRECISION NULL,
+  cpu_sum_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+  memory_min_bytes BIGINT NULL,
+  memory_max_bytes BIGINT NULL,
+  memory_sum_bytes BIGINT NOT NULL DEFAULT 0,
+  memory_total_bytes BIGINT NOT NULL DEFAULT 0,
+  disk_min_bytes BIGINT NULL,
+  disk_max_bytes BIGINT NULL,
+  disk_sum_bytes BIGINT NOT NULL DEFAULT 0,
+  disk_total_bytes BIGINT NOT NULL DEFAULT 0,
+  network_rx_min_bps DOUBLE PRECISION NULL,
+  network_rx_max_bps DOUBLE PRECISION NULL,
+  network_rx_sum_bps DOUBLE PRECISION NOT NULL DEFAULT 0,
+  network_tx_min_bps DOUBLE PRECISION NULL,
+  network_tx_max_bps DOUBLE PRECISION NULL,
+  network_tx_sum_bps DOUBLE PRECISION NOT NULL DEFAULT 0,
+  sample_count INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS stream_origin_latency_minutes (
   stream_id VARCHAR(64) NOT NULL,
   bucket_start BIGINT NOT NULL,

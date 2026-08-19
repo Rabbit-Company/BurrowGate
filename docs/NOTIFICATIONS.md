@@ -12,12 +12,14 @@ Open the **Notifications** dashboard from the switcher at the top of the control
 - `pool_unhealthy` / `pool_recovered` - every origin in the pool became unavailable, or the pool became available again.
 - `internet_down` / `internet_up` - the BurrowGate host itself lost or regained internet connectivity (see [Connectivity monitoring](#connectivity-monitoring)).
 - `ip_banned` - bandwidth-limit or managed-protection auto-ban blocked an IP.
+- `system_resource_high` / `system_resource_normal` - host/container CPU, memory, disk, or network usage crossed (or recovered from) a configured alert threshold (see [System resource monitoring](SYSTEM_MONITORING.md)).
 
 **Streams** can subscribe to:
 
 - `stream_origin_unhealthy` / `stream_origin_recovered` - the stream's forward host/port stopped or resumed accepting TCP connections.
 - `stream_ip_banned` - bandwidth-limit or stream-protection auto-ban blocked an IP.
 - `internet_down` / `internet_up` - shared with sites; a stream can subscribe independently of any site.
+- `system_resource_high` / `system_resource_normal` - shared with sites; a stream can subscribe independently of any site.
 
 A missing event type in a site's or stream's saved configuration defaults to **enabled**, so upgrading BurrowGate never silently drops a notification you already relied on.
 
@@ -48,6 +50,10 @@ The host is considered down only once every monitored target agrees, and up agai
 - `BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS` (default `10`, minimum `5`)
 - `BG_CONNECTIVITY_MONITOR_FAILURE_THRESHOLD` / `BG_CONNECTIVITY_MONITOR_RECOVERY_THRESHOLD` (default `3` / `2`)
 
+## System resource monitoring
+
+BurrowGate also samples its host/container's CPU, memory, disk, and network usage on the same one-minute bucketed model used for the dashboard's charts, and can alert on `system_resource_high`/`system_resource_normal` the same way it does for connectivity. See [SYSTEM_MONITORING.md](SYSTEM_MONITORING.md) for what's tracked, how it adapts between bare-metal and Docker deployments, and its configuration.
+
 ## Origin and Stream health checks
 
 Health-check settings themselves (path, interval, timeout, failure/recovery thresholds) still live on the Site editor's **Health** tab and the Streams dashboard's **Health** tab - only the webhook/event-type configuration moved to the Notifications tab. The minimum check interval is 3 seconds for both.
@@ -56,6 +62,6 @@ Because a short interval combined with a low failure threshold can flag an origi
 
 ## Retention
 
-Notification events and their delivery outbox follow the same retention setting as everything else for that site or stream (1-365 days). Global events - currently just `internet_down`/`internet_up`, which are not owned by any single site or stream - use the instance-wide `BG_EVENT_RETENTION_DAYS` default instead.
+Notification events and their delivery outbox follow the same retention setting as everything else for that site or stream (1-365 days). Global events - `internet_down`/`internet_up` and `system_resource_high`/`system_resource_normal`, which are not owned by any single site or stream - use the instance-wide `BG_EVENT_RETENTION_DAYS` default instead. This is separate from `BG_SYSTEM_MONITOR_RETENTION_DAYS`, which controls how long the underlying one-minute usage buckets behind the dashboard charts are kept.
 
 See [`docs/STREAMS.md`](STREAMS.md) for Stream-specific health-check behavior and [`docs/BANDWIDTH.md`](BANDWIDTH.md) / [`docs/MANAGED_PROTECTION.md`](MANAGED_PROTECTION.md) for what triggers an auto-ban.

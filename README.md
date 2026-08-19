@@ -35,7 +35,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Per-site customizable HTML or JSON error responses
 - Multi-origin load balancing with priority failover, round robin, weighted round robin, session affinity, and deterministic IP fallback
 - Per-origin health checks, automatic unhealthy-origin removal, and optional 503 maintenance mode
-- Unified notification system for sites and Streams: origin health, internet-connectivity, and IP auto-ban webhooks to ntfy, Slack, Discord, or signed generic JSON, with per-event-type subscriptions, durable ordered retries, and a searchable delivery log
+- Unified notification system for sites and Streams: origin health, internet-connectivity, system-resource-threshold, and IP auto-ban webhooks to ntfy, Slack, Discord, or signed generic JSON, with per-event-type subscriptions, durable ordered retries, and a searchable delivery log
 - Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller, local nftables, OVH's per-IP edge firewall, or an AWS VPC Network ACL, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
 - Per-site customizable HTML challenge pages
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
@@ -530,10 +530,11 @@ The dashboard includes:
 - click-through detail on every Recent Traffic row, including captured request/response bodies when body capture is enabled
 - internet connectivity latency, pinging public DNS resolvers directly from the BurrowGate host to help distinguish an origin problem from a network problem, with its own up/down webhook notifications (see [Notifications](#notifications))
 - origin and Stream health-check latency graphs (minimum, average, maximum, and timed-out-check percentage)
+- host/container CPU, memory, disk, and network usage graphs (minimum, average, maximum), with its own threshold-based webhook notifications, working correctly in both bare-metal and Docker deployments (see [`docs/SYSTEM_MONITORING.md`](docs/SYSTEM_MONITORING.md))
 
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 
-Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and notification delivery, connectivity ping checks, Stream origin health checks, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP and ASN database status, and process memory. It deliberately excludes paths, client IPs, countries, ASNs, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
+Operational metrics can also be exposed in OpenMetrics format for Prometheus or an OpenTelemetry Collector. The exporter covers request volume and latency, payload bytes, Stream events and active connections, listener health, origin health checks and notification delivery, connectivity ping checks, Stream origin health checks, host/container CPU/memory/disk/network usage, monitoring queues, persistence failures, retention cleanup, database availability, GeoIP and ASN database status, and process memory. It deliberately excludes paths, client IPs, countries, ASNs, sessions, and usernames from labels. See [`docs/OPENMETRICS.md`](docs/OPENMETRICS.md).
 
 Managed request protection defaults to monitor mode and can be configured per site or overridden per route. Its dashboard separates clean, would-block, and blocked traffic and records versioned rule metadata without storing matching input values. See [`docs/MANAGED_PROTECTION.md`](docs/MANAGED_PROTECTION.md).
 

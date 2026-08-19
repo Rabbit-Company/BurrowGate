@@ -134,6 +134,10 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 		run: async () => await repository.deleteConnectivityPingBeforeBatch(now - config.connectivityMonitor.retentionDays * DAY_MS, batchSize),
 	});
 	tasks.push({
+		name: "system metrics history",
+		run: async () => await repository.deleteSystemMetricsBeforeBatch(now - config.systemMonitor.retentionDays * DAY_MS, batchSize),
+	});
+	tasks.push({
 		name: "global notification events",
 		run: async () => await repository.deleteGlobalNotificationEventsBeforeBatch(now - config.eventRetentionDays * DAY_MS, batchSize),
 	});

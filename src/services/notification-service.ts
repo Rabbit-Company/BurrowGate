@@ -23,6 +23,7 @@ const DOWN_EVENT_TYPES = new Set<NotificationEventType>([
 	"ip_banned",
 	"stream_origin_unhealthy",
 	"stream_ip_banned",
+	"system_resource_high",
 ]);
 
 interface DeliveryTarget {
@@ -96,6 +97,12 @@ function deliveryFields(delivery: PendingNotificationDeliveryRecord): DeliveryFi
 		case "stream_origin_recovered":
 			if (typeof payload.forwardHost === "string") fields.push({ name: "Forward target", value: `${payload.forwardHost}:${payload.forwardPort}` });
 			break;
+		case "system_resource_high":
+		case "system_resource_normal":
+			if (typeof payload.resource === "string") fields.push({ name: "Resource", value: payload.resource });
+			if (typeof payload.value === "string") fields.push({ name: "Value", value: payload.value });
+			if (typeof payload.thresholdValue === "string") fields.push({ name: "Threshold", value: payload.thresholdValue });
+			break;
 	}
 	return fields;
 }
@@ -144,6 +151,10 @@ function eventTitle(type: NotificationEventType, targetName: string): string {
 			return `Stream origin recovered: ${targetName}`;
 		case "stream_ip_banned":
 			return `IP auto-banned: ${targetName}`;
+		case "system_resource_high":
+			return `System resource alert: ${targetName}`;
+		case "system_resource_normal":
+			return `System resource normal: ${targetName}`;
 	}
 }
 

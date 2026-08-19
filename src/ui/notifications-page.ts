@@ -18,6 +18,12 @@ const SITE_EVENT_TYPES: NotificationEventTypeOption[] = [
 	},
 	{ value: "internet_up", label: "Internet connectivity restored", description: "Internet connectivity returned after an outage." },
 	{ value: "ip_banned", label: "IP auto-banned", description: "An IP address was automatically blocked (bandwidth limit or WAF match)." },
+	{
+		value: "system_resource_high",
+		label: "System resource high",
+		description: "Host/container CPU, memory, disk, or network usage crossed its configured alert threshold.",
+	},
+	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
 ];
 
 const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
@@ -30,6 +36,12 @@ const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
 		description: "The server lost internet connectivity (all monitored external targets are unreachable).",
 	},
 	{ value: "internet_up", label: "Internet connectivity restored", description: "Internet connectivity returned after an outage." },
+	{
+		value: "system_resource_high",
+		label: "System resource high",
+		description: "Host/container CPU, memory, disk, or network usage crossed its configured alert threshold.",
+	},
+	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
 ];
 
 function sortButton(label: string, key: string): string {

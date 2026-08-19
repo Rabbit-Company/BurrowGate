@@ -2,7 +2,7 @@ import { Counter, Gauge, Histogram, Info, Registry } from "@rabbit-company/openm
 import packageMetadata from "../../package.json" with { type: "json" };
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { OriginHealthState, StreamEventRecord, StreamProtocol } from "../types.ts";
+import type { OriginHealthState, StreamEventRecord, StreamProtocol, SystemMetricSample } from "../types.ts";
 import { timingSafeEqualText } from "../utils/crypto.ts";
 import { geoIpStatus } from "./geoip-service.ts";
 import type { BandwidthContext, BandwidthDelta } from "./bandwidth-service.ts";
@@ -103,6 +103,10 @@ export class BurrowGateOpenMetrics {
 	private readonly connectivityPingDuration: Histogram;
 	private readonly streamOriginHealthChecks: Counter;
 	private readonly streamOriginHealthDuration: Histogram;
+	private readonly systemCpuPercent: Gauge;
+	private readonly systemMemoryBytes: Gauge;
+	private readonly systemDiskBytes: Gauge;
+	private readonly systemNetworkBps: Gauge;
 	private readonly exporterScrapes: Counter;
 	private readonly exporterCollectionErrors: Counter;
 	private readonly exporterDuration: Histogram;
@@ -332,6 +336,28 @@ export class BurrowGateOpenMetrics {
 			buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
 			registry: this.registry,
 		});
+		this.systemCpuPercent = new Gauge({ name: "system_cpu_percent", help: "Host/container CPU utilization", registry: this.registry });
+		this.systemMemoryBytes = new Gauge({
+			name: "system_memory",
+			help: "Host/container memory usage",
+			unit: "bytes",
+			labelNames: ["kind"],
+			registry: this.registry,
+		});
+		this.systemDiskBytes = new Gauge({
+			name: "system_disk",
+			help: "Data directory filesystem usage",
+			unit: "bytes",
+			labelNames: ["kind"],
+			registry: this.registry,
+		});
+		this.systemNetworkBps = new Gauge({
+			name: "system_network",
+			help: "Network throughput across non-loopback interfaces",
+			unit: "bytes_per_second",
+			labelNames: ["direction"],
+			registry: this.registry,
+		});
 		this.exporterScrapes = new Counter({ name: "openmetrics_scrapes", help: "OpenMetrics scrape requests served", registry: this.registry });
 		this.exporterCollectionErrors = new Counter({
 			name: "openmetrics_collection_errors",
@@ -525,6 +551,17 @@ export class BurrowGateOpenMetrics {
 		if (!this.enabled) return;
 		this.streamOriginHealthChecks.labels({ stream_id: streamId, outcome: timedOut ? "timeout" : "success" }).inc();
 		this.streamOriginHealthDuration.labels({ stream_id: streamId }).observe(Math.max(0, durationMs) / 1_000);
+	}
+
+	setSystemMetrics(sample: SystemMetricSample): void {
+		if (!this.enabled) return;
+		this.systemCpuPercent.set(sample.cpuPct);
+		this.systemMemoryBytes.labels({ kind: "used" }).set(sample.memoryUsedBytes);
+		this.systemMemoryBytes.labels({ kind: "total" }).set(sample.memoryTotalBytes);
+		this.systemDiskBytes.labels({ kind: "used" }).set(sample.diskUsedBytes);
+		this.systemDiskBytes.labels({ kind: "total" }).set(sample.diskTotalBytes);
+		this.systemNetworkBps.labels({ direction: "rx" }).set(sample.networkRxBps);
+		this.systemNetworkBps.labels({ direction: "tx" }).set(sample.networkTxBps);
 	}
 
 	recordNotificationDelivery(siteId: string, outcome: "delivered" | "retry" | "failed"): void {

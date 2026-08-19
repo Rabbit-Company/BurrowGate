@@ -49,6 +49,7 @@ import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-se
 import { originHealthManager } from "./services/origin-health-service.ts";
 import { streamHealthManager } from "./services/stream-health-service.ts";
 import { connectivityMonitor } from "./services/connectivity-monitor-service.ts";
+import { systemMonitor } from "./services/system-monitor-service.ts";
 import { notificationService } from "./services/notification-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
 import { isBodyCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
@@ -82,6 +83,7 @@ startMaintenance();
 originHealthManager.start();
 streamHealthManager.start();
 connectivityMonitor.start();
+systemMonitor.start();
 notificationService.start();
 firewallSyncService.start();
 startBandwidthMetrics();

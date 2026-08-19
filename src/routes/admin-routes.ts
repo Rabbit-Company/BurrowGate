@@ -1946,14 +1946,32 @@ export function registerAdminRoutes(app: Web<any>): void {
 			enumParam(
 				url,
 				"section",
-				["traffic", "bandwidth", "cache", "protection", "sessions", "rules", "routes", "access", "sites", "connectivity", "health"] as const,
+				[
+					"traffic",
+					"bandwidth",
+					"cache",
+					"protection",
+					"sessions",
+					"rules",
+					"routes",
+					"access",
+					"sites",
+					"connectivity",
+					"health",
+					"system-cpu",
+					"system-memory",
+					"system-disk",
+					"system-network-download",
+					"system-network-upload",
+				] as const,
 				"traffic",
 			) ?? "traffic";
 		if (section === "sites") {
 			const forbidden = requireAdministrator(user);
 			if (forbidden) return forbidden;
 		}
-		const selection = section === "sites" || section === "connectivity" ? { site: null, error: null } : await selectedSite(url, user);
+		const globalSections = new Set(["sites", "connectivity", "system-cpu", "system-memory", "system-disk", "system-network-download", "system-network-upload"]);
+		const selection = globalSections.has(section) ? { site: null, error: null } : await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
@@ -1997,6 +2015,153 @@ export function registerAdminRoutes(app: Web<any>): void {
 					data: metrics.series.map((point) => ({ bucket: point.bucket, ...point.timeoutPct })),
 				},
 				breakdown: metrics.summary.map((entry) => ({ label: entry.target, count: Math.round(entry.avgLatencyMs ?? 0) })),
+			});
+		}
+
+		if (section === "system-cpu") {
+			const metrics = await repository.systemMetrics(since, until, bucketMs);
+			const round1 = (value: number | null) => Math.round((value ?? 0) * 10) / 10;
+			return jsonResponse({
+				...base,
+				secondary: {
+					title: "CPU usage",
+					subtitle: "Min / average / max utilization per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "percentage",
+					emptyMessage: "No CPU usage data in this range.",
+					datasets: [
+						{ key: "min", label: "Min" },
+						{ key: "avg", label: "Average" },
+						{ key: "max", label: "Max" },
+					],
+					data: metrics.series.map((point) => ({ bucket: point.bucket, min: point.cpuMinPct, avg: point.cpuAvgPct, max: point.cpuMaxPct })),
+				},
+				breakdown: [
+					{ label: "Min (%)", count: round1(metrics.summary.cpuMinPct) },
+					{ label: "Average (%)", count: round1(metrics.summary.cpuAvgPct) },
+					{ label: "Max (%)", count: round1(metrics.summary.cpuMaxPct) },
+				],
+			});
+		}
+
+		if (section === "system-memory") {
+			const metrics = await repository.systemMetrics(since, until, bucketMs);
+			const toGiB = (bytes: number | null) => Math.round(((bytes ?? 0) / (1_024 * 1_024 * 1_024)) * 100) / 100;
+			return jsonResponse({
+				...base,
+				secondary: {
+					title: "Memory usage",
+					subtitle: "Min / average / max memory used per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bytes",
+					emptyMessage: "No memory usage data in this range.",
+					datasets: [
+						{ key: "min", label: "Min" },
+						{ key: "avg", label: "Average" },
+						{ key: "max", label: "Max" },
+					],
+					data: metrics.series.map((point) => ({ bucket: point.bucket, min: point.memoryMinBytes, avg: point.memoryAvgBytes, max: point.memoryMaxBytes })),
+				},
+				breakdown: [
+					{ label: "Min used (GiB)", count: toGiB(metrics.summary.memoryMinBytes) },
+					{ label: "Average used (GiB)", count: toGiB(metrics.summary.memoryAvgBytes) },
+					{ label: "Max used (GiB)", count: toGiB(metrics.summary.memoryMaxBytes) },
+					{ label: "Total (GiB)", count: toGiB(metrics.summary.memoryTotalBytes) },
+				],
+			});
+		}
+
+		if (section === "system-disk") {
+			const metrics = await repository.systemMetrics(since, until, bucketMs);
+			const toGiB = (bytes: number | null) => Math.round(((bytes ?? 0) / (1_024 * 1_024 * 1_024)) * 100) / 100;
+			return jsonResponse({
+				...base,
+				secondary: {
+					title: "Storage usage",
+					subtitle: "Min / average / max disk used per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bytes",
+					emptyMessage: "No storage usage data in this range.",
+					datasets: [
+						{ key: "min", label: "Min" },
+						{ key: "avg", label: "Average" },
+						{ key: "max", label: "Max" },
+					],
+					data: metrics.series.map((point) => ({ bucket: point.bucket, min: point.diskMinBytes, avg: point.diskAvgBytes, max: point.diskMaxBytes })),
+				},
+				breakdown: [
+					{ label: "Min used (GiB)", count: toGiB(metrics.summary.diskMinBytes) },
+					{ label: "Average used (GiB)", count: toGiB(metrics.summary.diskAvgBytes) },
+					{ label: "Max used (GiB)", count: toGiB(metrics.summary.diskMaxBytes) },
+					{ label: "Total (GiB)", count: toGiB(metrics.summary.diskTotalBytes) },
+				],
+			});
+		}
+
+		if (section === "system-network-download") {
+			const metrics = await repository.systemMetrics(since, until, bucketMs);
+			const toMbps = (bps: number | null) => Math.round((((bps ?? 0) * 8) / 1_000_000) * 100) / 100;
+			return jsonResponse({
+				...base,
+				secondary: {
+					title: "Network download",
+					subtitle: "Min / average / max download rate per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bitrate",
+					emptyMessage: "No network throughput data in this range.",
+					datasets: [
+						{ key: "min", label: "Min" },
+						{ key: "avg", label: "Average" },
+						{ key: "max", label: "Max" },
+					],
+					data: metrics.series.map((point) => ({
+						bucket: point.bucket,
+						min: point.networkRxMinBps === null ? null : point.networkRxMinBps * 8,
+						avg: point.networkRxAvgBps === null ? null : point.networkRxAvgBps * 8,
+						max: point.networkRxMaxBps === null ? null : point.networkRxMaxBps * 8,
+					})),
+				},
+				breakdown: [
+					{ label: "Min (Mbps)", count: toMbps(metrics.summary.networkRxMinBps) },
+					{ label: "Average (Mbps)", count: toMbps(metrics.summary.networkRxAvgBps) },
+					{ label: "Max (Mbps)", count: toMbps(metrics.summary.networkRxMaxBps) },
+				],
+			});
+		}
+
+		if (section === "system-network-upload") {
+			const metrics = await repository.systemMetrics(since, until, bucketMs);
+			const toMbps = (bps: number | null) => Math.round((((bps ?? 0) * 8) / 1_000_000) * 100) / 100;
+			return jsonResponse({
+				...base,
+				secondary: {
+					title: "Network upload",
+					subtitle: "Min / average / max upload rate per interval",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "bitrate",
+					emptyMessage: "No network throughput data in this range.",
+					datasets: [
+						{ key: "min", label: "Min" },
+						{ key: "avg", label: "Average" },
+						{ key: "max", label: "Max" },
+					],
+					data: metrics.series.map((point) => ({
+						bucket: point.bucket,
+						min: point.networkTxMinBps === null ? null : point.networkTxMinBps * 8,
+						avg: point.networkTxAvgBps === null ? null : point.networkTxAvgBps * 8,
+						max: point.networkTxMaxBps === null ? null : point.networkTxMaxBps * 8,
+					})),
+				},
+				breakdown: [
+					{ label: "Min (Mbps)", count: toMbps(metrics.summary.networkTxMinBps) },
+					{ label: "Average (Mbps)", count: toMbps(metrics.summary.networkTxAvgBps) },
+					{ label: "Max (Mbps)", count: toMbps(metrics.summary.networkTxMaxBps) },
+				],
 			});
 		}
 

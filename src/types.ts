@@ -183,7 +183,9 @@ export type NotificationEventType =
 	| "ip_banned"
 	| "stream_origin_unhealthy"
 	| "stream_origin_recovered"
-	| "stream_ip_banned";
+	| "stream_ip_banned"
+	| "system_resource_high"
+	| "system_resource_normal";
 export type NotificationSeverity = "info" | "warning" | "critical";
 
 export interface NotificationEventRecord {
@@ -249,6 +251,38 @@ export interface ConnectivityPingMinuteRecord {
 	sum_latency_ms: number;
 	total_count: number;
 	timeout_count: number;
+}
+
+export interface SystemMetricSample {
+	cpuPct: number;
+	memoryUsedBytes: number;
+	memoryTotalBytes: number;
+	diskUsedBytes: number;
+	diskTotalBytes: number;
+	networkRxBps: number;
+	networkTxBps: number;
+}
+
+export interface SystemMetricMinuteRecord {
+	bucket_start: number;
+	cpu_min_pct: number | null;
+	cpu_max_pct: number | null;
+	cpu_sum_pct: number;
+	memory_min_bytes: number | null;
+	memory_max_bytes: number | null;
+	memory_sum_bytes: number;
+	memory_total_bytes: number;
+	disk_min_bytes: number | null;
+	disk_max_bytes: number | null;
+	disk_sum_bytes: number;
+	disk_total_bytes: number;
+	network_rx_min_bps: number | null;
+	network_rx_max_bps: number | null;
+	network_rx_sum_bps: number;
+	network_tx_min_bps: number | null;
+	network_tx_max_bps: number | null;
+	network_tx_sum_bps: number;
+	sample_count: number;
 }
 
 export interface StreamOriginLatencyMinuteRecord {

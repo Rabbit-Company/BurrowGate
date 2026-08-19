@@ -121,6 +121,18 @@ export const config = {
 		failureThreshold: envNumber("BG_CONNECTIVITY_MONITOR_FAILURE_THRESHOLD", 3, 1, 20),
 		recoveryThreshold: envNumber("BG_CONNECTIVITY_MONITOR_RECOVERY_THRESHOLD", 2, 1, 20),
 	},
+	systemMonitor: {
+		enabled: envBoolean("BG_SYSTEM_MONITOR_ENABLED", true),
+		intervalSeconds: envNumber("BG_SYSTEM_MONITOR_INTERVAL_SECONDS", 10, 5, 300),
+		retentionDays: envNumber("BG_SYSTEM_MONITOR_RETENTION_DAYS", 30, 1, 365),
+		cpuThresholdPct: envNumber("BG_SYSTEM_MONITOR_CPU_THRESHOLD_PCT", 90, 1, 100),
+		memoryThresholdPct: envNumber("BG_SYSTEM_MONITOR_MEMORY_THRESHOLD_PCT", 90, 1, 100),
+		diskThresholdPct: envNumber("BG_SYSTEM_MONITOR_DISK_THRESHOLD_PCT", 85, 1, 100),
+		// 0 disables network threshold alerting - link capacity can't be auto-detected, so it must be set explicitly.
+		networkThresholdMbps: envNumber("BG_SYSTEM_MONITOR_NETWORK_THRESHOLD_MBPS", 0, 0, 1_000_000),
+		failureThreshold: envNumber("BG_SYSTEM_MONITOR_FAILURE_THRESHOLD", 2, 1, 60),
+		recoveryThreshold: envNumber("BG_SYSTEM_MONITOR_RECOVERY_THRESHOLD", 2, 1, 60),
+	},
 	geoip: {
 		enabled: envBoolean("BG_GEOIP_ENABLED", true),
 		databasePath: process.env.BG_GEOIP_DATABASE_PATH?.trim() || `${dataDirectory}/geoip/GeoLite2-Country.mmdb`,
