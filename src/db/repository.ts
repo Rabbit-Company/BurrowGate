@@ -2940,7 +2940,7 @@ export const repository = {
 		if (events.length === 0) return;
 		await db.begin(async (transaction) => {
 			for (const event of events) {
-				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,duration_ms,username,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.duration_ms},${event.username},${event.created_at})`;
+				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,asn,asn_org,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,duration_ms,username,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.asn},${event.asn_org},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.duration_ms},${event.username},${event.created_at})`;
 			}
 		});
 	},
