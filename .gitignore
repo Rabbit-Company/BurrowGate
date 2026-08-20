@@ -3,3 +3,5 @@ data/
 .env
 .DS_Store
 coverage/
+bench/results/
+bench/tmp/

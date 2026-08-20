@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>BurrowGate Bench Report</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+		<style>
+			:root {
+				color-scheme: light;
+				--surface-1: #fcfcfb;
+				--page-plane: #f9f9f7;
+				--text-primary: #0b0b0b;
+				--text-secondary: #52514e;
+				--text-muted: #898781;
+				--gridline: #e1e0d9;
+				--baseline-axis: #c3c2b7;
+				--border: rgba(11, 11, 11, 0.1);
+				--good: #006300;
+				--critical: #d03b3b;
+				--series-baseline: #2a78d6;
+				--series-candidate: #eb6834;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					color-scheme: dark;
+					--surface-1: #1a1a19;
+					--page-plane: #0d0d0d;
+					--text-primary: #ffffff;
+					--text-secondary: #c3c2b7;
+					--text-muted: #898781;
+					--gridline: #2c2c2a;
+					--baseline-axis: #383835;
+					--border: rgba(255, 255, 255, 0.1);
+					--good: #0ca30c;
+					--critical: #e66767;
+					--series-baseline: #3987e5;
+					--series-candidate: #d95926;
+				}
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				background: var(--page-plane);
+				color: var(--text-primary);
+				font:
+					14px/1.5 system-ui,
+					-apple-system,
+					"Segoe UI",
+					sans-serif;
+			}
+			main {
+				max-width: 1100px;
+				margin: 0 auto;
+				padding: 32px 20px 80px;
+			}
+			h1 {
+				font-size: 20px;
+				margin: 0 0 4px;
+			}
+			h2 {
+				font-size: 15px;
+				margin: 0;
+			}
+
+			.panel {
+				background: var(--surface-1);
+				border: 1px solid var(--border);
+				border-radius: 10px;
+				padding: 20px;
+				margin-bottom: 20px;
+			}
+
+			.load-row {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				align-items: center;
+			}
+			input[type="file"] {
+				color: var(--text-primary);
+				font-size: 13px;
+				max-width: 360px;
+			}
+			.status {
+				color: var(--text-secondary);
+				font-size: 13px;
+				margin-top: 8px;
+			}
+
+			.selectors {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 16px;
+				align-items: flex-end;
+				margin-top: 16px;
+			}
+			.field {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+			}
+			.field label {
+				font-size: 12px;
+				color: var(--text-secondary);
+			}
+			select,
+			input[type="number"] {
+				background: var(--surface-1);
+				color: var(--text-primary);
+				border: 1px solid var(--gridline);
+				border-radius: 6px;
+				padding: 6px 8px;
+				font-size: 13px;
+				min-width: 220px;
+			}
+			input[type="number"] {
+				min-width: 70px;
+			}
+
+			.legend-key {
+				display: flex;
+				gap: 18px;
+				align-items: center;
+				font-size: 12px;
+				color: var(--text-secondary);
+				margin-top: 14px;
+			}
+			.legend-key .swatch {
+				display: inline-block;
+				width: 10px;
+				height: 10px;
+				border-radius: 2px;
+				margin-right: 6px;
+				vertical-align: -1px;
+			}
+
+			.suite-heading {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				margin: 32px 0 12px;
+			}
+			.suite-heading .count {
+				color: var(--text-muted);
+				font-size: 12px;
+			}
+
+			.chart-block {
+				margin-bottom: 14px;
+			}
+			.chart-block h3 {
+				font-size: 13px;
+				color: var(--text-secondary);
+				font-weight: 600;
+				margin: 0 0 8px;
+			}
+			.chart-wrap {
+				position: relative;
+			}
+
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 13px;
+				margin-top: 6px;
+			}
+			th,
+			td {
+				text-align: left;
+				padding: 6px 10px;
+				border-bottom: 1px solid var(--gridline);
+			}
+			th {
+				color: var(--text-muted);
+				font-weight: 600;
+				font-size: 11px;
+				text-transform: uppercase;
+				letter-spacing: 0.03em;
+			}
+			td.num,
+			th.num {
+				text-align: right;
+				font-variant-numeric: tabular-nums;
+			}
+			.delta-good {
+				color: var(--good);
+				font-weight: 600;
+			}
+			.delta-bad {
+				color: var(--critical);
+				font-weight: 600;
+			}
+			.delta-flat {
+				color: var(--text-secondary);
+			}
+			.badge {
+				display: inline-block;
+				font-size: 11px;
+				font-weight: 600;
+				padding: 1px 7px;
+				border-radius: 999px;
+				background: var(--critical);
+				color: #fff;
+			}
+
+			.summary-line {
+				font-size: 13px;
+				color: var(--text-secondary);
+				margin: 0 0 20px;
+			}
+			.summary-line strong {
+				color: var(--text-primary);
+			}
+			.empty-hint {
+				color: var(--text-muted);
+				font-size: 13px;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>BurrowGate Bench Report</h1>
+
+			<section class="panel">
+				<div class="load-row">
+					<label for="fileInput"><strong>Load result files</strong></label>
+					<input id="fileInput" type="file" multiple accept="application/json" />
+				</div>
+				<p class="status" id="loadStatus">
+					Select every file in <code>bench/results/</code> (from one or more <code>bun bench/run-all.ts</code> runs - select all of them at once, files from
+					different Bun versions included).
+				</p>
+
+				<div class="selectors" id="selectors" style="display: none">
+					<div class="field">
+						<label for="baselineSelect">Baseline</label>
+						<select id="baselineSelect"></select>
+					</div>
+					<div class="field">
+						<label for="candidateSelect">Candidate</label>
+						<select id="candidateSelect"></select>
+					</div>
+					<div class="field">
+						<label for="thresholdInput">Regression threshold %</label>
+						<input id="thresholdInput" type="number" min="1" max="100" step="1" value="10" />
+					</div>
+				</div>
+				<div class="legend-key" id="legendKey" style="display: none">
+					<span><span class="swatch" style="background: var(--series-baseline)"></span>Baseline</span>
+					<span><span class="swatch" style="background: var(--series-candidate)"></span>Candidate</span>
+					<span><span class="delta-bad">■</span> regressed beyond threshold</span>
+				</div>
+			</section>
+
+			<div id="report"></div>
+		</main>
+
+		<script>
+			(() => {
+				const fileInput = document.getElementById("fileInput");
+				const loadStatus = document.getElementById("loadStatus");
+				const selectors = document.getElementById("selectors");
+				const legendKey = document.getElementById("legendKey");
+				const baselineSelect = document.getElementById("baselineSelect");
+				const candidateSelect = document.getElementById("candidateSelect");
+				const thresholdInput = document.getElementById("thresholdInput");
+				const reportEl = document.getElementById("report");
+
+				/** @type {Map<string, {metadata: any, results: any[]}[]>} groupKey -> array of per-suite RunFiles */
+				let groups = new Map();
+				const charts = [];
+
+				function groupKey(metadata) {
+					return `${metadata.bunVersion} (${metadata.platform}/${metadata.arch})`;
+				}
+
+				function higherIsBetter(unit) {
+					return unit !== "ms";
+				}
+
+				function fmt(n) {
+					if (!Number.isFinite(n)) return "n/a";
+					if (Math.abs(n) >= 1000) return n.toFixed(0);
+					if (Math.abs(n) >= 10) return n.toFixed(1);
+					return n.toFixed(3);
+				}
+
+				fileInput.addEventListener("change", async () => {
+					const files = [...fileInput.files];
+					if (files.length === 0) return;
+
+					groups = new Map();
+					let parsed = 0;
+					let failed = 0;
+					for (const file of files) {
+						try {
+							const text = await file.text();
+							const data = JSON.parse(text);
+							if (!data.metadata || !Array.isArray(data.results)) throw new Error("not a bench result file");
+							const k = groupKey(data.metadata);
+							if (!groups.has(k)) groups.set(k, []);
+							groups.get(k).push(data);
+							parsed++;
+						} catch (err) {
+							failed++;
+							console.warn("Skipping", file.name, err);
+						}
+					}
+
+					loadStatus.textContent =
+						`Loaded ${parsed} file(s) across ${groups.size} Bun build(s)` + (failed > 0 ? ` (${failed} file(s) skipped - not bench result JSON)` : "") + ".";
+
+					const keys = [...groups.keys()].sort();
+					baselineSelect.innerHTML = keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+					candidateSelect.innerHTML = keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+					if (keys.length > 1) candidateSelect.selectedIndex = 1;
+
+					selectors.style.display = keys.length > 0 ? "flex" : "none";
+					legendKey.style.display = keys.length > 0 ? "flex" : "none";
+					render();
+				});
+
+				baselineSelect.addEventListener("change", render);
+				candidateSelect.addEventListener("change", render);
+				thresholdInput.addEventListener("input", render);
+
+				function mergeSuites(runFiles) {
+					/** @type {Map<string, any[]>} suite name -> results */
+					const bySuite = new Map();
+					for (const runFile of runFiles) {
+						for (const result of runFile.results) {
+							if (!bySuite.has(result.suite)) bySuite.set(result.suite, []);
+							bySuite.get(result.suite).push(result);
+						}
+					}
+					return bySuite;
+				}
+
+				function destroyCharts() {
+					for (const chart of charts) chart.destroy();
+					charts.length = 0;
+				}
+
+				function render() {
+					destroyCharts();
+					reportEl.innerHTML = "";
+
+					const baselineKey = baselineSelect.value;
+					const candidateKey = candidateSelect.value;
+					if (!baselineKey || !candidateKey) return;
+
+					const threshold = Number(thresholdInput.value) || 10;
+					const baselineSuites = mergeSuites(groups.get(baselineKey) || []);
+					const candidateSuites = mergeSuites(groups.get(candidateKey) || []);
+					const suiteNames = [...new Set([...baselineSuites.keys(), ...candidateSuites.keys()])].sort();
+
+					if (suiteNames.length === 0) {
+						reportEl.innerHTML = '<p class="empty-hint">No suites found for this pair.</p>';
+						return;
+					}
+
+					const style = getComputedStyle(document.documentElement);
+					const colorBaseline = style.getPropertyValue("--series-baseline").trim();
+					const colorCandidate = style.getPropertyValue("--series-candidate").trim();
+					const colorGridline = style.getPropertyValue("--gridline").trim();
+					const colorText = style.getPropertyValue("--text-secondary").trim();
+
+					let totalRegressions = 0;
+					let totalCompared = 0;
+
+					for (const suiteName of suiteNames) {
+						const baselineResults = baselineSuites.get(suiteName) || [];
+						const candidateResults = candidateSuites.get(suiteName) || [];
+						const byUnit = new Map();
+						for (const r of baselineResults) {
+							if (!byUnit.has(r.unit)) byUnit.set(r.unit, { baseline: new Map(), candidate: new Map() });
+							byUnit.get(r.unit).baseline.set(r.name, r);
+						}
+						for (const r of candidateResults) {
+							if (!byUnit.has(r.unit)) byUnit.set(r.unit, { baseline: new Map(), candidate: new Map() });
+							byUnit.get(r.unit).candidate.set(r.name, r);
+						}
+
+						const section = document.createElement("section");
+						const heading = document.createElement("div");
+						heading.className = "suite-heading";
+						heading.innerHTML = `<h2>${suiteName}</h2><span class="count">${baselineResults.length || candidateResults.length} benchmark(s)</span>`;
+						section.appendChild(heading);
+
+						for (const [unit, sets] of byUnit) {
+							const names = [...new Set([...sets.baseline.keys(), ...sets.candidate.keys()])];
+							const block = document.createElement("div");
+							block.className = "chart-block";
+							block.innerHTML = `<h3>${unit}</h3><div class="chart-wrap"><canvas></canvas></div>`;
+							section.appendChild(block);
+
+							const canvas = block.querySelector("canvas");
+							canvas.parentElement.style.height = `${Math.max(90, names.length * 34 + 40)}px`;
+
+							const baselineData = names.map((n) => sets.baseline.get(n)?.stats.mean ?? null);
+							const candidateData = names.map((n) => sets.candidate.get(n)?.stats.mean ?? null);
+
+							const chart = new Chart(canvas, {
+								type: "bar",
+								data: {
+									labels: names,
+									datasets: [
+										{ label: "Baseline", data: baselineData, backgroundColor: colorBaseline, borderRadius: 4, maxBarThickness: 22 },
+										{ label: "Candidate", data: candidateData, backgroundColor: colorCandidate, borderRadius: 4, maxBarThickness: 22 },
+									],
+								},
+								options: {
+									indexAxis: "y",
+									responsive: true,
+									maintainAspectRatio: false,
+									scales: {
+										x: {
+											beginAtZero: true,
+											grid: { color: colorGridline },
+											ticks: { color: colorText },
+											title: { display: true, text: unit, color: colorText },
+										},
+										y: { grid: { display: false }, ticks: { color: colorText } },
+									},
+									plugins: {
+										legend: { display: true, position: "top", align: "end", labels: { color: colorText, boxWidth: 10, boxHeight: 10 } },
+										tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.x)} ${unit}` } },
+									},
+								},
+							});
+							charts.push(chart);
+
+							const table = document.createElement("table");
+							table.innerHTML = `<thead><tr><th>Benchmark</th><th class="num">Baseline</th><th class="num">Candidate</th><th class="num">Change</th><th></th></tr></thead>`;
+							const tbody = document.createElement("tbody");
+							for (const name of names) {
+								const b = sets.baseline.get(name);
+								const c = sets.candidate.get(name);
+								const tr = document.createElement("tr");
+								if (!b || !c) {
+									tr.innerHTML = `<td>${name}</td><td class="num">${b ? fmt(b.stats.mean) : "-"}</td><td class="num">${c ? fmt(c.stats.mean) : "-"}</td><td class="num">-</td><td><span class="empty-hint">only in one run</span></td>`;
+									tbody.appendChild(tr);
+									continue;
+								}
+								totalCompared++;
+								const pctChange = ((c.stats.mean - b.stats.mean) / b.stats.mean) * 100;
+								const better = higherIsBetter(unit);
+								const isRegression = better ? pctChange < -threshold : pctChange > threshold;
+								const isImprovement = better ? pctChange > threshold : pctChange < -threshold;
+								if (isRegression) totalRegressions++;
+								const deltaClass = isRegression ? "delta-bad" : isImprovement ? "delta-good" : "delta-flat";
+								const arrow = pctChange >= 0 ? "▲" : "▼";
+								tr.innerHTML = `<td>${name}</td><td class="num">${fmt(b.stats.mean)}</td><td class="num">${fmt(c.stats.mean)}</td><td class="num ${deltaClass}">${arrow} ${pctChange >= 0 ? "+" : ""}${pctChange.toFixed(1)}%</td><td>${isRegression ? '<span class="badge">REGRESSION</span>' : ""}</td>`;
+								tbody.appendChild(tr);
+							}
+							table.appendChild(tbody);
+							block.appendChild(table);
+						}
+
+						reportEl.appendChild(section);
+					}
+
+					const summary = document.createElement("p");
+					summary.className = "summary-line";
+					summary.innerHTML =
+						totalRegressions > 0
+							? `<strong>${totalRegressions}</strong> of ${totalCompared} benchmark(s) regressed by more than ${threshold}% going from <strong>${baselineKey}</strong> to <strong>${candidateKey}</strong>.`
+							: `No benchmark regressed by more than ${threshold}% going from <strong>${baselineKey}</strong> to <strong>${candidateKey}</strong> (${totalCompared} compared).`;
+					reportEl.insertBefore(summary, reportEl.firstChild);
+				}
+			})();
+		</script>
+	</body>
+</html>
