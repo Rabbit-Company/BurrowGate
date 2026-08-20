@@ -12,6 +12,7 @@ import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth
 import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
 import { applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
+import { outboundFetchProtocolOption } from "./site-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
@@ -302,6 +303,7 @@ export async function proxyRequest(
 			// Forwarding that combination makes browsers attempt a second decode and
 			// results in ERR_CONTENT_DECODING_FAILED.
 			decompress: false,
+			...outboundFetchProtocolOption(site),
 		});
 	} catch (error) {
 		if (requestBody.limitState.exceeded) throw new RequestBodyTooLargeError(httpPolicy.limits.maxBodyBytes);

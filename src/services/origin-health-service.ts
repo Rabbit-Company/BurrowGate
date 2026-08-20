@@ -13,6 +13,7 @@ import type {
 import { randomId } from "../utils/crypto.ts";
 import { notificationService } from "./notification-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+import { outboundFetchProtocolOption } from "./site-service.ts";
 
 const TICK_MS = 1_000;
 const STATUS_PERSIST_INTERVAL_MS = 5 * 60_000;
@@ -330,6 +331,7 @@ export class OriginHealthManager {
 				headers: { accept: "*/*", "user-agent": "BurrowGate-HealthCheck/1.0" },
 				redirect: "manual",
 				signal: AbortSignal.timeout(Number(runtime.site.health_check_timeout_ms ?? 3_000)),
+				...outboundFetchProtocolOption(runtime.site),
 			});
 			await response.body?.cancel().catch(() => undefined);
 			const healthy = response.status >= 200 && response.status < 300;

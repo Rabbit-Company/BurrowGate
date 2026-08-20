@@ -18,6 +18,7 @@ export type OriginHealthState = "unknown" | "healthy" | "degraded" | "unhealthy"
 export type OriginHealthFailureMode = "monitor" | "maintenance";
 export type HealthAlertProvider = "generic" | "slack" | "discord" | "ntfy";
 export type LoadBalancingAlgorithm = "failover" | "round-robin" | "weighted-round-robin";
+export type OutboundFetchProtocol = "http1" | "http2" | "http3";
 export type TlsMode = "disabled" | "uploaded" | "letsencrypt";
 export type CertificateSource = "uploaded" | "letsencrypt";
 export type CertificateStatus = "pending" | "active" | "renewal-failed" | "expired" | "invalid";
@@ -118,6 +119,7 @@ export interface SiteRecord {
 	health_alert_webhook_secret?: string | null;
 	load_balancing_algorithm?: LoadBalancingAlgorithm;
 	load_balancing_affinity?: number;
+	outbound_fetch_protocol?: OutboundFetchProtocol;
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
 	notification_event_types_json?: string | null;

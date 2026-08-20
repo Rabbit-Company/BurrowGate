@@ -76,6 +76,18 @@ It bypasses proof-of-work, visitor sessions, origin proxying, IP rules, and forc
 
 BurrowGate stores `next_renewal_at` for ACME-managed certificates. Maintenance checks due certificates automatically. A failed renewal does not overwrite the currently active certificate. Errors and issuance activity appear in the site's TLS panel.
 
+## HTTP/3 (experimental)
+
+BurrowGate can add a UDP HTTP/3 listener next to the existing HTTPS TCP listener. It's off by default and gated behind:
+
+```toml
+BG_HTTP3_ENABLED=true
+```
+
+When enabled, BurrowGate advertises HTTP/3 via the `Alt-Svc` response header and lets clients upgrade on their own - HTTP/1.1 keeps working over TCP unchanged, and this instance-wide toggle applies to every site since all sites share the one HTTPS listener (there is no per-site HTTP/3 setting).
+
+Leave this off unless you specifically want to experiment with it.
+
 ## Current constraints
 
 - HTTP-01 supports public DNS hostnames, not `localhost`, `.local` names, IP literals, or wildcard names.

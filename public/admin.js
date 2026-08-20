@@ -1961,6 +1961,7 @@ function resetSiteForm() {
 	byId("siteIpExtractionPreset").value = "direct";
 	byId("siteLoadBalancingAlgorithm").value = "failover";
 	byId("siteLoadBalancingAffinity").checked = true;
+	byId("siteOutboundFetchProtocol").value = "http1";
 	byId("siteWebSocketMode").value = websocketDefaults.mode ?? "allow";
 	byId("siteWebSocketConnectTimeout").value = String(websocketDefaults.connectTimeoutMs);
 	byId("siteWebSocketIdleTimeout").value = String(websocketDefaults.idleTimeoutSeconds);
@@ -2022,6 +2023,7 @@ function editSite(id) {
 	byId("siteIpExtractionPreset").value = site.ipExtractionPreset ?? "direct";
 	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
 	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
+	byId("siteOutboundFetchProtocol").value = site.outboundFetchProtocol ?? "http1";
 	const websocket = site.websocket ?? websocketDefaults;
 	byId("siteWebSocketMode").value = websocket.mode ?? "allow";
 	byId("siteWebSocketConnectTimeout").value = String(websocket.connectTimeoutMs ?? websocketDefaults.connectTimeoutMs);
@@ -2256,6 +2258,7 @@ async function saveSite(event) {
 			algorithm: byId("siteLoadBalancingAlgorithm").value,
 			affinity: byId("siteLoadBalancingAffinity").checked,
 		},
+		outboundFetchProtocol: byId("siteOutboundFetchProtocol").value,
 		websocket: {
 			mode: byId("siteWebSocketMode").value,
 			connectTimeoutMs: Number(byId("siteWebSocketConnectTimeout").value),

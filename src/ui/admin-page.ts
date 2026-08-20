@@ -691,6 +691,10 @@ export function adminPage(): string {
               <label><span>Algorithm</span><select id="siteLoadBalancingAlgorithm" class="select"><option value="failover">Priority failover</option><option value="round-robin">Round robin</option><option value="weighted-round-robin">Weighted round robin</option></select><small class="muted">Priority failover uses the lowest healthy priority number.</small></label>
               <label class="check-row compact-check"><input id="siteLoadBalancingAffinity" type="checkbox" checked><span><strong>Sticky origin affinity</strong><small class="muted">Use the stored session assignment when available, otherwise deterministically select by client IP.</small></span></label>
             </div>
+            <div class="section-heading error-response-heading"><div><h3>Outbound connection protocol</h3><p class="muted">Choose the HTTP protocol BurrowGate uses when connecting to this site's origin(s).</p></div></div>
+            <div class="site-form-grid">
+              <label><span>Protocol</span><select id="siteOutboundFetchProtocol" class="select"><option value="http1">HTTP/1.1 (default)</option><option value="http2">HTTP/2 (experimental)</option><option value="http3">HTTP/3 (experimental)</option></select><small class="muted">Verify origin support before enabling.</small></label>
+            </div>
             <div id="originPoolRuntime" class="health-runtime hidden">
               <div class="section-heading compact-heading"><div><h4>Origin pool</h4><p class="muted">Unhealthy origins are excluded automatically. Draining origins keep existing sessions but receive no new assignments.</p></div><button id="newOrigin" class="button secondary compact" type="button">Add origin</button></div>
               <div id="originPoolList" class="health-event-list"><p class="muted">Loading origins...</p></div>

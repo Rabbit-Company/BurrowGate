@@ -191,6 +191,7 @@ BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPD
 | `BG_HTTPS_PORT`                           | `443`                                | Internal HTTPS port                                                                        |
 | `BG_HTTPS_PUBLIC_PORT`                    | `443`                                | Public HTTPS port used in redirects                                                        |
 | `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`        | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload |
+| `BG_HTTP3_ENABLED`                        | `false`                              | (Experimental) Add a UDP HTTP/3 listener next to HTTPS; see `docs/TLS.md`                  |
 | `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                       |
 | `BG_ADMIN_USERNAME`                       | `admin`                              | Dashboard username                                                                         |
 | `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                         |

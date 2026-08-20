@@ -64,6 +64,7 @@ export class TlsListenerManager {
 			idleTimeout: REQUEST_IDLE_TIMEOUT_SECONDS,
 			...(options.reusePort ? { reusePort: true } : {}),
 			...(options.tls ? { tls: options.tls } : {}),
+			...(options.tls && config.https.http3Enabled ? { http3: true } : {}),
 			fetch: async (request, server) => await this.dispatch(request, server as unknown as WebSocketUpgradeServer, transport),
 			websocket: websocketProxyHandler,
 		});
@@ -149,7 +150,7 @@ export class TlsListenerManager {
 
 		this.httpsServer = replacement;
 		Logger.info(
-			`[BurrowGate] HTTPS listening on https://${config.host}:${config.https.port} with ${managedCertificates.length} managed certificate(s)${bootstrap ? " plus bootstrap fallback" : ""}`,
+			`[BurrowGate] HTTPS listening on https://${config.host}:${config.https.port} with ${managedCertificates.length} managed certificate(s)${bootstrap ? " plus bootstrap fallback" : ""}${config.https.http3Enabled ? " (HTTP/3 enabled, experimental)" : ""}`,
 		);
 
 		// Do not await this from the certificate-management request. The request may

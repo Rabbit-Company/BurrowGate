@@ -15,7 +15,7 @@ RUN mkdir -p /app/data \
 	&& setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(command -v bun)")" \
 	&& setcap 'cap_net_admin=+ep' "$(readlink -f "$(command -v nft)")"
 
-EXPOSE 80 443
+EXPOSE 80 443 443/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD bun -e 'const response = await fetch("http://127.0.0.1/_burrowgate/health"); if (!response.ok) process.exit(1)'

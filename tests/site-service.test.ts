@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { repository } from "../src/db/repository.ts";
-import { createSite, siteRestartRequired, updateSite } from "../src/services/site-service.ts";
+import { createSite, outboundFetchProtocolOption, siteRestartRequired, siteView, updateSite } from "../src/services/site-service.ts";
 import type { CertificateRecord, SiteRecord } from "../src/types.ts";
 
 async function makeSite(publicHost: string): Promise<SiteRecord> {
@@ -112,5 +112,68 @@ describe("updateSite", () => {
 				effectiveAt: effectiveAt + 60_000,
 			}),
 		).rejects.toThrow("already scheduled");
+	});
+});
+
+describe("outbound fetch protocol", () => {
+	test("defaults to http1 on create when omitted", async () => {
+		const site = await makeSite("outbound-default.test");
+		expect(site.outbound_fetch_protocol).toBe("http1");
+		expect(siteView(site).outboundFetchProtocol).toBe("http1");
+	});
+
+	test("accepts http1, http2, and http3 and round-trips through create/update/siteView", async () => {
+		const site = await makeSite("outbound-roundtrip.test");
+		for (const protocol of ["http2", "http3", "http1"] as const) {
+			const { site: updated } = await updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				outboundFetchProtocol: protocol,
+			});
+			expect(updated.outbound_fetch_protocol).toBe(protocol);
+			expect(siteView(updated).outboundFetchProtocol).toBe(protocol);
+			expect((await repository.siteById(site.id))?.outbound_fetch_protocol).toBe(protocol);
+		}
+	});
+
+	test("rejects an invalid protocol value", async () => {
+		const site = await makeSite("outbound-invalid.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				outboundFetchProtocol: "http99",
+			}),
+		).rejects.toThrow("Outbound fetch protocol must be http1, http2, or http3");
+	});
+
+	test("keeps the existing protocol when the field is omitted from an update", async () => {
+		const site = await makeSite("outbound-preserve.test");
+		await updateSite(site.id, { name: site.name, publicHost: site.public_host, originUrl: site.origin_url, outboundFetchProtocol: "http2" });
+		const { site: updated } = await updateSite(site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(updated.outbound_fetch_protocol).toBe("http2");
+	});
+});
+
+describe("outboundFetchProtocolOption", () => {
+	test("omits the protocol option for http1 (default, current behavior)", () => {
+		expect(outboundFetchProtocolOption({ outbound_fetch_protocol: "http1" } as SiteRecord)).toEqual({});
+	});
+
+	test("omits the protocol option when unset", () => {
+		expect(outboundFetchProtocolOption({} as SiteRecord)).toEqual({});
+	});
+
+	test("passes protocol: http2 through", () => {
+		expect(outboundFetchProtocolOption({ outbound_fetch_protocol: "http2" } as SiteRecord)).toEqual({ protocol: "http2" });
+	});
+
+	test("passes protocol: http3 through", () => {
+		expect(outboundFetchProtocolOption({ outbound_fetch_protocol: "http3" } as SiteRecord)).toEqual({ protocol: "http3" } as unknown as Pick<
+			BunFetchRequestInit,
+			"protocol"
+		>);
 	});
 });

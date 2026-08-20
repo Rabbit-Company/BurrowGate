@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { config } from "../src/config.ts";
 import { TlsListenerManager } from "../src/services/tls-listener-service.ts";
 
 function certificate() {
@@ -56,5 +57,28 @@ describe("HTTPS listener replacement", () => {
 		await manager.reloadHttps();
 		await expect(manager.reloadHttps()).rejects.toThrow("existing listener remains active");
 		expect(events).toEqual([]);
+	});
+
+	test("only passes http3 to the HTTPS listener when BG_HTTP3_ENABLED is on", async () => {
+		const seen: Array<boolean | undefined> = [];
+		const manager = new TlsListenerManager({} as any, {
+			serve(options) {
+				seen.push((options as { http3?: boolean }).http3);
+				return fakeServer([], "server");
+			},
+			managedCertificates: async () => [certificate()],
+			bootstrapCertificate: async () => null,
+		});
+
+		await manager.reloadHttps();
+		expect(seen).toEqual([undefined]);
+
+		config.https.http3Enabled = true;
+		try {
+			await manager.reloadHttps();
+		} finally {
+			config.https.http3Enabled = false;
+		}
+		expect(seen).toEqual([undefined, true]);
 	});
 });

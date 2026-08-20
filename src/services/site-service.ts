@@ -9,6 +9,7 @@ import type {
 	HealthAlertProvider,
 	OriginHealthFailureMode,
 	LoadBalancingAlgorithm,
+	OutboundFetchProtocol,
 	IpExtractionPreset,
 	NotificationEventType,
 	PendingChangeRecord,
@@ -53,6 +54,7 @@ export interface SiteInput {
 	errorJsonFields?: unknown;
 	healthCheck?: unknown;
 	loadBalancer?: unknown;
+	outboundFetchProtocol?: unknown;
 	ipExtractionPreset?: unknown;
 	websocket?: unknown;
 	http?: unknown;
@@ -89,6 +91,7 @@ export interface SiteView {
 		alerts: { enabled: boolean; provider: HealthAlertProvider; webhookConfigured: boolean; eventTypes: Record<NotificationEventType, boolean> };
 	};
 	loadBalancer: { algorithm: LoadBalancingAlgorithm; affinity: boolean };
+	outboundFetchProtocol: OutboundFetchProtocol;
 	websocket: SiteWebSocketPolicyView;
 	http: SiteHttpPolicyView;
 	createdAt: number;
@@ -241,6 +244,19 @@ function loadBalancerSettings(value: unknown, existing?: SiteRecord): { algorith
 	};
 }
 
+function outboundFetchProtocol(value: unknown, fallback: OutboundFetchProtocol): OutboundFetchProtocol {
+	if (value === undefined) return fallback;
+	const protocol = String(value).trim().toLowerCase();
+	if (protocol === "http1" || protocol === "http2" || protocol === "http3") return protocol;
+	throw new Error("Outbound fetch protocol must be http1, http2, or http3");
+}
+
+export function outboundFetchProtocolOption(site: SiteRecord): Pick<BunFetchRequestInit, "protocol"> {
+	const protocol = site.outbound_fetch_protocol;
+	if (protocol !== "http2" && protocol !== "http3") return {};
+	return { protocol: protocol as BunFetchRequestInit["protocol"] };
+}
+
 function webhookValue(value: unknown, label: string): string | undefined {
 	const raw = String(value ?? "").trim();
 	if (!raw) return undefined;
@@ -390,6 +406,7 @@ export function siteView(site: SiteRecord): SiteView {
 			algorithm: site.load_balancing_algorithm ?? "failover",
 			affinity: site.load_balancing_affinity !== 0,
 		},
+		outboundFetchProtocol: site.outbound_fetch_protocol ?? "http1",
 		websocket: siteWebSocketPolicyView(site),
 		http: siteHttpPolicyView(site),
 		createdAt: Number(site.created_at),
@@ -439,6 +456,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		notification_event_types_json: JSON.stringify(health.notificationEventTypes),
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
+		outbound_fetch_protocol: outboundFetchProtocol(input.outboundFetchProtocol, "http1"),
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket),
 		http_policy_json: serializeSiteHttpPolicy(input.http),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
@@ -532,6 +550,7 @@ export async function updateSite(
 		notification_event_types_json: JSON.stringify(health.notificationEventTypes),
 		load_balancing_algorithm: loadBalancer.algorithm,
 		load_balancing_affinity: loadBalancer.affinity ? 1 : 0,
+		outbound_fetch_protocol: outboundFetchProtocol(input.outboundFetchProtocol, existing.outbound_fetch_protocol ?? "http1"),
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket, existing.websocket_policy_json),
 		http_policy_json: serializeSiteHttpPolicy(input.http, existing.http_policy_json),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
