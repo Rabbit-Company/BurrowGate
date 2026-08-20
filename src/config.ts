@@ -115,7 +115,7 @@ export const config = {
 			.split(",")
 			.map((target) => target.trim())
 			.filter((target) => target.length > 0),
-		intervalSeconds: envNumber("BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS", 10, 5, 3_600),
+		intervalSeconds: envNumber("BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS", 3, 1, 3_600),
 		timeoutMs: envNumber("BG_CONNECTIVITY_MONITOR_TIMEOUT_MS", 2_000, 200, 30_000),
 		retentionDays: envNumber("BG_CONNECTIVITY_MONITOR_RETENTION_DAYS", 30, 1, 365),
 		failureThreshold: envNumber("BG_CONNECTIVITY_MONITOR_FAILURE_THRESHOLD", 3, 1, 20),
@@ -123,7 +123,7 @@ export const config = {
 	},
 	systemMonitor: {
 		enabled: envBoolean("BG_SYSTEM_MONITOR_ENABLED", true),
-		intervalSeconds: envNumber("BG_SYSTEM_MONITOR_INTERVAL_SECONDS", 10, 5, 300),
+		intervalSeconds: envNumber("BG_SYSTEM_MONITOR_INTERVAL_SECONDS", 3, 1, 300),
 		retentionDays: envNumber("BG_SYSTEM_MONITOR_RETENTION_DAYS", 30, 1, 365),
 		cpuThresholdPct: envNumber("BG_SYSTEM_MONITOR_CPU_THRESHOLD_PCT", 90, 1, 100),
 		memoryThresholdPct: envNumber("BG_SYSTEM_MONITOR_MEMORY_THRESHOLD_PCT", 90, 1, 100),

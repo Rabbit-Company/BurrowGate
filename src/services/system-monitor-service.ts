@@ -245,6 +245,13 @@ class SystemMonitor {
 		["network", emptyAlertState()],
 	]);
 	private timer: ReturnType<typeof setInterval> | null = null;
+	private lastSample: SystemMetricSample | null = null;
+	private lastSampleAt: number | null = null;
+
+	/** The most recently collected sample, for callers that want the live reading rather than a stored time-range aggregate. */
+	getLatestSample(): { sample: SystemMetricSample; sampledAt: number } | null {
+		return this.lastSample && this.lastSampleAt !== null ? { sample: this.lastSample, sampledAt: this.lastSampleAt } : null;
+	}
 
 	start(): void {
 		if (this.timer || !config.systemMonitor.enabled) return;
@@ -290,6 +297,8 @@ class SystemMonitor {
 				networkRxBps,
 				networkTxBps,
 			};
+			this.lastSample = sample;
+			this.lastSampleAt = Date.now();
 			const bucketStart = Math.floor(Date.now() / 60_000) * 60_000;
 			await repository.addSystemMetricSample(bucketStart, sample);
 			openMetrics.setSystemMetrics(sample);

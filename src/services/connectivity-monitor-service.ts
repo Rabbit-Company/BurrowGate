@@ -88,6 +88,9 @@ interface TargetState {
 	consecutiveFailures: number;
 	consecutiveSuccesses: number;
 	state: TargetHealthState;
+	lastLatencyMs: number | null;
+	lastTimedOut: boolean | null;
+	lastCheckedAt: number | null;
 }
 
 class ConnectivityMonitor {
@@ -105,11 +108,25 @@ class ConnectivityMonitor {
 				consecutiveFailures: 0,
 				consecutiveSuccesses: 0,
 				state: "unknown",
+				lastLatencyMs: null,
+				lastTimedOut: null,
+				lastCheckedAt: null,
 			});
 		}
 		this.timer = setInterval(() => void this.tick(), 1_000);
 		(this.timer as unknown as { unref?: () => void }).unref?.();
 		void this.tick();
+	}
+
+	/** The most recent ping result per target, for callers that want the live reading rather than a stored time-range aggregate. */
+	getLatestPings(): Array<{ target: string; latencyMs: number | null; timedOut: boolean | null; checkedAt: number | null; state: TargetHealthState }> {
+		return [...this.targets.values()].map((target) => ({
+			target: target.target,
+			latencyMs: target.lastLatencyMs,
+			timedOut: target.lastTimedOut,
+			checkedAt: target.lastCheckedAt,
+			state: target.state,
+		}));
 	}
 
 	private async tick(): Promise<void> {
@@ -126,6 +143,9 @@ class ConnectivityMonitor {
 			const result = await pingTarget(state.target, config.connectivityMonitor.timeoutMs);
 			openMetrics.recordConnectivityPing(state.target, result.timedOut, result.latencyMs ?? config.connectivityMonitor.timeoutMs);
 			const checkedAt = Date.now();
+			state.lastLatencyMs = result.timedOut ? null : Math.max(0, Math.round(result.latencyMs ?? 0));
+			state.lastTimedOut = result.timedOut;
+			state.lastCheckedAt = checkedAt;
 			const bucketStart = Math.floor(checkedAt / 60_000) * 60_000;
 			await repository.addConnectivityPingResult(state.target, bucketStart, result);
 			this.advanceTargetState(state, result);

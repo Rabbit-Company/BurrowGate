@@ -6,7 +6,7 @@ BurrowGate periodically checks GitHub Releases for a newer version and surfaces 
 
 Once per interval, BurrowGate makes an unauthenticated `GET` request to `https://api.github.com/repos/Rabbit-Company/BurrowGate/releases/latest` and compares the release's tag against the running version. Draft and pre-release releases are ignored, so the check only ever surfaces a published stable release.
 
-When a newer version is found, an **Update available** badge appears next to the version number in the dashboard header (Web Proxy, Streams, Notifications, and Firewall Sync pages all show it). Clicking the badge opens a modal with the release name, its notes, and a link to the release on GitHub. There is no in-app upgrade action - upgrading is still the manual process described in [Upgrading](../README.md#upgrading).
+When a newer version is found, an **Update available** badge appears next to the version number in the dashboard header - it's part of the shared header, so it shows up on every dashboard page. Clicking the badge opens a modal with the release name, its notes, and a link to the release on GitHub. There is no in-app upgrade action - upgrading is still the manual process described in [Upgrading](../README.md#upgrading).
 
 The check result is cached in memory per BurrowGate process. It is not persisted to the database and resets on restart. The first check runs shortly after startup, then again every `BG_UPDATE_CHECK_INTERVAL_HOURS`.
 

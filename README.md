@@ -549,9 +549,8 @@ The dashboard includes:
 - exact From and To date-time selection shared by statistics, graphs, maps, traffic, and sessions, defaulting to the last 24 hours on load and on every site/Stream switch regardless of configured retention, so opening the dashboard never triggers a full-retention query
 - drag-to-select time ranges directly on time-series graphs
 - click-through detail on every Recent Traffic row, including captured request/response bodies and headers when enabled, with a Resend action to replay the request from the dashboard (see [Resend](#resend))
-- internet connectivity latency, pinging public DNS resolvers directly from the BurrowGate host to help distinguish an origin problem from a network problem, with its own up/down webhook notifications (see [Notifications](#notifications))
 - origin and Stream health-check latency graphs (minimum, average, maximum, and timed-out-check percentage)
-- host/container CPU, memory, disk, and network usage graphs (minimum, average, maximum), with its own threshold-based webhook notifications, working correctly in both bare-metal and Docker deployments (see [`docs/SYSTEM_MONITORING.md`](docs/SYSTEM_MONITORING.md))
+- a dedicated **Host** dashboard page for everything scoped to the machine rather than a single site or stream: live-updating CPU, memory, disk, and network usage tiles (refresh interval configurable down to 1 second) alongside historical minimum/average/maximum graphs, and internet connectivity latency pinging public DNS resolvers directly from the BurrowGate host to help distinguish an origin problem from a network problem - both with their own threshold-based webhook notifications (see [Notifications](#notifications) and [`docs/SYSTEM_MONITORING.md`](docs/SYSTEM_MONITORING.md)), and working correctly in both bare-metal and Docker deployments
 
 BurrowGate automatically selects a suitable graph bucket size for the chosen interval and limits the result to roughly 120 points. Missing intervals are returned as zero values so graphs remain stable during quiet periods. Dragging across a time-series graph applies the highlighted interval to the full dashboard.
 

@@ -47,7 +47,7 @@ BurrowGate pings a small set of public DNS resolvers directly from its own host 
 The host is considered down only once every monitored target agrees, and up again as soon as any target responds - avoiding false alarms from a single resolver's own outage. Configure targets and thresholds with:
 
 - `BG_CONNECTIVITY_MONITOR_TARGETS` (default `1.1.1.1,8.8.8.8`)
-- `BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS` (default `10`, minimum `5`)
+- `BG_CONNECTIVITY_MONITOR_INTERVAL_SECONDS` (default `3`, minimum `1`)
 - `BG_CONNECTIVITY_MONITOR_FAILURE_THRESHOLD` / `BG_CONNECTIVITY_MONITOR_RECOVERY_THRESHOLD` (default `3` / `2`)
 
 ## System resource monitoring

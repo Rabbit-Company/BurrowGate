@@ -1,6 +1,6 @@
 # System resource monitoring
 
-BurrowGate samples the CPU, memory, disk, and network usage of the machine (or container) it runs on and rolls the samples up into one-minute min/max/average buckets. The dashboard's chart selector exposes them as **CPU usage**, **Memory usage**, **Storage usage**, **Network download**, and **Network upload**, alongside the existing Traffic, Bandwidth, Connectivity, and Health charts.
+BurrowGate samples the CPU, memory, disk, and network usage of the machine (or container) it runs on and rolls the samples up into one-minute min/max/average buckets. The dashboard's **Host** page exposes them as **CPU usage**, **Memory usage**, **Storage usage**, **Network download**, and **Network upload** live-status tiles and chart options, alongside internet connectivity latency and timeouts - all readings that apply to the whole host rather than any single site or stream, which is why they live there instead of on the Web Proxy or Streams pages.
 
 This is separate from the `process_uptime`/`process_memory` metrics BurrowGate already reports for its own Bun process (see [OPENMETRICS.md](OPENMETRICS.md)) - those track BurrowGate's own heap/RSS, while this feature tracks the whole machine or container BurrowGate is deployed on.
 
@@ -20,7 +20,7 @@ BurrowGate picks automatically: if cgroup v2 or v1 reports a _finite_ CPU/memory
 ## Configuration
 
 - `BG_SYSTEM_MONITOR_ENABLED` (default `true`)
-- `BG_SYSTEM_MONITOR_INTERVAL_SECONDS` (default `10`) - sampling cadence.
+- `BG_SYSTEM_MONITOR_INTERVAL_SECONDS` (default `3`, minimum `1`) - sampling cadence. The dashboard's live status tiles poll on their own schedule (down to 1 second) independent of this value, but they can only be as fresh as the last sample taken here.
 - `BG_SYSTEM_MONITOR_RETENTION_DAYS` (default `30`)
 - `BG_SYSTEM_MONITOR_CPU_THRESHOLD_PCT` (default `90`)
 - `BG_SYSTEM_MONITOR_MEMORY_THRESHOLD_PCT` (default `90`)
@@ -32,3 +32,5 @@ BurrowGate picks automatically: if cgroup v2 or v1 reports a _finite_ CPU/memory
 ## Alerts
 
 When a resource stays over its threshold for `BG_SYSTEM_MONITOR_FAILURE_THRESHOLD` consecutive samples, BurrowGate records a `system_resource_high` event; when it recovers for `BG_SYSTEM_MONITOR_RECOVERY_THRESHOLD` consecutive samples, it records `system_resource_normal`. Like internet connectivity, these are global events delivered through every site's and stream's configured webhook - see [NOTIFICATIONS.md](NOTIFICATIONS.md) for delivery providers and per-site/per-stream event-type toggles. Alert state resets on restart and is not shared across multiple BurrowGate instances; each process evaluates its own machine/container independently.
+
+The failure/recovery thresholds count samples, not seconds - at the default 3-second interval, 2 consecutive samples means an alert can fire or clear after only ~6 seconds. If you lower `BG_SYSTEM_MONITOR_INTERVAL_SECONDS` further, consider raising the thresholds so a brief spike doesn't page you.

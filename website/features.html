@@ -281,10 +281,13 @@
 									Optional per-site/per-route header capture, with default Authorization/Cookie/Set-Cookie redaction and a configurable extra redaction list
 								</li>
 								<li>Bandwidth split between client-side and upstream, by site, IP, protocol, and country</li>
-								<li>Internet connectivity graph - pings public DNS resolvers directly from the host to tell a network blip from an origin problem</li>
 								<li>
-									Host/container CPU, memory, disk, and network usage graphs (min/average/max per minute), with threshold-based webhook alerts, working
-									correctly in both bare-metal and Docker deployments
+									Dedicated Host dashboard page with live-updating CPU, memory, disk, and network usage tiles (refresh rate configurable down to 1 second)
+									alongside historical min/average/max graphs, working correctly in both bare-metal and Docker deployments
+								</li>
+								<li>
+									Internet connectivity graph on the same page - pings public DNS resolvers directly from the host to tell a network blip from an origin
+									problem, with threshold-based webhook alerts for both connectivity and resource usage
 								</li>
 								<li>Interactive GeoIP world map for requests and new sessions, plus a Top ASNs list by network provider</li>
 								<li>

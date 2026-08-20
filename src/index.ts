@@ -44,6 +44,7 @@ import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { registerNotificationAdminRoutes } from "./routes/notification-admin-routes.ts";
 import { registerFirewallSyncAdminRoutes } from "./routes/firewall-sync-admin-routes.ts";
+import { registerHostAdminRoutes } from "./routes/host-admin-routes.ts";
 import { firewallSyncService } from "./services/firewall-sync-service.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
@@ -157,6 +158,7 @@ registerAdminRoutes(app);
 registerStreamAdminRoutes(app);
 registerNotificationAdminRoutes(app);
 registerFirewallSyncAdminRoutes(app);
+registerHostAdminRoutes(app);
 if (config.openMetrics.enabled) app.get(OPENMETRICS_PATH, (ctx) => openMetricsResponse(ctx.req));
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
