@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { RoutePolicyRecord, SiteRecord } from "../src/types.ts";
 import {
+	applyCorsResponseHeaders,
 	applyHeaderPolicy,
+	corsOptionsFromPolicy,
+	hstsHeaderValue,
 	isBodyCaptureActive,
 	requestLimitViolation,
 	resolveHttpPolicy,
@@ -82,6 +85,16 @@ describe("HTTP header and request-limit policies", () => {
 			bandwidthLimit: { enabled: false, maxBytes: 50 * 1_024 * 1_024, windowSeconds: 60, banSeconds: 3_600 },
 			bodyCapture,
 			headerCapture,
+			cors: {
+				mode: "disabled",
+				allowedOrigins: [],
+				allowedMethods: ["GET", "HEAD", "POST"],
+				allowedHeaders: ["content-type", "authorization"],
+				exposedHeaders: [],
+				allowCredentials: false,
+				maxAgeSeconds: 86_400,
+			},
+			hsts: { mode: "disabled", maxAgeSeconds: 15_552_000, includeSubDomains: false, preload: false },
 		});
 	});
 
@@ -295,6 +308,128 @@ describe("header capture policy", () => {
 		const view = siteHttpPolicyView(site(serializeSiteHttpPolicy({ headerCapture: { redactedHeaders: "X-Api-Key, X-Internal-Token" } })));
 		expect(view.headerCapture.redactedHeaders).toEqual(["x-api-key", "x-internal-token"]);
 		expect(() => serializeSiteHttpPolicy({ headerCapture: { redactedHeaders: "bad@header" } })).toThrow();
+	});
+});
+
+describe("CORS policy", () => {
+	test("defaults to disabled with no allowed origins", () => {
+		const view = siteHttpPolicyView(site(null));
+		expect(view.cors.mode).toBe("disabled");
+		expect(view.cors.allowedOrigins).toEqual([]);
+	});
+
+	test("rejects a wildcard origin combined with credentials", () => {
+		expect(() => serializeSiteHttpPolicy({ cors: { allowedOrigins: "*", allowCredentials: true } })).toThrow("credentials");
+		expect(() => serializeRouteHttpPolicy({ cors: { allowedOrigins: "*", allowCredentials: true } })).toThrow("credentials");
+	});
+
+	test("rejects mixing a wildcard with specific origins", () => {
+		expect(() => serializeSiteHttpPolicy({ cors: { allowedOrigins: "*, https://app.example.com" } })).toThrow("mix");
+	});
+
+	test("rejects an invalid origin", () => {
+		expect(() => serializeSiteHttpPolicy({ cors: { allowedOrigins: "not-an-origin" } })).toThrow("Invalid CORS origin");
+	});
+
+	test("normalizes methods to uppercase and headers to lowercase", () => {
+		const view = siteHttpPolicyView(site(serializeSiteHttpPolicy({ cors: { allowedMethods: "get, post", allowedHeaders: "X-Api-Key" } })));
+		expect(view.cors.allowedMethods).toEqual(["GET", "POST"]);
+		expect(view.cors.allowedHeaders).toEqual(["x-api-key"]);
+	});
+
+	test("rejects an exposed header that BurrowGate manages", () => {
+		expect(() => serializeSiteHttpPolicy({ cors: { exposedHeaders: "set-cookie" } })).toThrow("cannot expose");
+		expect(() => serializeSiteHttpPolicy({ cors: { exposedHeaders: "x-burrowgate-request-id" } })).toThrow("cannot expose");
+	});
+
+	test("a route can enable CORS with its own allowed origins while inheriting the mode is not required", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ cors: { mode: "disabled" } });
+		const routePolicy = serializeRouteHttpPolicy({ cors: { mode: "enabled", allowedOrigins: "https://app.example.com" } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(routePolicy));
+		expect(resolved.cors.mode).toBe("enabled");
+		expect(resolved.cors.allowedOrigins).toEqual(["https://app.example.com"]);
+	});
+
+	test("a route left on inherit follows the site's CORS policy", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ cors: { mode: "enabled", allowedOrigins: "https://app.example.com" } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(serializeRouteHttpPolicy({})));
+		expect(resolved.cors.mode).toBe("enabled");
+		expect(resolved.cors.allowedOrigins).toEqual(["https://app.example.com"]);
+	});
+
+	test("corsOptionsFromPolicy maps a wildcard origin to the string literal", () => {
+		expect(corsOptionsFromPolicy({ ...siteHttpPolicyView(site(null)).cors, allowedOrigins: ["*"] }).origin).toBe("*");
+		expect(corsOptionsFromPolicy({ ...siteHttpPolicyView(site(null)).cors, allowedOrigins: ["https://app.example.com"] }).origin).toEqual([
+			"https://app.example.com",
+		]);
+	});
+
+	test("applyCorsResponseHeaders does nothing when disabled or the origin is not allowed", () => {
+		const policy = siteHttpPolicyView(site(serializeSiteHttpPolicy({ cors: { mode: "enabled", allowedOrigins: "https://app.example.com" } }))).cors;
+		const disabledHeaders = new Headers();
+		applyCorsResponseHeaders(disabledHeaders, new Request("https://http.example.test/", { headers: { origin: "https://app.example.com" } }), {
+			...policy,
+			mode: "disabled",
+		});
+		expect(disabledHeaders.has("access-control-allow-origin")).toBe(false);
+
+		const deniedHeaders = new Headers();
+		applyCorsResponseHeaders(deniedHeaders, new Request("https://http.example.test/", { headers: { origin: "https://evil.example.com" } }), policy);
+		expect(deniedHeaders.has("access-control-allow-origin")).toBe(false);
+	});
+
+	test("applyCorsResponseHeaders echoes an allowed origin and appends Vary", () => {
+		const policy = siteHttpPolicyView(
+			site(serializeSiteHttpPolicy({ cors: { mode: "enabled", allowedOrigins: "https://app.example.com", allowCredentials: true } })),
+		).cors;
+		const headers = new Headers({ vary: "Accept-Encoding" });
+		applyCorsResponseHeaders(headers, new Request("https://http.example.test/", { headers: { origin: "https://app.example.com" } }), policy);
+		expect(headers.get("access-control-allow-origin")).toBe("https://app.example.com");
+		expect(headers.get("access-control-allow-credentials")).toBe("true");
+		expect(headers.get("vary")).toBe("Accept-Encoding, Origin");
+	});
+
+	test("applyCorsResponseHeaders uses the bare wildcard only without credentials", () => {
+		const policy = siteHttpPolicyView(site(serializeSiteHttpPolicy({ cors: { mode: "enabled", allowedOrigins: "*" } }))).cors;
+		const headers = new Headers();
+		applyCorsResponseHeaders(headers, new Request("https://http.example.test/", { headers: { origin: "https://anyone.example.com" } }), policy);
+		expect(headers.get("access-control-allow-origin")).toBe("*");
+		expect(headers.has("vary")).toBe(false);
+	});
+});
+
+describe("HSTS policy", () => {
+	test("defaults to disabled", () => {
+		expect(siteHttpPolicyView(site(null)).hsts.mode).toBe("disabled");
+	});
+
+	test("is site-only and has no route override", () => {
+		const sitePolicy = serializeSiteHttpPolicy({ hsts: { mode: "enabled", maxAgeSeconds: 3_600 } });
+		const resolved = resolveHttpPolicy(site(sitePolicy), route(serializeRouteHttpPolicy({})));
+		expect(resolved.hsts.mode).toBe("enabled");
+		expect(resolved.hsts.maxAgeSeconds).toBe(3_600);
+	});
+
+	test("rejects preload without include subdomains", () => {
+		expect(() => serializeSiteHttpPolicy({ hsts: { preload: true, maxAgeSeconds: 31_536_000 } })).toThrow("preload");
+	});
+
+	test("rejects preload with too short a max age", () => {
+		expect(() => serializeSiteHttpPolicy({ hsts: { preload: true, includeSubDomains: true, maxAgeSeconds: 1_000 } })).toThrow("preload");
+	});
+
+	test("accepts preload with include subdomains and a year-plus max age", () => {
+		const view = siteHttpPolicyView(
+			site(serializeSiteHttpPolicy({ hsts: { mode: "enabled", preload: true, includeSubDomains: true, maxAgeSeconds: 31_536_000 } })),
+		);
+		expect(view.hsts.preload).toBe(true);
+	});
+
+	test("hstsHeaderValue formats the directive", () => {
+		expect(hstsHeaderValue({ mode: "enabled", maxAgeSeconds: 3_600, includeSubDomains: false, preload: false })).toBe("max-age=3600");
+		expect(hstsHeaderValue({ mode: "enabled", maxAgeSeconds: 31_536_000, includeSubDomains: true, preload: true })).toBe(
+			"max-age=31536000; includeSubDomains; preload",
+		);
 	});
 });
 

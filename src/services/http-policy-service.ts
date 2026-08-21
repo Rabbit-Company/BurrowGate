@@ -91,6 +91,38 @@ export interface RouteHeaderCapturePolicy {
 	expiresAt: number | null;
 }
 
+export type SiteCorsMode = "disabled" | "enabled";
+export type RouteCorsMode = "inherit" | SiteCorsMode;
+
+export interface SiteCorsPolicy {
+	mode: SiteCorsMode;
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders: string[];
+	exposedHeaders: string[];
+	allowCredentials: boolean;
+	maxAgeSeconds: number;
+}
+
+export interface RouteCorsPolicy {
+	mode: RouteCorsMode;
+	allowedOrigins: string[] | null;
+	allowedMethods: string[] | null;
+	allowedHeaders: string[] | null;
+	exposedHeaders: string[] | null;
+	allowCredentials: boolean | null;
+	maxAgeSeconds: number | null;
+}
+
+export type SiteHstsMode = "disabled" | "enabled";
+
+export interface SiteHstsPolicy {
+	mode: SiteHstsMode;
+	maxAgeSeconds: number;
+	includeSubDomains: boolean;
+	preload: boolean;
+}
+
 export type BanDurationSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SiteBanDurationsPolicy {
@@ -172,6 +204,8 @@ export interface SiteHttpPolicyView {
 	bandwidthLimit: SiteBandwidthLimitPolicy;
 	bodyCapture: SiteBodyCapturePolicy;
 	headerCapture: SiteHeaderCapturePolicy;
+	cors: SiteCorsPolicy;
+	hsts: SiteHstsPolicy;
 }
 
 export interface RouteHttpPolicyView {
@@ -184,6 +218,7 @@ export interface RouteHttpPolicyView {
 	bandwidthLimit: RouteBandwidthLimitPolicy;
 	bodyCapture: RouteBodyCapturePolicy;
 	headerCapture: RouteHeaderCapturePolicy;
+	cors: RouteCorsPolicy;
 }
 
 export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection" | "bandwidthLimit"> {
@@ -272,6 +307,16 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 		contentTypes: [...DEFAULT_BODY_CAPTURE_CONTENT_TYPES],
 	},
 	headerCapture: { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null },
+	cors: {
+		mode: "disabled",
+		allowedOrigins: [],
+		allowedMethods: ["GET", "HEAD", "POST"],
+		allowedHeaders: ["content-type", "authorization"],
+		exposedHeaders: [],
+		allowCredentials: false,
+		maxAgeSeconds: 86_400,
+	},
+	hsts: { mode: "disabled", maxAgeSeconds: 15_552_000, includeSubDomains: false, preload: false },
 });
 
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
@@ -284,6 +329,15 @@ const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	bandwidthLimit: { enabled: null, maxBytes: null, windowSeconds: null, banSeconds: null },
 	bodyCapture: { mode: "inherit", maxRequestBytes: null, maxResponseBytes: null, expiresAt: null, contentTypes: null },
 	headerCapture: { mode: "inherit", redactAuthHeaders: null, redactedHeaders: null, expiresAt: null },
+	cors: {
+		mode: "inherit",
+		allowedOrigins: null,
+		allowedMethods: null,
+		allowedHeaders: null,
+		exposedHeaders: null,
+		allowCredentials: null,
+		maxAgeSeconds: null,
+	},
 });
 
 function protectionMode(
@@ -561,6 +615,181 @@ function parseRouteHeaderCapture(value: unknown): RouteHeaderCapturePolicy {
 	};
 }
 
+const CORS_ORIGIN_PATTERN = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/iu;
+const MAX_CORS_LIST_ITEMS = 64;
+const MAX_CORS_MAX_AGE_SECONDS = 86_400;
+
+function corsMode(value: unknown, route: boolean, fallback: SiteCorsMode | RouteCorsMode): SiteCorsMode | RouteCorsMode {
+	if (value === undefined) return fallback;
+	const mode = String(value).trim().toLowerCase();
+	if (mode === "enabled" || mode === "disabled" || (route && mode === "inherit")) return mode as SiteCorsMode | RouteCorsMode;
+	throw new Error(`CORS mode must be ${route ? "inherit, enabled, or disabled" : "enabled or disabled"}`);
+}
+
+function corsOrigins(value: unknown, nullable: boolean, fallback: readonly string[] | null): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/u);
+	const origins = [...new Set(raw.map((item) => String(item).trim()).filter(Boolean))];
+	if (origins.length > MAX_CORS_LIST_ITEMS) throw new Error(`CORS allowed origins supports at most ${MAX_CORS_LIST_ITEMS} values`);
+	for (const origin of origins) {
+		if (origin === "*") continue;
+		if (origin.length > 256 || !CORS_ORIGIN_PATTERN.test(origin)) throw new Error(`Invalid CORS origin: ${origin}`);
+	}
+	if (origins.includes("*") && origins.length > 1) throw new Error("CORS allowed origins cannot mix * with specific origins");
+	return origins;
+}
+
+function corsMethods(value: unknown, nullable: boolean, fallback: readonly string[] | null): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/u);
+	const methods = [...new Set(raw.map((item) => String(item).trim().toUpperCase()).filter(Boolean))];
+	if (methods.length > 32) throw new Error("CORS allowed methods supports at most 32 values");
+	for (const method of methods) if (!HTTP_TOKEN.test(method)) throw new Error(`Invalid CORS method: ${method}`);
+	return methods;
+}
+
+function corsHeaderNames(value: unknown, nullable: boolean, fallback: readonly string[] | null, label: string, guardExposed: boolean): string[] | null {
+	if (nullable && (value === undefined || value === null || value === "")) return null;
+	if (value === undefined) return fallback ? [...fallback] : null;
+	const raw = (Array.isArray(value) ? value : String(value).split(/[\s,]+/u)).map((item) => String(item).trim()).filter(Boolean);
+	const names = [...new Set(raw.map((item) => normalizedHeaderName(item, label)))];
+	if (names.length > MAX_CORS_LIST_ITEMS) throw new Error(`${label} supports at most ${MAX_CORS_LIST_ITEMS} values`);
+	if (guardExposed) {
+		for (const name of names) {
+			if (protectedResponseSetHeaders.has(name) || name.startsWith("x-burrowgate-")) {
+				throw new Error(`${label} cannot expose ${name}, which is managed by BurrowGate`);
+			}
+		}
+	}
+	return names;
+}
+
+function corsCredentialsBoolean(value: unknown, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value === "boolean") return value;
+	if (value === "true" || value === "1" || value === 1) return true;
+	if (value === "false" || value === "0" || value === 0 || value === "") return false;
+	throw new Error("CORS allow credentials must be a boolean");
+}
+
+function routeCorsCredentialsBoolean(value: unknown): boolean | null {
+	if (value === undefined || value === null || value === "") return null;
+	return corsCredentialsBoolean(value, false);
+}
+
+function parseSiteCors(value: unknown): SiteCorsPolicy {
+	const defaults = defaultSitePolicy().cors;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	const allowCredentials = corsCredentialsBoolean(input.allowCredentials, defaults.allowCredentials);
+	const allowedOrigins = corsOrigins(input.allowedOrigins, false, defaults.allowedOrigins)!;
+	if (allowCredentials && allowedOrigins.includes("*")) {
+		throw new Error("CORS allowed origins cannot be * when allow credentials is enabled");
+	}
+	return {
+		mode: corsMode(input.mode, false, defaults.mode) as SiteCorsMode,
+		allowedOrigins,
+		allowedMethods: corsMethods(input.allowedMethods, false, defaults.allowedMethods)!,
+		allowedHeaders: corsHeaderNames(input.allowedHeaders, false, defaults.allowedHeaders, "CORS allowed headers", false)!,
+		exposedHeaders: corsHeaderNames(input.exposedHeaders, false, defaults.exposedHeaders, "CORS exposed headers", true)!,
+		allowCredentials,
+		maxAgeSeconds: cacheInteger(input.maxAgeSeconds, "CORS max age", defaults.maxAgeSeconds, 0, MAX_CORS_MAX_AGE_SECONDS, false)!,
+	};
+}
+
+function parseRouteCors(value: unknown): RouteCorsPolicy {
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	const allowCredentials = routeCorsCredentialsBoolean(input.allowCredentials);
+	const allowedOrigins = corsOrigins(input.allowedOrigins, true, null);
+	if (allowCredentials && allowedOrigins?.includes("*")) {
+		throw new Error("CORS allowed origins cannot be * when allow credentials is enabled");
+	}
+	return {
+		mode: corsMode(input.mode, true, "inherit") as RouteCorsMode,
+		allowedOrigins,
+		allowedMethods: corsMethods(input.allowedMethods, true, null),
+		allowedHeaders: corsHeaderNames(input.allowedHeaders, true, null, "Route CORS allowed headers", false),
+		exposedHeaders: corsHeaderNames(input.exposedHeaders, true, null, "Route CORS exposed headers", true),
+		allowCredentials,
+		maxAgeSeconds: cacheInteger(input.maxAgeSeconds, "Route CORS max age", null, 0, MAX_CORS_MAX_AGE_SECONDS, true),
+	};
+}
+
+const MAX_HSTS_MAX_AGE_SECONDS = 63_072_000; // 2 years, the practical ceiling for hstspreload.org submissions
+const HSTS_PRELOAD_MIN_MAX_AGE_SECONDS = 31_536_000; // 1 year, required for preload-list eligibility
+
+function hstsBoolean(value: unknown, fallback: boolean, label: string): boolean {
+	if (value === undefined) return fallback;
+	if (typeof value === "boolean") return value;
+	if (value === "true" || value === "1" || value === 1) return true;
+	if (value === "false" || value === "0" || value === 0 || value === "") return false;
+	throw new Error(`${label} must be a boolean`);
+}
+
+function parseSiteHsts(value: unknown): SiteHstsPolicy {
+	const defaults = defaultSitePolicy().hsts;
+	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	const mode = ((): SiteHstsMode => {
+		if (input.mode === undefined) return defaults.mode;
+		const mode = String(input.mode).trim().toLowerCase();
+		if (mode === "enabled" || mode === "disabled") return mode as SiteHstsMode;
+		throw new Error("HSTS mode must be enabled or disabled");
+	})();
+	const maxAgeSeconds = cacheInteger(input.maxAgeSeconds, "HSTS max age", defaults.maxAgeSeconds, 0, MAX_HSTS_MAX_AGE_SECONDS, false)!;
+	const includeSubDomains = hstsBoolean(input.includeSubDomains, defaults.includeSubDomains, "HSTS include subdomains");
+	const preload = hstsBoolean(input.preload, defaults.preload, "HSTS preload");
+	if (preload && (!includeSubDomains || maxAgeSeconds < HSTS_PRELOAD_MIN_MAX_AGE_SECONDS)) {
+		throw new Error("HSTS preload requires include subdomains enabled and a max age of at least 31536000 seconds (1 year)");
+	}
+	return { mode, maxAgeSeconds, includeSubDomains, preload };
+}
+
+export function hstsHeaderValue(policy: SiteHstsPolicy): string {
+	let value = `max-age=${policy.maxAgeSeconds}`;
+	if (policy.includeSubDomains) value += "; includeSubDomains";
+	if (policy.preload) value += "; preload";
+	return value;
+}
+
+export function corsOptionsFromPolicy(policy: SiteCorsPolicy) {
+	return {
+		origin: policy.allowedOrigins.includes("*") ? ("*" as const) : policy.allowedOrigins,
+		allowMethods: policy.allowedMethods,
+		allowHeaders: policy.allowedHeaders,
+		exposeHeaders: policy.exposedHeaders,
+		credentials: policy.allowCredentials,
+		maxAge: policy.maxAgeSeconds,
+	};
+}
+
+function corsOriginAllowed(origin: string, policy: SiteCorsPolicy): boolean {
+	return policy.allowedOrigins.includes("*") || policy.allowedOrigins.includes(origin);
+}
+
+export function applyCorsResponseHeaders(headers: Headers, request: Request, policy: SiteCorsPolicy): void {
+	if (policy.mode !== "enabled") return;
+	const origin = request.headers.get("origin");
+	if (!origin || !corsOriginAllowed(origin, policy)) return;
+	const isWildcard = policy.allowedOrigins.includes("*") && !policy.allowCredentials;
+	if (isWildcard) {
+		headers.set("access-control-allow-origin", "*");
+	} else {
+		headers.set("access-control-allow-origin", origin);
+		const vary = headers.get("vary");
+		if (!vary) headers.set("vary", "Origin");
+		else if (
+			!vary
+				.split(",")
+				.map((entry) => entry.trim())
+				.includes("Origin")
+		)
+			headers.set("vary", `${vary}, Origin`);
+	}
+	if (policy.allowCredentials) headers.set("access-control-allow-credentials", "true");
+	if (policy.exposedHeaders.length) headers.set("access-control-expose-headers", policy.exposedHeaders.join(", "));
+}
+
 function objectValue(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
 	return value as Record<string, unknown>;
@@ -648,6 +877,8 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 		bandwidthLimit: parseSiteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseSiteBodyCapture(input.bodyCapture),
 		headerCapture: parseSiteHeaderCapture(input.headerCapture),
+		cors: parseSiteCors(input.cors),
+		hsts: parseSiteHsts(input.hsts),
 	};
 }
 
@@ -668,6 +899,7 @@ function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 		bandwidthLimit: parseRouteBandwidthLimit(input.bandwidthLimit),
 		bodyCapture: parseRouteBodyCapture(input.bodyCapture),
 		headerCapture: parseRouteHeaderCapture(input.headerCapture),
+		cors: parseRouteCors(input.cors),
 	};
 }
 
@@ -699,6 +931,8 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Site bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Site body capture policy");
 	const suppliedHeaderCapture = value.headerCapture === undefined ? {} : objectValue(value.headerCapture, "Site header capture policy");
+	const suppliedCors = value.cors === undefined ? {} : objectValue(value.cors, "Site CORS policy");
+	const suppliedHsts = value.hsts === undefined ? {} : objectValue(value.hsts, "Site HSTS policy");
 	return JSON.stringify(
 		parseSitePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -710,6 +944,8 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 			headerCapture: { ...current.headerCapture, ...suppliedHeaderCapture },
+			cors: { ...current.cors, ...suppliedCors },
+			hsts: { ...current.hsts, ...suppliedHsts },
 		}),
 	);
 }
@@ -726,6 +962,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 	const suppliedBandwidthLimit = value.bandwidthLimit === undefined ? {} : objectValue(value.bandwidthLimit, "Route bandwidth limit policy");
 	const suppliedBodyCapture = value.bodyCapture === undefined ? {} : objectValue(value.bodyCapture, "Route body capture policy");
 	const suppliedHeaderCapture = value.headerCapture === undefined ? {} : objectValue(value.headerCapture, "Route header capture policy");
+	const suppliedCors = value.cors === undefined ? {} : objectValue(value.cors, "Route CORS policy");
 	return JSON.stringify(
 		parseRoutePolicy({
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
@@ -737,6 +974,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			bandwidthLimit: { ...current.bandwidthLimit, ...suppliedBandwidthLimit },
 			bodyCapture: { ...current.bodyCapture, ...suppliedBodyCapture },
 			headerCapture: { ...current.headerCapture, ...suppliedHeaderCapture },
+			cors: { ...current.cors, ...suppliedCors },
 		}),
 	);
 }
@@ -811,6 +1049,16 @@ export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord |
 			redactedHeaders: routePolicy.headerCapture.redactedHeaders ?? sitePolicy.headerCapture.redactedHeaders,
 			expiresAt: routePolicy.headerCapture.expiresAt ?? sitePolicy.headerCapture.expiresAt,
 		},
+		cors: {
+			mode: routePolicy.cors.mode === "inherit" ? sitePolicy.cors.mode : routePolicy.cors.mode,
+			allowedOrigins: routePolicy.cors.allowedOrigins ?? sitePolicy.cors.allowedOrigins,
+			allowedMethods: routePolicy.cors.allowedMethods ?? sitePolicy.cors.allowedMethods,
+			allowedHeaders: routePolicy.cors.allowedHeaders ?? sitePolicy.cors.allowedHeaders,
+			exposedHeaders: routePolicy.cors.exposedHeaders ?? sitePolicy.cors.exposedHeaders,
+			allowCredentials: routePolicy.cors.allowCredentials ?? sitePolicy.cors.allowCredentials,
+			maxAgeSeconds: routePolicy.cors.maxAgeSeconds ?? sitePolicy.cors.maxAgeSeconds,
+		},
+		hsts: sitePolicy.hsts,
 	};
 }
 

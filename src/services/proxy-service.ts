@@ -11,7 +11,7 @@ import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
 import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
-import { applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
+import { applyCorsResponseHeaders, applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
 import { outboundFetchProtocolOption } from "./site-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
 
@@ -335,6 +335,7 @@ export async function proxyRequest(
 	);
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
+	applyCorsResponseHeaders(responseHeaders, request, httpPolicy.cors);
 	return {
 		response: rememberOriginResponse(
 			new Response(responseBody, {

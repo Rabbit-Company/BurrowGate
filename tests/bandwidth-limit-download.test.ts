@@ -28,6 +28,16 @@ function policyWithBandwidthLimit(scopeId: string): ResolvedHttpPolicy {
 		bandwidthLimit: { enabled: true, maxBytes: 1_000, windowSeconds: 60, banSeconds: 900, scopeId },
 		bodyCapture: { mode: "disabled", maxRequestBytes: 4_096, maxResponseBytes: 4_096, expiresAt: null, contentTypes: ["*"] },
 		headerCapture: { mode: "disabled", redactAuthHeaders: true, redactedHeaders: [], expiresAt: null },
+		cors: {
+			mode: "disabled",
+			allowedOrigins: [],
+			allowedMethods: ["GET", "HEAD", "POST"],
+			allowedHeaders: ["content-type", "authorization"],
+			exposedHeaders: [],
+			allowCredentials: false,
+			maxAgeSeconds: 86_400,
+		},
+		hsts: { mode: "disabled", maxAgeSeconds: 15_552_000, includeSubDomains: false, preload: false },
 	};
 }
 

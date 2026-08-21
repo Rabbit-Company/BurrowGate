@@ -53,7 +53,15 @@ import { connectivityMonitor } from "./services/connectivity-monitor-service.ts"
 import { systemMonitor } from "./services/system-monitor-service.ts";
 import { notificationService } from "./services/notification-service.ts";
 import { loadBalancer } from "./services/load-balancer-service.ts";
-import { isBodyCaptureActive, isHeaderCaptureActive, requestLimitViolation } from "./services/http-policy-service.ts";
+import {
+	corsOptionsFromPolicy,
+	hstsHeaderValue,
+	isBodyCaptureActive,
+	isHeaderCaptureActive,
+	requestLimitViolation,
+	siteHttpPolicyView,
+} from "./services/http-policy-service.ts";
+import { cors } from "@rabbit-company/web-middleware/cors";
 import { tapBodyForCapture, type CapturedBody } from "./services/body-capture-service.ts";
 import { captureHeaders } from "./services/header-capture-service.ts";
 import { staticAssetCache } from "./services/static-cache-service.ts";
@@ -296,6 +304,19 @@ async function gateway(ctx: any): Promise<Response> {
 			routePolicy: route.policy?.name,
 			reason: limitViolation.message,
 		});
+	}
+	if (route.http.cors.mode === "enabled" && request.method === "OPTIONS" && request.headers.has("access-control-request-method")) {
+		const preflight = await cors(corsOptionsFromPolicy(route.http.cors))(ctx, async () => {});
+		if (preflight) {
+			await recordEvent({
+				...eventBase,
+				sessionId: null,
+				status: preflight.status,
+				decision: "cors-preflight",
+				latencyMs: Math.round(performance.now() - started),
+			});
+			return preflight;
+		}
 	}
 	const protection = await inspectManagedRequest(request, route.http.protection);
 	if (protection.status !== "disabled") {
@@ -667,6 +688,11 @@ async function gatewayWithRequestId(ctx: any): Promise<Response> {
 	const requestId = resolveRequestId(ctx.req);
 	const response = await gateway(ctx);
 	response.headers.set("x-burrowgate-request-id", requestId);
+	const site = ctx.state.site;
+	if (site && requestIsSecure(ctx.req)) {
+		const hsts = siteHttpPolicyView(site).hsts;
+		if (hsts.mode === "enabled") response.headers.set("strict-transport-security", hstsHeaderValue(hsts));
+	}
 	return response;
 }
 

@@ -27,6 +27,8 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Signed origin verification headers
 - Optional per-site/per-route request and response body capture, bounded by size and content type with a self-expiring window, viewable per request from Recent Traffic
 - Optional per-site/per-route request and response header capture, with default redaction of Authorization/Cookie/Set-Cookie plus a configurable extra redaction list
+- Per-site/per-route CORS policy, answering cross-origin preflight requests directly ahead of verification and access-list sign-in
+- Per-site HSTS (`Strict-Transport-Security`) with optional includeSubDomains and preload
 - Resend any captured Recent Traffic request from the dashboard, with editable headers and body, automatic same-site redirect following, and a full hop-by-hop chain in the result
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
@@ -383,6 +385,18 @@ See [`docs/BODY_CAPTURE.md`](docs/BODY_CAPTURE.md).
 Header capture is disabled by default and can be enabled from the site's **HTTP** tab, with the same per-route enable, disable, and expiration overrides as body capture. `Authorization`, `Cookie`, and `Set-Cookie` are redacted by default (the header name is stored, the value isn't); this can be turned off, and an additional list of header names to redact can be configured, per site or per route.
 
 See [`docs/HEADER_CAPTURE.md`](docs/HEADER_CAPTURE.md).
+
+### CORS
+
+CORS is disabled by default and can be enabled from the site's **HTTP** tab, with a per-route enable, disable, or inherit override. When enabled, BurrowGate answers cross-origin preflight (`OPTIONS`) requests directly - skipping the browser-verification challenge and access-list sign-in, since neither can complete during a preflight - and adds the matching `Access-Control-*` headers to real responses. A wildcard allowed origin cannot be combined with allowed credentials.
+
+See [`docs/CORS.md`](docs/CORS.md).
+
+### HSTS
+
+HSTS is disabled by default and can be enabled from the site's **HTTP** tab. Unlike other HTTP policies it is site-only, since `Strict-Transport-Security` is a per-hostname browser directive rather than a per-path one. Once enabled, `Strict-Transport-Security` is added to every HTTPS response for that site, including cached, blocked, and error responses. Preload requires include-subdomains and a max age of at least one year.
+
+See [`docs/HSTS.md`](docs/HSTS.md).
 
 ### Resend
 

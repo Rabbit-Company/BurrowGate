@@ -6,6 +6,16 @@ const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
 const DATE_TIME_FORMATS = new Set(["iso-24", "dmy-24", "mdy-12", "browser"]);
 const DEFAULT_BAN_DURATIONS = { low: 0, medium: 600, high: 3600, critical: 86400 };
 const DEFAULT_BANDWIDTH_LIMIT = { enabled: false, maxBytes: 50 * 1024 * 1024, windowSeconds: 60, banSeconds: 3600 };
+const DEFAULT_CORS = {
+	mode: "disabled",
+	allowedOrigins: [],
+	allowedMethods: ["GET", "HEAD", "POST"],
+	allowedHeaders: ["content-type", "authorization"],
+	exposedHeaders: [],
+	allowCredentials: false,
+	maxAgeSeconds: 86400,
+};
+const DEFAULT_HSTS = { mode: "disabled", maxAgeSeconds: 15552000, includeSubDomains: false, preload: false };
 
 const tableState = {
 	traffic: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
@@ -426,6 +436,45 @@ function parseRuleIds(id) {
 	];
 }
 
+function parseCorsOrigins(id, nullable) {
+	const origins = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim())
+				.filter(Boolean),
+		),
+	];
+	if (origins.length > 0) return origins;
+	return nullable ? null : [];
+}
+
+function parseCorsMethods(id, nullable) {
+	const methods = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toUpperCase())
+				.filter(Boolean),
+		),
+	];
+	if (methods.length > 0) return methods;
+	return nullable ? null : [...DEFAULT_CORS.allowedMethods];
+}
+
+function parseCorsHeaderNames(id, nullable) {
+	const names = [
+		...new Set(
+			byId(id)
+				.value.split(/[\s,]+/u)
+				.map((value) => value.trim().toLowerCase())
+				.filter(Boolean),
+		),
+	];
+	if (names.length > 0) return names;
+	return nullable ? null : [];
+}
+
 function readHttpPolicy(prefix, routeOverrides) {
 	return {
 		requestHeaders: {
@@ -497,6 +546,35 @@ function readHttpPolicy(prefix, routeOverrides) {
 			redactedHeaders: parseHeaderCaptureRedactedHeaders(`${prefix}HeaderCaptureRedactedHeaders`, routeOverrides),
 			expiresAt: parseDateTimeLocal(`${prefix}HeaderCaptureExpiresAt`),
 		},
+		cors: routeOverrides
+			? {
+					mode: byId(`${prefix}CorsMode`).value,
+					allowedOrigins: parseCorsOrigins(`${prefix}CorsOrigins`, true),
+					allowedMethods: parseCorsMethods(`${prefix}CorsMethods`, true),
+					allowedHeaders: parseCorsHeaderNames(`${prefix}CorsHeaders`, true),
+					exposedHeaders: parseCorsHeaderNames(`${prefix}CorsExposedHeaders`, true),
+					allowCredentials: byId(`${prefix}CorsCredentials`).value === "" ? null : byId(`${prefix}CorsCredentials`).value === "true",
+					maxAgeSeconds: optionalNumberInput(`${prefix}CorsMaxAge`),
+				}
+			: {
+					mode: byId(`${prefix}CorsEnabled`).checked ? "enabled" : "disabled",
+					allowedOrigins: parseCorsOrigins(`${prefix}CorsOrigins`, false),
+					allowedMethods: parseCorsMethods(`${prefix}CorsMethods`, false),
+					allowedHeaders: parseCorsHeaderNames(`${prefix}CorsHeaders`, false),
+					exposedHeaders: parseCorsHeaderNames(`${prefix}CorsExposedHeaders`, false),
+					allowCredentials: byId(`${prefix}CorsCredentials`).checked,
+					maxAgeSeconds: Number(byId(`${prefix}CorsMaxAge`).value),
+				},
+		...(routeOverrides
+			? {}
+			: {
+					hsts: {
+						mode: byId(`${prefix}HstsEnabled`).checked ? "enabled" : "disabled",
+						maxAgeSeconds: Number(byId(`${prefix}HstsMaxAge`).value),
+						includeSubDomains: byId(`${prefix}HstsIncludeSubDomains`).checked,
+						preload: byId(`${prefix}HstsPreload`).checked,
+					},
+				}),
 	};
 }
 
@@ -574,9 +652,35 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 	}
 	byId(`${prefix}HeaderCaptureExpiresAt`).value = headerCapture.expiresAt == null ? "" : toDateTimeLocal(headerCapture.expiresAt);
 	byId(`${prefix}HeaderCaptureRedactedHeaders`).value = (headerCapture.redactedHeaders ?? []).join(", ");
+	const cors =
+		http.cors ??
+		(routeOverrides
+			? { mode: "inherit", allowedOrigins: null, allowedMethods: null, allowedHeaders: null, exposedHeaders: null, allowCredentials: null, maxAgeSeconds: null }
+			: DEFAULT_CORS);
+	if (routeOverrides) byId(`${prefix}CorsMode`).value = cors.mode ?? "inherit";
+	else byId(`${prefix}CorsEnabled`).checked = cors.mode === "enabled";
+	byId(`${prefix}CorsOrigins`).value = (cors.allowedOrigins ?? (routeOverrides ? [] : DEFAULT_CORS.allowedOrigins)).join(", ");
+	byId(`${prefix}CorsMethods`).value = (cors.allowedMethods ?? (routeOverrides ? [] : DEFAULT_CORS.allowedMethods)).join(", ");
+	byId(`${prefix}CorsHeaders`).value = (cors.allowedHeaders ?? (routeOverrides ? [] : DEFAULT_CORS.allowedHeaders)).join(", ");
+	byId(`${prefix}CorsExposedHeaders`).value = (cors.exposedHeaders ?? (routeOverrides ? [] : DEFAULT_CORS.exposedHeaders)).join(", ");
+	if (routeOverrides) {
+		byId(`${prefix}CorsCredentials`).value = cors.allowCredentials === null || cors.allowCredentials === undefined ? "" : String(cors.allowCredentials);
+	} else {
+		byId(`${prefix}CorsCredentials`).checked = cors.allowCredentials ?? DEFAULT_CORS.allowCredentials;
+	}
+	byId(`${prefix}CorsMaxAge`).value = routeOverrides && cors.maxAgeSeconds == null ? "" : String(cors.maxAgeSeconds ?? DEFAULT_CORS.maxAgeSeconds);
+	if (!routeOverrides) {
+		const hsts = http.hsts ?? DEFAULT_HSTS;
+		byId(`${prefix}HstsEnabled`).checked = hsts.mode === "enabled";
+		byId(`${prefix}HstsMaxAge`).value = String(hsts.maxAgeSeconds ?? DEFAULT_HSTS.maxAgeSeconds);
+		byId(`${prefix}HstsIncludeSubDomains`).checked = hsts.includeSubDomains ?? DEFAULT_HSTS.includeSubDomains;
+		byId(`${prefix}HstsPreload`).checked = hsts.preload ?? DEFAULT_HSTS.preload;
+	}
 	if (!routeOverrides) updateSiteHttpCacheControls();
 	if (!routeOverrides) updateSiteHttpBodyCaptureControls();
 	if (!routeOverrides) updateSiteHttpHeaderCaptureControls();
+	if (!routeOverrides) updateSiteHttpCorsControls();
+	if (!routeOverrides) updateSiteHttpHstsControls();
 	if (!routeOverrides) updateSiteProtectionControls();
 }
 
@@ -1880,6 +1984,21 @@ function updateSiteHttpBodyCaptureControls() {
 
 function updateSiteHttpHeaderCaptureControls() {
 	byId("siteHttpHeaderCaptureSettings").classList.toggle("hidden", !byId("siteHttpHeaderCaptureEnabled").checked);
+}
+
+function updateSiteHttpCorsControls() {
+	byId("siteHttpCorsSettings").classList.toggle("hidden", !byId("siteHttpCorsEnabled").checked);
+	const wildcard = byId("siteHttpCorsOrigins")
+		.value.split(/[\s,]+/u)
+		.map((value) => value.trim())
+		.includes("*");
+	byId("siteHttpCorsCredentialsWarning").classList.toggle("hidden", !(wildcard && byId("siteHttpCorsCredentials").checked));
+}
+
+function updateSiteHttpHstsControls() {
+	byId("siteHttpHstsSettings").classList.toggle("hidden", !byId("siteHttpHstsEnabled").checked);
+	const maxAge = Number(byId("siteHttpHstsMaxAge").value) || 0;
+	byId("siteHttpHstsMaxAgeDays").textContent = `About ${(maxAge / 86_400).toFixed(1)} days.`;
 }
 
 function updateSiteProtectionControls() {
@@ -5013,6 +5132,11 @@ function bindActions() {
 	byId("siteHttpCacheEnabled").addEventListener("change", updateSiteHttpCacheControls);
 	byId("siteHttpBodyCaptureEnabled").addEventListener("change", updateSiteHttpBodyCaptureControls);
 	byId("siteHttpHeaderCaptureEnabled").addEventListener("change", updateSiteHttpHeaderCaptureControls);
+	byId("siteHttpCorsEnabled").addEventListener("change", updateSiteHttpCorsControls);
+	byId("siteHttpCorsOrigins").addEventListener("input", updateSiteHttpCorsControls);
+	byId("siteHttpCorsCredentials").addEventListener("change", updateSiteHttpCorsControls);
+	byId("siteHttpHstsEnabled").addEventListener("change", updateSiteHttpHstsControls);
+	byId("siteHttpHstsMaxAge").addEventListener("input", updateSiteHttpHstsControls);
 	byId("siteHttpProtectionMode").addEventListener("change", updateSiteProtectionControls);
 	byId("siteHttpProtectionRuleset").addEventListener("change", updateSiteProtectionControls);
 	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));
