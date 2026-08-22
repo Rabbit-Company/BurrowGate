@@ -138,6 +138,10 @@ export interface SiteOriginRecord {
 	weight: number;
 	health_check_path: string | null;
 	is_primary: number;
+	mtls_enabled: number;
+	mtls_certificate_pem: string | null;
+	mtls_encrypted_private_key: string | null;
+	mtls_ca_pem: string | null;
 	created_at: number;
 	updated_at: number;
 }

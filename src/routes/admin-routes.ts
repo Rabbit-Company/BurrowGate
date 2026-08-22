@@ -95,7 +95,15 @@ import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts"
 import { updateCheckManager } from "../services/update-check-service.ts";
 import { originHealthManager } from "../services/origin-health-service.ts";
 import { loadBalancer } from "../services/load-balancer-service.ts";
-import { createOrigin, deleteOrigin, originView, updateOrigin, type OriginInput } from "../services/origin-pool-service.ts";
+import {
+	createOrigin,
+	deleteOrigin,
+	generateOriginMtlsCertificate,
+	generateOriginServerCertificate,
+	originView,
+	updateOrigin,
+	type OriginInput,
+} from "../services/origin-pool-service.ts";
 import { instanceWebSocketDefaults } from "../services/websocket-policy-service.ts";
 import { staticAssetCache } from "../services/static-cache-service.ts";
 import { instanceBodyCaptureDefaults, instanceHeaderCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
@@ -1002,6 +1010,98 @@ export function registerAdminRoutes(app: Web<any>): void {
 			const message = error instanceof Error ? error.message : "Unable to update origin";
 			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
 		}
+	});
+
+	app.post("/_burrowgate/api/admin/origins/:id/mtls/generate", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			const existing = await repository.originById(ctx.params.id);
+			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
+			if (denied) return denied;
+			const origin = await generateOriginMtlsCertificate(existing.site_id, ctx.params.id);
+			staticAssetCache.purge({ siteId: existing.site_id });
+			await loadBalancer.refreshSite(existing.site_id);
+			await originHealthManager.refreshSite(existing.site_id);
+			await recordAdminAudit({
+				actor: user,
+				action: "origin.mtls_generate",
+				resourceType: "origin",
+				resourceId: origin.id,
+				summary: `Generated an mTLS client certificate for origin ${origin.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ origin: originView(origin) });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to generate a client certificate";
+			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/origins/:id/mtls/certificate", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const existing = await repository.originById(ctx.params.id);
+		if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+		const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "view");
+		if (denied) return denied;
+		if (!existing.mtls_certificate_pem) return jsonResponse({ error: "No client certificate is configured for this origin" }, 404);
+		const filename = `${existing.name.replace(/[^a-zA-Z0-9._-]+/gu, "-")}-client-cert.pem`;
+		return new Response(existing.mtls_certificate_pem, {
+			headers: { "content-type": "application/x-pem-file", "content-disposition": `attachment; filename="${filename}"` },
+		});
+	});
+
+	app.post("/_burrowgate/api/admin/origins/:id/mtls/generate-origin-certificate", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		try {
+			const existing = await repository.originById(ctx.params.id);
+			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
+			if (denied) return denied;
+			const site = await repository.siteById(existing.site_id);
+			if (!site) return jsonResponse({ error: "Site not found" }, 404);
+			const { origin, privateKeyPem } = await generateOriginServerCertificate(site, existing.site_id, ctx.params.id);
+			staticAssetCache.purge({ siteId: existing.site_id });
+			await loadBalancer.refreshSite(existing.site_id);
+			await originHealthManager.refreshSite(existing.site_id);
+			await recordAdminAudit({
+				actor: user,
+				action: "origin.mtls_generate_origin_certificate",
+				resourceType: "origin",
+				resourceId: origin.id,
+				summary: `Generated an origin server certificate for origin ${origin.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			return jsonResponse({ origin: originView(origin), certificatePem: origin.mtls_ca_pem, privateKeyPem });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unable to generate an origin certificate";
+			return jsonResponse({ error: message }, message === "Origin not found" || message === "Site not found" ? 404 : 400);
+		}
+	});
+
+	app.get("/_burrowgate/api/admin/origins/:id/mtls/trusted-ca", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const existing = await repository.originById(ctx.params.id);
+		if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
+		const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "view");
+		if (denied) return denied;
+		if (!existing.mtls_ca_pem) return jsonResponse({ error: "No trusted CA is configured for this origin" }, 404);
+		const filename = `${existing.name.replace(/[^a-zA-Z0-9._-]+/gu, "-")}-trusted-ca.pem`;
+		return new Response(existing.mtls_ca_pem, {
+			headers: { "content-type": "application/x-pem-file", "content-disposition": `attachment; filename="${filename}"` },
+		});
 	});
 
 	app.delete("/_burrowgate/api/admin/origins/:id", async (ctx: any) => {

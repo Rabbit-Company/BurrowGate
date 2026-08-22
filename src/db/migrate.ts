@@ -942,6 +942,22 @@ async function ensureIpRuleColumns(): Promise<void> {
 	}
 }
 
+async function ensureOriginColumns(): Promise<void> {
+	const statements = [
+		"ALTER TABLE site_origins ADD COLUMN mtls_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE site_origins ADD COLUMN mtls_certificate_pem TEXT NULL",
+		"ALTER TABLE site_origins ADD COLUMN mtls_encrypted_private_key TEXT NULL",
+		"ALTER TABLE site_origins ADD COLUMN mtls_ca_pem TEXT NULL",
+	];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureStreamColumns(): Promise<void> {
 	const statements = [
 		"ALTER TABLE streams ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT ''",
@@ -1204,6 +1220,7 @@ export async function migrate(): Promise<void> {
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();
 	await ensureNotificationSchema();
+	await ensureOriginColumns();
 	await ensurePrimaryOrigins();
 	await ensureStreamNames();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {

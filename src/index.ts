@@ -574,6 +574,7 @@ async function gateway(ctx: any): Promise<Response> {
 				eventBase.countryCode ?? null,
 				selectedOrigin!.origin_url,
 				route.http,
+				selectedOrigin,
 			);
 		let response: Response;
 		let capturedRequestBody: CapturedBody | null = null;

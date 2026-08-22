@@ -737,6 +737,37 @@ export function adminPage(): string {
                 </div>
                 <label class="check-row"><input id="originEnabled" form="originValidationForm" type="checkbox" checked><span><strong>Origin enabled</strong><small class="muted">Disabled origins remain configured but receive no traffic.</small></span></label>
                 <label class="check-row"><input id="originDraining" form="originValidationForm" type="checkbox"><span><strong>Drain origin</strong><small class="muted">Existing sticky sessions continue using it; new assignments avoid it.</small></span></label>
+                <div class="section-heading error-response-heading"><div><h3>Origin server certificate trust</h3><p class="muted">Validate this origin's TLS certificate against a specific certificate instead of the public CA store. Works whether or not mTLS below is enabled.</p></div></div>
+                <p class="muted">Don't have a certificate for your origin? Click <strong>Generate origin certificate</strong> below - BurrowGate creates one for you to install on the origin as its HTTPS certificate. Use this alone if your origin can't verify client certificates.</p>
+                <div id="originTrustedCaActions" class="row site-form-actions hidden">
+                  <button id="generateOriginCertificate" class="button secondary compact" type="button">Generate origin certificate</button>
+                  <button id="downloadOriginTrustedCa" class="button secondary compact hidden" type="button">Download certificate</button>
+                </div>
+                <div class="site-form-grid">
+                  <label class="site-origin-field"><span>Trusted CA / origin certificate (PEM, optional)</span><textarea id="originMtlsCaPem" form="originValidationForm" class="input code-input compact-code-input" rows="4" spellcheck="false" placeholder="Leave blank to keep the existing value, or to trust the public CA store"></textarea><small class="muted" id="originTrustedCaStatus"></small></label>
+                </div>
+                <div id="generatedOriginKeyPanel" class="secret-panel hidden">
+                  <div>
+                    <strong>Save this origin certificate's private key now</strong>
+                    <p class="muted">BurrowGate does not store this key and cannot show it again. Install both the certificate and this key on the origin server as its HTTPS certificate/key pair.</p>
+                    <code id="generatedOriginKeyValue"></code>
+                  </div>
+                  <div class="row site-form-actions">
+                    <button id="copyGeneratedOriginKey" class="button secondary compact" type="button">Copy</button>
+                    <button id="downloadGeneratedOriginKey" class="button secondary compact" type="button">Download private key</button>
+                  </div>
+                </div>
+                <div class="section-heading error-response-heading"><div><h3>mTLS to this origin</h3><p class="muted">Present a client certificate when connecting to this origin over HTTPS. Disabled by default.</p></div></div>
+                <label class="check-row"><input id="originMtlsEnabled" form="originValidationForm" type="checkbox"><span><strong>Enable mTLS</strong><small class="muted" id="originMtlsStatus"></small></span></label>
+                <p class="muted">Don't have a certificate? Click <strong>Generate certificate</strong> below and BurrowGate creates one for you - download it and install it as a trusted client certificate on your origin server.</p>
+                <div id="originMtlsActions" class="row site-form-actions hidden">
+                  <button id="generateOriginMtlsCertificate" class="button secondary compact" type="button">Generate certificate</button>
+                  <button id="downloadOriginMtlsCertificate" class="button secondary compact hidden" type="button">Download certificate</button>
+                </div>
+                <div id="originMtlsSettings" class="site-form-grid hidden">
+                  <label class="site-origin-field"><span>Client certificate (PEM)</span><textarea id="originMtlsCertificatePem" form="originValidationForm" class="input code-input compact-code-input" rows="6" spellcheck="false" placeholder="Leave blank to keep the existing certificate"></textarea></label>
+                  <label class="site-origin-field"><span>Private key (PEM)</span><textarea id="originMtlsPrivateKeyPem" form="originValidationForm" class="input code-input compact-code-input" rows="6" spellcheck="false" placeholder="Leave blank to keep the existing key"></textarea></label>
+                </div>
                 <div class="row site-form-actions"><button id="saveOrigin" class="button" type="button">Add origin</button><button id="cancelOriginEdit" class="button secondary" type="button">Cancel</button></div>
               </div>
             </div>

@@ -261,7 +261,10 @@ async function openUpstreamWebSocket(target: URL, headers: Headers, request: Req
 			else resolve(socket);
 		};
 		const onOpen = (): void => finish();
-		const onError = (): void => finish(new Error(`Unable to connect to WebSocket origin ${target.host}`));
+		const onError = (event: Event): void => {
+			const detail = event instanceof ErrorEvent && event.message ? `: ${event.message}` : "";
+			finish(new Error(`Unable to connect to WebSocket origin ${target.host}${detail}`));
+		};
 		const onCloseBeforeOpen = (event: CloseEvent): void => {
 			finish(new Error(`WebSocket origin closed during handshake (${event.code || "no status"})`));
 		};

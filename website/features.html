@@ -171,6 +171,11 @@
 								<li>Per-origin health checks, thresholds, and automatic unhealthy-origin removal</li>
 								<li>Per-minute health-check latency graphs (min/average/max) with a timed-out-check percentage</li>
 								<li>Optional 503 maintenance mode with <code>Retry-After</code> when the whole pool is down</li>
+								<li>Per-origin trusted CA / BurrowGate-issued origin server certificate - works even when the origin can't verify client certificates</li>
+								<li>
+									Per-origin mTLS: BurrowGate can generate a client certificate for one-click download or use one from your own PKI, independent of origin
+									certificate trust
+								</li>
 							</ul>
 						</div>
 

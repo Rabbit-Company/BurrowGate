@@ -1,5 +1,5 @@
 import { config, requestTransport, visitorCookieNames, type RequestTransport } from "../config.ts";
-import type { AccessSessionRecord, SiteRecord } from "../types.ts";
+import type { AccessSessionRecord, SiteOriginRecord, SiteRecord } from "../types.ts";
 
 export type OriginAccessStatus = "verified" | "allowlisted" | "bypass";
 import { removeCookieFromHeader, setCookieInHeader } from "../utils/cookies.ts";
@@ -13,6 +13,7 @@ import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
 import { applyCorsResponseHeaders, applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
 import { outboundFetchProtocolOption } from "./site-service.ts";
+import { originMtlsFetchOptions } from "./origin-mtls-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
@@ -249,6 +250,7 @@ export async function proxyRequest(
 	countryCode: string | null = null,
 	originUrl: string = site.origin_url,
 	httpPolicy: ResolvedHttpPolicy = resolveHttpPolicy(site),
+	originRecord: SiteOriginRecord | null = null,
 ): Promise<{ response: Response; capturedRequestBody: CapturedBody | null; capturedResponseBody: Promise<CapturedBody | null> | null }> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
@@ -304,6 +306,7 @@ export async function proxyRequest(
 			// results in ERR_CONTENT_DECODING_FAILED.
 			decompress: false,
 			...outboundFetchProtocolOption(site),
+			...(await originMtlsFetchOptions(originRecord)),
 		});
 	} catch (error) {
 		if (requestBody.limitState.exceeded) throw new RequestBodyTooLargeError(httpPolicy.limits.maxBodyBytes);

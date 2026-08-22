@@ -1744,7 +1744,7 @@ function renderOriginPool() {
 		? siteOrigins
 				.map((origin) => {
 					const state = origin.health?.state ?? (origin.enabled ? "unknown" : "disabled");
-					return `<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(origin.name)}</strong>${origin.isPrimary ? '<span class="badge info">primary</span>' : ""}<span class="badge ${healthBadgeClass(state)}">${escapeHtml(state)}</span>${origin.draining ? '<span class="badge warn">draining</span>' : ""}${origin.enabled ? "" : '<span class="badge warn">disabled</span>'}</div><div class="origin-pool-meta"><code>${escapeHtml(origin.originUrl)}</code><span>Priority ${formatNumber(origin.priority)} | Weight ${formatNumber(origin.weight)} | Health path: ${escapeHtml(origin.healthCheckPath || "site default")}${origin.health?.lastLatencyMs !== null && origin.health?.lastLatencyMs !== undefined ? ` | ${formatDuration(origin.health.lastLatencyMs)}` : ""}</span></div></div><div class="origin-pool-actions"><button class="button secondary compact" type="button" data-origin-check="${escapeHtml(origin.id)}">Check</button><button class="button secondary compact" type="button" data-origin-edit="${escapeHtml(origin.id)}">Edit</button>${origin.isPrimary ? "" : `<button class="button danger compact" type="button" data-origin-delete="${escapeHtml(origin.id)}">Delete</button>`}</div></div>`;
+					return `<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(origin.name)}</strong>${origin.isPrimary ? '<span class="badge info">primary</span>' : ""}<span class="badge ${healthBadgeClass(state)}">${escapeHtml(state)}</span>${origin.draining ? '<span class="badge warn">draining</span>' : ""}${origin.enabled ? "" : '<span class="badge warn">disabled</span>'}${origin.mtls?.enabled ? '<span class="badge info">mtls</span>' : ""}</div><div class="origin-pool-meta"><code>${escapeHtml(origin.originUrl)}</code><span>Priority ${formatNumber(origin.priority)} | Weight ${formatNumber(origin.weight)} | Health path: ${escapeHtml(origin.healthCheckPath || "site default")}${origin.health?.lastLatencyMs !== null && origin.health?.lastLatencyMs !== undefined ? ` | ${formatDuration(origin.health.lastLatencyMs)}` : ""}</span></div></div><div class="origin-pool-actions"><button class="button secondary compact" type="button" data-origin-check="${escapeHtml(origin.id)}">Check</button><button class="button secondary compact" type="button" data-origin-edit="${escapeHtml(origin.id)}">Edit</button>${origin.isPrimary ? "" : `<button class="button danger compact" type="button" data-origin-delete="${escapeHtml(origin.id)}">Delete</button>`}</div></div>`;
 				})
 				.join("")
 		: '<p class="muted">No origins are configured.</p>';
@@ -1760,9 +1760,26 @@ function resetOriginForm() {
 	byId("originHealthPath").value = "";
 	byId("originEnabled").checked = true;
 	byId("originDraining").checked = false;
+	byId("originMtlsEnabled").checked = false;
+	byId("originMtlsStatus").textContent = "";
+	byId("originMtlsCertificatePem").value = "";
+	byId("originMtlsPrivateKeyPem").value = "";
+	byId("originMtlsCaPem").value = "";
+	byId("originTrustedCaStatus").textContent = "";
+	byId("originMtlsActions").classList.add("hidden");
+	byId("downloadOriginMtlsCertificate").classList.add("hidden");
+	byId("originTrustedCaActions").classList.add("hidden");
+	byId("downloadOriginTrustedCa").classList.add("hidden");
+	byId("generatedOriginKeyPanel").classList.add("hidden");
+	byId("generatedOriginKeyValue").textContent = "";
 	for (const input of byId("originForm").querySelectorAll("input")) input.disabled = true;
 	byId("saveOrigin").textContent = "Add origin";
 	byId("originForm").classList.add("hidden");
+	updateOriginMtlsControls();
+}
+
+function updateOriginMtlsControls() {
+	byId("originMtlsSettings").classList.toggle("hidden", !byId("originMtlsEnabled").checked);
 }
 
 function editOrigin(id) {
@@ -1777,10 +1794,105 @@ function editOrigin(id) {
 	byId("originHealthPath").value = origin.healthCheckPath ?? "";
 	byId("originEnabled").checked = Boolean(origin.enabled);
 	byId("originDraining").checked = Boolean(origin.draining);
+	byId("originMtlsEnabled").checked = Boolean(origin.mtls?.enabled);
+	byId("originMtlsCertificatePem").value = "";
+	byId("originMtlsPrivateKeyPem").value = "";
+	byId("originMtlsCaPem").value = "";
+	byId("originMtlsStatus").textContent = origin.mtls?.configured ? "Client certificate configured." : "No client certificate configured yet.";
+	byId("originTrustedCaStatus").textContent = origin.mtls?.caConfigured ? "Trusted CA / origin certificate configured." : "No trusted CA configured yet.";
+	byId("originMtlsActions").classList.remove("hidden");
+	byId("downloadOriginMtlsCertificate").classList.toggle("hidden", !origin.mtls?.configured);
+	byId("originTrustedCaActions").classList.remove("hidden");
+	byId("downloadOriginTrustedCa").classList.toggle("hidden", !origin.mtls?.caConfigured);
+	byId("generatedOriginKeyPanel").classList.add("hidden");
+	byId("generatedOriginKeyValue").textContent = "";
 	for (const input of byId("originForm").querySelectorAll("input")) input.disabled = false;
 	byId("saveOrigin").textContent = "Save origin";
 	byId("originForm").classList.remove("hidden");
+	updateOriginMtlsControls();
 	byId("originName").focus();
+}
+
+async function generateOriginMtlsCertificate() {
+	if (!editingOriginId) return;
+	const origin = siteOrigins.find((item) => item.id === editingOriginId);
+	if (
+		origin?.mtls?.configured &&
+		!confirm(
+			"Regenerate the mTLS client certificate for this origin? The previous certificate will stop working immediately, so update the origin's trust store afterward.",
+		)
+	) {
+		return;
+	}
+	const button = byId("generateOriginMtlsCertificate");
+	button.disabled = true;
+	try {
+		await api(`/origins/${encodeURIComponent(editingOriginId)}/mtls/generate`, { method: "POST" }, false);
+		await loadOrigins(editingSiteId);
+		const refreshed = siteOrigins.find((item) => item.id === editingOriginId);
+		if (refreshed) {
+			byId("originMtlsEnabled").checked = Boolean(refreshed.mtls?.enabled);
+			byId("originMtlsStatus").textContent = "Client certificate configured.";
+			byId("downloadOriginMtlsCertificate").classList.remove("hidden");
+			updateOriginMtlsControls();
+		}
+		showToast("Client certificate generated. Download it and install it on your origin server.");
+		downloadOriginMtlsCertificate();
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+function downloadOriginMtlsCertificate() {
+	if (!editingOriginId) return;
+	window.location.href = `${ADMIN_API}/origins/${encodeURIComponent(editingOriginId)}/mtls/certificate`;
+}
+
+function downloadTextFile(filename, content) {
+	const blob = new Blob([content], { type: "application/x-pem-file" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	URL.revokeObjectURL(url);
+}
+
+async function generateOriginCertificate() {
+	if (!editingOriginId) return;
+	const origin = siteOrigins.find((item) => item.id === editingOriginId);
+	if (
+		origin?.mtls?.caConfigured &&
+		!confirm(
+			"Regenerate the origin server certificate for this origin? The previous certificate will stop being trusted immediately, so install the new certificate and key on the origin right after this.",
+		)
+	) {
+		return;
+	}
+	const button = byId("generateOriginCertificate");
+	button.disabled = true;
+	try {
+		const result = await api(`/origins/${encodeURIComponent(editingOriginId)}/mtls/generate-origin-certificate`, { method: "POST" }, false);
+		await loadOrigins(editingSiteId);
+		byId("originTrustedCaStatus").textContent = "Trusted CA / origin certificate configured.";
+		byId("downloadOriginTrustedCa").classList.remove("hidden");
+		byId("generatedOriginKeyValue").textContent = result.privateKeyPem;
+		byId("generatedOriginKeyPanel").classList.remove("hidden");
+		showToast("Origin certificate generated. Save the private key now and install both on your origin server.");
+	} catch (error) {
+		showToast(error.message, "bad");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+function downloadOriginTrustedCa() {
+	if (!editingOriginId) return;
+	window.location.href = `${ADMIN_API}/origins/${encodeURIComponent(editingOriginId)}/mtls/trusted-ca`;
 }
 
 async function loadOrigins(siteId) {
@@ -1811,7 +1923,16 @@ async function saveOrigin(event) {
 			healthCheckPath: byId("originHealthPath").value.trim(),
 			enabled: byId("originEnabled").checked,
 			draining: byId("originDraining").checked,
+			mtlsEnabled: byId("originMtlsEnabled").checked,
 		};
+		const mtlsCertificatePem = byId("originMtlsCertificatePem").value.trim();
+		const mtlsPrivateKeyPem = byId("originMtlsPrivateKeyPem").value.trim();
+		const mtlsCaPem = byId("originMtlsCaPem").value.trim();
+		if (mtlsCertificatePem || mtlsPrivateKeyPem) {
+			payload.mtlsCertificatePem = mtlsCertificatePem;
+			payload.mtlsPrivateKeyPem = mtlsPrivateKeyPem;
+		}
+		if (mtlsCaPem) payload.mtlsCaPem = mtlsCaPem;
 		await api(
 			editingOriginId ? `/origins/${encodeURIComponent(editingOriginId)}` : `/sites/${encodeURIComponent(editingSiteId)}/origins`,
 			{ method: editingOriginId ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) },
@@ -5198,6 +5319,24 @@ function bindActions() {
 		byId("originName").focus();
 	});
 	byId("cancelOriginEdit").addEventListener("click", resetOriginForm);
+	byId("originMtlsEnabled").addEventListener("change", updateOriginMtlsControls);
+	byId("generateOriginMtlsCertificate").addEventListener("click", () => void generateOriginMtlsCertificate());
+	byId("downloadOriginMtlsCertificate").addEventListener("click", downloadOriginMtlsCertificate);
+	byId("generateOriginCertificate").addEventListener("click", () => void generateOriginCertificate());
+	byId("downloadOriginTrustedCa").addEventListener("click", downloadOriginTrustedCa);
+	byId("copyGeneratedOriginKey").addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(byId("generatedOriginKeyValue").textContent);
+			showToast("Private key copied.");
+		} catch {
+			showToast("Could not copy automatically. Select the key and copy it manually.", "bad");
+		}
+	});
+	byId("downloadGeneratedOriginKey").addEventListener("click", () => {
+		const origin = siteOrigins.find((item) => item.id === editingOriginId);
+		const name = origin?.name?.replace(/[^a-zA-Z0-9._-]+/gu, "-") || "origin";
+		downloadTextFile(`${name}-private-key.pem`, byId("generatedOriginKeyValue").textContent);
+	});
 	byId("siteHealthEnabled").addEventListener("change", updateHealthControls);
 	byId("siteHealthInterval").addEventListener("input", updateHealthDetectionNotice);
 	byId("siteHealthFailureThreshold").addEventListener("input", updateHealthDetectionNotice);

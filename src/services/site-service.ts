@@ -475,6 +475,10 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		weight: 1,
 		health_check_path: null,
 		is_primary: 1,
+		mtls_enabled: 0,
+		mtls_certificate_pem: null,
+		mtls_encrypted_private_key: null,
+		mtls_ca_pem: null,
 		created_at: now,
 		updated_at: now,
 	});

@@ -504,10 +504,10 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertOrigin(origin: SiteOriginRecord): Promise<void> {
-		await db`INSERT INTO site_origins (id,site_id,name,origin_url,enabled,draining,priority,weight,health_check_path,is_primary,created_at,updated_at) VALUES (${origin.id},${origin.site_id},${origin.name},${origin.origin_url},${origin.enabled},${origin.draining},${origin.priority},${origin.weight},${origin.health_check_path},${origin.is_primary},${origin.created_at},${origin.updated_at})`;
+		await db`INSERT INTO site_origins (id,site_id,name,origin_url,enabled,draining,priority,weight,health_check_path,is_primary,mtls_enabled,mtls_certificate_pem,mtls_encrypted_private_key,mtls_ca_pem,created_at,updated_at) VALUES (${origin.id},${origin.site_id},${origin.name},${origin.origin_url},${origin.enabled},${origin.draining},${origin.priority},${origin.weight},${origin.health_check_path},${origin.is_primary},${origin.mtls_enabled},${origin.mtls_certificate_pem},${origin.mtls_encrypted_private_key},${origin.mtls_ca_pem},${origin.created_at},${origin.updated_at})`;
 	},
 	async updateOrigin(origin: SiteOriginRecord): Promise<void> {
-		await db`UPDATE site_origins SET name=${origin.name}, origin_url=${origin.origin_url}, enabled=${origin.enabled}, draining=${origin.draining}, priority=${origin.priority}, weight=${origin.weight}, health_check_path=${origin.health_check_path}, updated_at=${origin.updated_at} WHERE id=${origin.id} AND site_id=${origin.site_id}`;
+		await db`UPDATE site_origins SET name=${origin.name}, origin_url=${origin.origin_url}, enabled=${origin.enabled}, draining=${origin.draining}, priority=${origin.priority}, weight=${origin.weight}, health_check_path=${origin.health_check_path}, mtls_enabled=${origin.mtls_enabled}, mtls_certificate_pem=${origin.mtls_certificate_pem}, mtls_encrypted_private_key=${origin.mtls_encrypted_private_key}, mtls_ca_pem=${origin.mtls_ca_pem}, updated_at=${origin.updated_at} WHERE id=${origin.id} AND site_id=${origin.site_id}`;
 	},
 	async deleteOrigin(id: string, siteId: string): Promise<void> {
 		await db`DELETE FROM site_origins WHERE id=${id} AND site_id=${siteId} AND is_primary=0`;

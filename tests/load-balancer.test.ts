@@ -14,6 +14,10 @@ function origin(id: string, weight = 1): SiteOriginRecord {
 		weight,
 		health_check_path: null,
 		is_primary: id === "origin-a" ? 1 : 0,
+		mtls_enabled: 0,
+		mtls_certificate_pem: null,
+		mtls_encrypted_private_key: null,
+		mtls_ca_pem: null,
 		created_at: 1,
 		updated_at: 1,
 	};
