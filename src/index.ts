@@ -76,6 +76,38 @@ import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
 import { registerPendingChangeApplier, startPendingChangeScheduler } from "./services/pending-change-service.ts";
 import { applyPendingStreamChange } from "./services/stream-service.ts";
 import { updateCheckManager } from "./services/update-check-service.ts";
+import { flushStreamMonitoring } from "./services/stream-monitoring-service.ts";
+import { flushBandwidthMetrics } from "./services/bandwidth-service.ts";
+import packageMetadata from "../package.json" with { type: "json" };
+
+let shuttingDown = false;
+
+async function flushPendingMonitoringData(timeoutMs = 3_000): Promise<void> {
+	await Promise.race([Promise.allSettled([flushStreamMonitoring(), flushBandwidthMetrics()]), new Promise((resolve) => setTimeout(resolve, timeoutMs))]);
+}
+
+async function shutdown(reason: string, exitCode: number): Promise<void> {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	Logger.warn(`[BurrowGate] Shutting down (${reason}); flushing pending monitoring data before exit`);
+	await flushPendingMonitoringData();
+	process.exit(exitCode);
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM", 0));
+process.on("SIGINT", () => void shutdown("SIGINT", 0));
+
+process.on("uncaughtException", (error) => {
+	Logger.error("[BurrowGate] FATAL uncaught exception; process will exit", { error: error instanceof Error ? error.stack : String(error) });
+	void shutdown("uncaughtException", 1);
+});
+
+process.on("unhandledRejection", (reason) => {
+	Logger.error("[BurrowGate] FATAL unhandled rejection; process will exit", {
+		error: reason instanceof Error ? reason.stack : String(reason),
+	});
+	void shutdown("unhandledRejection", 1);
+});
 
 await initializeRuntimeSecrets();
 await migrate();
@@ -705,3 +737,5 @@ for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
 const listenerManager = new TlsListenerManager(app);
 await listenerManager.start();
 await streamProxyManager.start();
+
+Logger.info(`[BurrowGate] READY v${packageMetadata.version} (pid ${process.pid}, bun ${Bun.version})`);
