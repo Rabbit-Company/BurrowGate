@@ -1282,7 +1282,7 @@ export class StreamProxyManager {
 				data: (_socket, data, port, address, flags) => void this.handleUdpData(runtime, data, port, address, flags.truncated),
 				drain: () => this.flushUdpReplies(runtime),
 				error: (_socket, error) => {
-					this.statusFor(record).error = error.message;
+					this.statusFor(record).error = error instanceof Error ? error.message : String(error ?? "Unknown UDP socket error");
 					Logger.error(`[BurrowGate] UDP stream error on port ${record.incoming_port}`, { error });
 				},
 			},
