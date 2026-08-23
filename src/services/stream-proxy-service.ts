@@ -979,14 +979,18 @@ export class StreamProxyManager {
 			connect: { hostname: runtime.forwardAddress, port: runtime.record.forward_port },
 			socket: {
 				data: (_socket, data, _port, _address, flags) => {
-					if (!peer || peer.closed || runtime.closed) return;
-					peer.lastActivityAt = Date.now();
-					if (flags.truncated) return this.closeUdpPeer(runtime, peer, "truncated upstream datagram", new Error("UDP datagram was truncated"));
-					if (this.isAmplificationThrottled(runtime, peer, data.byteLength)) return;
-					const sent = runtime.socket.send(data, peer.clientPort, peer.clientIp);
-					if (sent) this.recordUdpBytes(runtime, peer, "client", data.byteLength);
-					else if (runtime.pendingReplies.length < config.streams.maxPendingDatagrams) runtime.pendingReplies.push({ peer, data: copyChunk(data) });
-					else this.closeUdpPeer(runtime, peer, "UDP reply queue exceeded", new Error("UDP reply queue limit exceeded"));
+					try {
+						if (!peer || peer.closed || runtime.closed) return;
+						peer.lastActivityAt = Date.now();
+						if (flags.truncated) return this.closeUdpPeer(runtime, peer, "truncated upstream datagram", new Error("UDP datagram was truncated"));
+						if (this.isAmplificationThrottled(runtime, peer, data.byteLength)) return;
+						const sent = runtime.socket.send(data, peer.clientPort, peer.clientIp);
+						if (sent) this.recordUdpBytes(runtime, peer, "client", data.byteLength);
+						else if (runtime.pendingReplies.length < config.streams.maxPendingDatagrams) runtime.pendingReplies.push({ peer, data: copyChunk(data) });
+						else this.closeUdpPeer(runtime, peer, "UDP reply queue exceeded", new Error("UDP reply queue limit exceeded"));
+					} catch (error) {
+						Logger.error(`[BurrowGate] Unable to handle upstream UDP datagram for stream ${runtime.record.id}`, { error });
+					}
 				},
 				drain: () => {
 					if (peer) this.flushUdpUpstream(runtime, peer);
@@ -1202,24 +1206,32 @@ export class StreamProxyManager {
 	}
 
 	private flushUdpUpstream(runtime: UdpRuntime, peer: UdpPeer): void {
-		while (!peer.closed && peer.pendingUpstream.length) {
-			const datagram = peer.pendingUpstream[0]!;
-			if (!peer.upstream.send(datagram.wireData)) return;
-			peer.pendingUpstream.shift();
-			this.recordUdpBytes(runtime, peer, "upstream", datagram.payloadBytes);
+		try {
+			while (!peer.closed && peer.pendingUpstream.length) {
+				const datagram = peer.pendingUpstream[0]!;
+				if (!peer.upstream.send(datagram.wireData)) return;
+				peer.pendingUpstream.shift();
+				this.recordUdpBytes(runtime, peer, "upstream", datagram.payloadBytes);
+			}
+		} catch (error) {
+			Logger.error(`[BurrowGate] Unable to flush UDP upstream datagrams for stream ${runtime.record.id}`, { error });
 		}
 	}
 
 	private flushUdpReplies(runtime: UdpRuntime): void {
-		while (runtime.pendingReplies.length) {
-			const reply = runtime.pendingReplies[0]!;
-			if (reply.peer.closed) {
+		try {
+			while (runtime.pendingReplies.length) {
+				const reply = runtime.pendingReplies[0]!;
+				if (reply.peer.closed) {
+					runtime.pendingReplies.shift();
+					continue;
+				}
+				if (!runtime.socket.send(reply.data, reply.peer.clientPort, reply.peer.clientIp)) return;
 				runtime.pendingReplies.shift();
-				continue;
+				this.recordUdpBytes(runtime, reply.peer, "client", reply.data.byteLength);
 			}
-			if (!runtime.socket.send(reply.data, reply.peer.clientPort, reply.peer.clientIp)) return;
-			runtime.pendingReplies.shift();
-			this.recordUdpBytes(runtime, reply.peer, "client", reply.data.byteLength);
+		} catch (error) {
+			Logger.error(`[BurrowGate] Unable to flush UDP replies for stream ${runtime.record.id}`, { error });
 		}
 	}
 
