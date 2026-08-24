@@ -1224,6 +1224,7 @@ form.grid label {
 	display: grid;
 	gap: 8px;
 	margin-top: 10px;
+	margin-bottom: 10px;
 }
 .health-event-item {
 	display: grid;

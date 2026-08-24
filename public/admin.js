@@ -270,6 +270,9 @@ let siteOrigins = [];
 let trafficHasMultipleOrigins = false;
 let trafficOrigins = [];
 let editingOriginId = null;
+let staticBrowserTarget = null;
+let staticBrowserPath = "";
+let staticBrowserParentPath = null;
 let routePolicies = [];
 let accessList = {
 	settings: { enabled: false, sendUsernameToUpstream: false, sessionVerificationTokenEnabled: false, sessionVerificationTokenCreatedAt: null },
@@ -950,7 +953,8 @@ async function loadOverview() {
 	byId("retentionNote").textContent =
 		`Only the selected page is loaded. Request events are retained for ${overview.retentionDays} day${overview.retentionDays === 1 ? "" : "s"}.`;
 	if (overview.site) {
-		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} → ${overview.site.originUrl}`;
+		const origin = overview.site.originType === "static" ? `${overview.site.staticRoot} (static)` : overview.site.originUrl;
+		byId("siteDescription").textContent = `${overview.site.name} | ${overview.site.publicHost} → ${origin}`;
 	}
 	renderOriginHealthBanner(overview.originHealth);
 	const defaultSize = String(overview.defaultPageSize ?? 50);
@@ -1743,8 +1747,10 @@ function renderOriginPool() {
 	container.innerHTML = siteOrigins.length
 		? siteOrigins
 				.map((origin) => {
-					const state = origin.health?.state ?? (origin.enabled ? "unknown" : "disabled");
-					return `<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(origin.name)}</strong>${origin.isPrimary ? '<span class="badge info">primary</span>' : ""}<span class="badge ${healthBadgeClass(state)}">${escapeHtml(state)}</span>${origin.draining ? '<span class="badge warn">draining</span>' : ""}${origin.enabled ? "" : '<span class="badge warn">disabled</span>'}${origin.mtls?.enabled ? '<span class="badge info">mtls</span>' : ""}</div><div class="origin-pool-meta"><code>${escapeHtml(origin.originUrl)}</code><span>Priority ${formatNumber(origin.priority)} | Weight ${formatNumber(origin.weight)} | Health path: ${escapeHtml(origin.healthCheckPath || "site default")}${origin.health?.lastLatencyMs !== null && origin.health?.lastLatencyMs !== undefined ? ` | ${formatDuration(origin.health.lastLatencyMs)}` : ""}</span></div></div><div class="origin-pool-actions"><button class="button secondary compact" type="button" data-origin-check="${escapeHtml(origin.id)}">Check</button><button class="button secondary compact" type="button" data-origin-edit="${escapeHtml(origin.id)}">Edit</button>${origin.isPrimary ? "" : `<button class="button danger compact" type="button" data-origin-delete="${escapeHtml(origin.id)}">Delete</button>`}</div></div>`;
+					const isStatic = origin.originType === "static";
+					const state = isStatic ? "disabled" : (origin.health?.state ?? (origin.enabled ? "unknown" : "disabled"));
+					const address = isStatic ? `${escapeHtml(origin.staticRoot ?? "")} (static)` : escapeHtml(origin.originUrl ?? "");
+					return `<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(origin.name)}</strong>${origin.isPrimary ? '<span class="badge info">primary</span>' : ""}${isStatic ? "" : `<span class="badge ${healthBadgeClass(state)}">${escapeHtml(state)}</span>`}${origin.draining ? '<span class="badge warn">draining</span>' : ""}${origin.enabled ? "" : '<span class="badge warn">disabled</span>'}${origin.mtls?.enabled ? '<span class="badge info">mtls</span>' : ""}</div><div class="origin-pool-meta"><code>${address}</code><span>Priority ${formatNumber(origin.priority)} | Weight ${formatNumber(origin.weight)}${isStatic ? "" : ` | Health path: ${escapeHtml(origin.healthCheckPath || "site default")}${origin.health?.lastLatencyMs !== null && origin.health?.lastLatencyMs !== undefined ? ` | ${formatDuration(origin.health.lastLatencyMs)}` : ""}`}</span></div></div><div class="origin-pool-actions">${isStatic ? "" : `<button class="button secondary compact" type="button" data-origin-check="${escapeHtml(origin.id)}">Check</button>`}<button class="button secondary compact" type="button" data-origin-edit="${escapeHtml(origin.id)}">Edit</button>${origin.isPrimary ? "" : `<button class="button danger compact" type="button" data-origin-delete="${escapeHtml(origin.id)}">Delete</button>`}</div></div>`;
 				})
 				.join("")
 		: '<p class="muted">No origins are configured.</p>';
@@ -1754,7 +1760,12 @@ function resetOriginForm() {
 	editingOriginId = null;
 	byId("originId").value = "";
 	byId("originName").value = "";
+	byId("originType").value = "proxy";
 	byId("originUrl").value = "";
+	byId("originStaticRoot").value = "";
+	byId("originStaticIndexFile").value = "";
+	byId("originStaticSpaFallback").checked = false;
+	updateOriginTypeControls();
 	byId("originPriority").value = "10";
 	byId("originWeight").value = "1";
 	byId("originHealthPath").value = "";
@@ -1788,7 +1799,12 @@ function editOrigin(id) {
 	editingOriginId = origin.id;
 	byId("originId").value = origin.id;
 	byId("originName").value = origin.name;
-	byId("originUrl").value = origin.originUrl;
+	byId("originType").value = origin.originType ?? "proxy";
+	byId("originUrl").value = origin.originUrl ?? "";
+	byId("originStaticRoot").value = origin.staticRoot ?? "";
+	byId("originStaticIndexFile").value = origin.staticIndexFile ?? "";
+	byId("originStaticSpaFallback").checked = Boolean(origin.staticSpaFallback);
+	updateOriginTypeControls();
 	byId("originPriority").value = String(origin.priority);
 	byId("originWeight").value = String(origin.weight);
 	byId("originHealthPath").value = origin.healthCheckPath ?? "";
@@ -1906,6 +1922,62 @@ async function loadOrigins(siteId) {
 	}
 }
 
+function updateSiteOriginTypeControls() {
+	const isStatic = byId("siteOriginType").value === "static";
+	byId("siteOriginUrlGroup").classList.toggle("hidden", isStatic);
+	byId("siteStaticRootGroup").classList.toggle("hidden", !isStatic);
+	byId("siteStaticIndexGroup").classList.toggle("hidden", !isStatic);
+	byId("siteStaticSpaFallbackGroup").classList.toggle("hidden", !isStatic);
+	byId("siteOriginUrl").required = !isStatic;
+	byId("siteStaticRoot").required = isStatic;
+}
+
+function updateOriginTypeControls() {
+	const isStatic = byId("originType").value === "static";
+	byId("originUrlGroup").classList.toggle("hidden", isStatic);
+	byId("originStaticRootGroup").classList.toggle("hidden", !isStatic);
+	byId("originStaticIndexGroup").classList.toggle("hidden", !isStatic);
+	byId("originStaticSpaFallbackGroup").classList.toggle("hidden", !isStatic);
+	byId("originMtlsGroup").classList.toggle("hidden", isStatic);
+	byId("originUrl").required = !isStatic;
+	byId("originStaticRoot").required = isStatic;
+}
+
+function openStaticBrowser(target) {
+	staticBrowserTarget = target;
+	openModal("static-browser");
+	void loadStaticBrowser("");
+}
+
+async function loadStaticBrowser(path) {
+	byId("staticBrowserList").innerHTML = '<p class="muted">Loading folders...</p>';
+	try {
+		const result = await api(`/static-roots?path=${encodeURIComponent(path)}`, {}, false);
+		staticBrowserPath = result.relativePath ?? "";
+		staticBrowserParentPath = result.parentPath;
+		byId("staticBrowserPath").textContent = staticBrowserPath ? `/${staticBrowserPath}` : "/ (static-sites root)";
+		byId("staticBrowserUp").disabled = staticBrowserParentPath === null;
+		const entries = result.entries ?? [];
+		byId("staticBrowserList").innerHTML = entries.length
+			? entries
+					.map(
+						(entry) =>
+							`<div class="origin-pool-item"><div class="origin-pool-copy"><div class="origin-pool-title"><strong>${escapeHtml(entry.name)}</strong>${entry.hasIndexFile ? '<span class="badge ok">index.html</span>' : ""}</div></div><div class="origin-pool-actions"><button class="button secondary compact" type="button" data-static-enter="${escapeHtml(entry.relativePath)}">Open</button></div></div>`,
+					)
+					.join("")
+			: '<p class="muted">No subfolders here. Use "Use this folder" below to pick the current folder.</p>';
+	} catch (error) {
+		byId("staticBrowserList").innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+	}
+}
+
+function selectStaticBrowserFolder() {
+	const value = staticBrowserPath || ".";
+	if (staticBrowserTarget === "site") byId("siteStaticRoot").value = value;
+	else if (staticBrowserTarget === "origin") byId("originStaticRoot").value = value;
+	closeModal("static-browser");
+}
+
 async function saveOrigin(event) {
 	event.preventDefault();
 	if (!editingSiteId) return;
@@ -1915,24 +1987,31 @@ async function saveOrigin(event) {
 	const button = byId("saveOrigin");
 	button.disabled = true;
 	try {
+		const originType = byId("originType").value;
 		const payload = {
 			name: byId("originName").value.trim(),
+			originType,
 			originUrl: byId("originUrl").value.trim(),
+			staticRoot: byId("originStaticRoot").value.trim(),
+			staticIndexFile: byId("originStaticIndexFile").value.trim(),
+			staticSpaFallback: byId("originStaticSpaFallback").checked,
 			priority: Number(byId("originPriority").value),
 			weight: Number(byId("originWeight").value),
 			healthCheckPath: byId("originHealthPath").value.trim(),
 			enabled: byId("originEnabled").checked,
 			draining: byId("originDraining").checked,
-			mtlsEnabled: byId("originMtlsEnabled").checked,
+			mtlsEnabled: originType === "static" ? false : byId("originMtlsEnabled").checked,
 		};
-		const mtlsCertificatePem = byId("originMtlsCertificatePem").value.trim();
-		const mtlsPrivateKeyPem = byId("originMtlsPrivateKeyPem").value.trim();
-		const mtlsCaPem = byId("originMtlsCaPem").value.trim();
-		if (mtlsCertificatePem || mtlsPrivateKeyPem) {
-			payload.mtlsCertificatePem = mtlsCertificatePem;
-			payload.mtlsPrivateKeyPem = mtlsPrivateKeyPem;
+		if (originType !== "static") {
+			const mtlsCertificatePem = byId("originMtlsCertificatePem").value.trim();
+			const mtlsPrivateKeyPem = byId("originMtlsPrivateKeyPem").value.trim();
+			const mtlsCaPem = byId("originMtlsCaPem").value.trim();
+			if (mtlsCertificatePem || mtlsPrivateKeyPem) {
+				payload.mtlsCertificatePem = mtlsCertificatePem;
+				payload.mtlsPrivateKeyPem = mtlsPrivateKeyPem;
+			}
+			if (mtlsCaPem) payload.mtlsCaPem = mtlsCaPem;
 		}
-		if (mtlsCaPem) payload.mtlsCaPem = mtlsCaPem;
 		await api(
 			editingOriginId ? `/origins/${encodeURIComponent(editingOriginId)}` : `/sites/${encodeURIComponent(editingSiteId)}/origins`,
 			{ method: editingOriginId ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) },
@@ -1942,7 +2021,14 @@ async function saveOrigin(event) {
 		resetOriginForm();
 		await Promise.all([loadOrigins(editingSiteId), loadSites(), loadSiteHealth(editingSiteId)]);
 		const refreshedSite = sites.find((site) => site.id === editingSiteId);
-		if (refreshedSite) byId("siteOriginUrl").value = refreshedSite.originUrl;
+		if (refreshedSite) {
+			byId("siteOriginType").value = refreshedSite.originType ?? "proxy";
+			byId("siteOriginUrl").value = refreshedSite.originUrl ?? "";
+			byId("siteStaticRoot").value = refreshedSite.staticRoot ?? "";
+			byId("siteStaticIndexFile").value = refreshedSite.staticIndexFile ?? "";
+			byId("siteStaticSpaFallback").checked = Boolean(refreshedSite.staticSpaFallback);
+			updateSiteOriginTypeControls();
+		}
 		showToast(wasEditing ? "Origin updated." : "Origin added.");
 	} catch (error) {
 		showToast(error.message, "bad");
@@ -2031,10 +2117,11 @@ function renderSites() {
 	}
 	container.innerHTML = sites
 		.map((site) => {
+			const origin = site.originType === "static" ? `${site.staticRoot ?? ""} (static)` : (site.originUrl ?? "");
 			return `<div class="site-list-item ${site.id === selectedSiteId ? "selected" : ""} ${site.enabled ? "" : "disabled"}">
     <div>
       <div class="site-list-title"><strong>${escapeHtml(site.name)}</strong><span class="badge ${site.enabled ? "ok" : "warn"}">${site.enabled ? "enabled" : "disabled"}</span><span class="badge info">${site.defaultAccessMode === "bypass" ? "unprotected" : "challenge"}</span>${site.websocket?.mode === "deny" ? '<span class="badge warn">WebSocket off</span>' : ""}${site.healthCheck?.enabled ? `<span class="badge ${healthBadgeClass(site.originHealth?.state)}">origin ${escapeHtml(site.originHealth?.state ?? "unknown")}</span>` : ""}${pendingChangeBadge(pendingChangeForSite(site.id))}</div>
-      <div class="site-list-meta"><code title="${escapeHtml(site.publicHost)}">${escapeHtml(site.publicHost)}</code><span title="${escapeHtml(site.originUrl)}">${escapeHtml(site.originUrl)}</span></div>
+      <div class="site-list-meta"><code title="${escapeHtml(site.publicHost)}">${escapeHtml(site.publicHost)}</code><span title="${escapeHtml(origin)}">${escapeHtml(origin)}</span></div>
     </div>
     <div class="site-list-actions"><button class="button secondary compact" type="button" data-site-select="${escapeHtml(site.id)}">Use</button><button class="button secondary compact" type="button" data-site-edit="${escapeHtml(site.id)}">Edit</button></div>
   </div>`;
@@ -2197,6 +2284,9 @@ function resetSiteForm() {
 	byId("siteSessionTtl").value = "43200";
 	byId("siteEventRetentionDays").value = String(defaultEventRetentionDays);
 	byId("siteEnabled").checked = true;
+	byId("siteOriginType").value = "proxy";
+	byId("siteStaticIndexFile").value = "";
+	updateSiteOriginTypeControls();
 	byId("siteDefaultAccessMode").value = "challenge";
 	byId("siteIpExtractionPreset").value = "direct";
 	byId("siteLoadBalancingAlgorithm").value = "failover";
@@ -2255,7 +2345,12 @@ function editSite(id) {
 	byId("siteId").value = site.id;
 	byId("siteName").value = site.name;
 	byId("sitePublicHost").value = site.publicHost;
-	byId("siteOriginUrl").value = site.originUrl;
+	byId("siteOriginType").value = site.originType ?? "proxy";
+	byId("siteOriginUrl").value = site.originUrl ?? "";
+	byId("siteStaticRoot").value = site.staticRoot ?? "";
+	byId("siteStaticIndexFile").value = site.staticIndexFile ?? "";
+	byId("siteStaticSpaFallback").checked = Boolean(site.staticSpaFallback);
+	updateSiteOriginTypeControls();
 	byId("siteSessionTtl").value = String(site.sessionTtlSeconds);
 	byId("siteEventRetentionDays").value = String(site.eventRetentionDays ?? defaultEventRetentionDays);
 	byId("siteEnabled").checked = Boolean(site.enabled);
@@ -2473,7 +2568,9 @@ async function saveSite(event) {
 	const payload = {
 		name: byId("siteName").value.trim(),
 		publicHost: byId("sitePublicHost").value.trim(),
+		originType: byId("siteOriginType").value,
 		originUrl: byId("siteOriginUrl").value.trim(),
+		staticRoot: byId("siteStaticRoot").value.trim(),
 		enabled: byId("siteEnabled").checked,
 		defaultAccessMode: byId("siteDefaultAccessMode").value,
 		ipExtractionPreset: byId("siteIpExtractionPreset").value,
@@ -2510,8 +2607,10 @@ async function saveSite(event) {
 		http: httpPolicy,
 		effectiveAt: datetimeLocalToEpochMs(byId("sitePendingChangeEffectiveAt").value),
 	};
+	const editing = Boolean(editingSiteId);
+	payload.staticIndexFile = byId("siteStaticIndexFile").value.trim();
+	payload.staticSpaFallback = byId("siteStaticSpaFallback").checked;
 	try {
-		const editing = Boolean(editingSiteId);
 		const result = await api(
 			editing ? `/sites/${encodeURIComponent(editingSiteId)}` : "/sites",
 			{
@@ -4814,6 +4913,12 @@ async function handleBodyClick(event) {
 		return;
 	}
 
+	const enterStaticFolderButton = event.target.closest("button[data-static-enter]");
+	if (enterStaticFolderButton) {
+		await loadStaticBrowser(enterStaticFolderButton.dataset.staticEnter);
+		return;
+	}
+
 	const editRouteButton = event.target.closest("button[data-route-edit]");
 	if (editRouteButton) {
 		editRoutePolicy(editRouteButton.dataset.routeEdit);
@@ -5308,6 +5413,8 @@ function bindActions() {
 		true,
 	);
 	byId("siteWebSocketMode").addEventListener("change", updateSiteWebSocketControls);
+	byId("siteOriginType").addEventListener("change", updateSiteOriginTypeControls);
+	byId("browseSiteStaticRoot").addEventListener("click", () => openStaticBrowser("site"));
 	byId("deleteSite").addEventListener("click", deleteEditingSite);
 	byId("sitePendingChangeApplyNow").addEventListener("click", applySitePendingChangeNow);
 	byId("sitePendingChangeCancel").addEventListener("click", cancelSitePendingChange);
@@ -5320,6 +5427,10 @@ function bindActions() {
 	});
 	byId("cancelOriginEdit").addEventListener("click", resetOriginForm);
 	byId("originMtlsEnabled").addEventListener("change", updateOriginMtlsControls);
+	byId("originType").addEventListener("change", updateOriginTypeControls);
+	byId("browseOriginStaticRoot").addEventListener("click", () => openStaticBrowser("origin"));
+	byId("staticBrowserUp").addEventListener("click", () => void loadStaticBrowser(staticBrowserParentPath ?? ""));
+	byId("staticBrowserSelect").addEventListener("click", selectStaticBrowserFolder);
 	byId("generateOriginMtlsCertificate").addEventListener("click", () => void generateOriginMtlsCertificate());
 	byId("downloadOriginMtlsCertificate").addEventListener("click", downloadOriginMtlsCertificate);
 	byId("generateOriginCertificate").addEventListener("click", () => void generateOriginCertificate());

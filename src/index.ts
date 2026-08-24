@@ -20,6 +20,7 @@ import { geoIpStatus, initializeAsnGeoIp, initializeGeoIp, startGeoIpRetry } fro
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
+import { serveStaticOrigin } from "./services/static-origin-service.ts";
 import { findAccessSession, userAgentHash } from "./services/session-service.ts";
 import { applyPendingSiteChange, resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
 import { resolveRoutePolicy } from "./services/route-policy-service.ts";
@@ -595,19 +596,25 @@ async function gateway(ctx: any): Promise<Response> {
 
 	try {
 		const proxySelectedOrigin = async () =>
-			await proxyRequest(
-				request,
-				site,
-				ip,
-				session,
-				accessStatus,
-				accessUser?.username ?? null,
-				accessSettings.send_username_to_upstream === 1,
-				eventBase.countryCode ?? null,
-				selectedOrigin!.origin_url,
-				route.http,
-				selectedOrigin,
-			);
+			selectedOrigin!.origin_type === "static"
+				? {
+						response: await serveStaticOrigin(request, site, selectedOrigin!, ip, eventBase.countryCode ?? null, route.http),
+						capturedRequestBody: null,
+						capturedResponseBody: null,
+					}
+				: await proxyRequest(
+						request,
+						site,
+						ip,
+						session,
+						accessStatus,
+						accessUser?.username ?? null,
+						accessSettings.send_username_to_upstream === 1,
+						eventBase.countryCode ?? null,
+						selectedOrigin!.origin_url,
+						route.http,
+						selectedOrigin,
+					);
 		let response: Response;
 		let capturedRequestBody: CapturedBody | null = null;
 		let capturedResponseBody: Promise<CapturedBody | null> | null = null;

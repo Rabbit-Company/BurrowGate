@@ -9,15 +9,18 @@ import type {
 	HealthAlertProvider,
 	OriginHealthFailureMode,
 	LoadBalancingAlgorithm,
+	OriginType,
 	OutboundFetchProtocol,
 	IpExtractionPreset,
 	NotificationEventType,
 	PendingChangeRecord,
 	SiteAccessMode,
+	SiteOriginRecord,
 	SiteRecord,
 } from "../types.ts";
 import { randomId, randomToken } from "../utils/crypto.ts";
 import { normalizeHost } from "../utils/http.ts";
+import { normalizeStaticRoot, staticIndexFile } from "./origin-pool-service.ts";
 import { assertTlsHostnameAvailable, certificateCoversHostname, siteHostname } from "./certificate-service.ts";
 import { currentPendingChange, parseScheduleTime, stagePendingChange } from "./pending-change-service.ts";
 import { requestTlsReload } from "./tls-listener-service.ts";
@@ -39,7 +42,11 @@ import { NOTIFICATION_EVENT_TYPES } from "./stream-notification-policy-service.t
 export interface SiteInput {
 	name?: unknown;
 	publicHost?: unknown;
+	originType?: unknown;
 	originUrl?: unknown;
+	staticRoot?: unknown;
+	staticIndexFile?: unknown;
+	staticSpaFallback?: unknown;
 	enabled?: unknown;
 	sessionTtlSeconds?: unknown;
 	challengePolicy?: unknown;
@@ -65,7 +72,11 @@ export interface SiteView {
 	id: string;
 	name: string;
 	publicHost: string;
-	originUrl: string;
+	originType: OriginType;
+	originUrl: string | null;
+	staticRoot: string | null;
+	staticIndexFile: string | null;
+	staticSpaFallback: boolean;
 	ipExtractionPreset: IpExtractionPreset;
 	enabled: boolean;
 	sessionTtlSeconds: number;
@@ -132,6 +143,41 @@ function normalizeOriginUrl(value: unknown): string {
 	if (parsed.username || parsed.password) throw new Error("Origin URL must not contain credentials");
 	if (parsed.search || parsed.hash) throw new Error("Origin URL must not contain a query string or fragment");
 	return parsed.toString().replace(/\/$/u, parsed.pathname === "/" ? "" : "/");
+}
+
+function normalizeSiteOriginType(value: unknown, fallback: OriginType = "proxy"): OriginType {
+	const raw = value === undefined ? fallback : String(value).trim().toLowerCase();
+	if (raw === "proxy" || raw === "static") return raw;
+	throw new Error("Origin type must be proxy or static");
+}
+
+/**
+ * A site's primary origin lives in both `sites` (origin_type/origin_url, for
+ * quick access and backward compatibility) and `site_origins` (the same two
+ * fields plus the static-only knobs). Resolving them together here keeps
+ * createSite/updateSite and the primary-origin row from disagreeing on type.
+ */
+function resolveSiteOriginFields(
+	input: SiteInput,
+	existing?: SiteRecord,
+	existingPrimaryOrigin?: SiteOriginRecord | null,
+): { origin_type: OriginType; origin_url: string } & Pick<SiteOriginRecord, "static_index_file" | "static_spa_fallback"> {
+	const originType = normalizeSiteOriginType(input.originType, existing?.origin_type ?? "proxy");
+	const existingStatic = existingPrimaryOrigin?.origin_type === "static" ? existingPrimaryOrigin : null;
+	if (originType === "static") {
+		return {
+			origin_type: "static",
+			origin_url: normalizeStaticRoot(input.staticRoot, existing?.origin_type === "static" ? existing.origin_url : undefined),
+			static_index_file: staticIndexFile(input.staticIndexFile, existingStatic?.static_index_file ?? "index.html"),
+			static_spa_fallback: enabledValue(input.staticSpaFallback, existingStatic?.static_spa_fallback === 1) ? 1 : 0,
+		};
+	}
+	return {
+		origin_type: "proxy",
+		origin_url: normalizeOriginUrl(input.originUrl ?? existing?.origin_url),
+		static_index_file: null,
+		static_spa_fallback: 0,
+	};
 }
 
 function enabledValue(value: unknown, fallback: boolean): boolean {
@@ -365,12 +411,17 @@ function errorJsonFieldsFromRecord(site: SiteRecord): ErrorJsonField[] {
 	}
 }
 
-export function siteView(site: SiteRecord): SiteView {
+export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | null): SiteView {
+	const isStatic = (site.origin_type ?? "proxy") === "static";
 	return {
 		id: site.id,
 		name: site.name,
 		publicHost: site.public_host,
-		originUrl: site.origin_url,
+		originType: site.origin_type ?? "proxy",
+		originUrl: isStatic ? null : site.origin_url,
+		staticRoot: isStatic ? site.origin_url : null,
+		staticIndexFile: isStatic ? (primaryOrigin?.static_index_file ?? "index.html") : null,
+		staticSpaFallback: isStatic && primaryOrigin?.static_spa_fallback === 1,
 		ipExtractionPreset: site.ip_extraction_preset ?? "direct",
 		enabled: site.enabled === 1,
 		sessionTtlSeconds: Number(site.session_ttl_seconds),
@@ -423,11 +474,13 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 	const health = parseHealthCheck(input.healthCheck);
 	const loadBalancer = loadBalancerSettings(input.loadBalancer);
 	if (health.alertEnabled && !health.webhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
+	const originFields = resolveSiteOriginFields(input);
 	const site: SiteRecord = {
 		id: randomId("site"),
 		name: requiredString(input.name, "Site name", 255),
 		public_host: publicHost,
-		origin_url: normalizeOriginUrl(input.originUrl),
+		origin_type: originFields.origin_type,
+		origin_url: originFields.origin_url,
 		origin_signing_secret: providedSecret ?? generatedSigningSecret!,
 		ip_extraction_preset: parseIpExtractionPreset(input.ipExtractionPreset),
 		enabled: enabledValue(input.enabled, true) ? 1 : 0,
@@ -468,7 +521,10 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		id: randomId("origin"),
 		site_id: site.id,
 		name: `${site.name} primary`,
+		origin_type: originFields.origin_type,
 		origin_url: site.origin_url,
+		static_index_file: originFields.static_index_file,
+		static_spa_fallback: originFields.static_spa_fallback,
 		enabled: 1,
 		draining: 0,
 		priority: 0,
@@ -491,14 +547,29 @@ export function siteRestartRequired(existing: SiteRecord, updated: SiteRecord, h
 	return updated.public_host !== existing.public_host && config.https.enabled && hasCertificate;
 }
 
-async function syncPrimaryOrigin(siteId: string, record: SiteRecord): Promise<void> {
+async function syncPrimaryOrigin(
+	siteId: string,
+	record: SiteRecord,
+	staticFields: Pick<SiteOriginRecord, "static_index_file" | "static_spa_fallback">,
+): Promise<void> {
 	const primary = await repository.primaryOrigin(siteId);
 	if (!primary) return;
-	if (primary.origin_url !== record.origin_url || (primary.name.endsWith(" primary") && primary.name !== `${record.name} primary`)) {
+	const originType = record.origin_type ?? "proxy";
+	const typeChanged = primary.origin_type !== originType;
+	if (
+		typeChanged ||
+		primary.origin_url !== record.origin_url ||
+		primary.static_index_file !== staticFields.static_index_file ||
+		primary.static_spa_fallback !== staticFields.static_spa_fallback ||
+		(primary.name.endsWith(" primary") && primary.name !== `${record.name} primary`)
+	) {
 		await repository.updateOrigin({
 			...primary,
 			name: primary.name.endsWith(" primary") ? `${record.name} primary` : primary.name,
+			origin_type: originType,
 			origin_url: record.origin_url,
+			...staticFields,
+			...(typeChanged && originType === "static" ? { mtls_enabled: 0, mtls_certificate_pem: null, mtls_encrypted_private_key: null, mtls_ca_pem: null } : {}),
 			updated_at: record.updated_at,
 		});
 	}
@@ -519,11 +590,13 @@ export async function updateSite(
 	const loadBalancer = loadBalancerSettings(input.loadBalancer, existing);
 	const encryptedWebhookUrl = health.clearWebhook ? null : health.webhookUrl ? await encryptSecret(health.webhookUrl) : existing.health_alert_webhook_url;
 	if (health.alertEnabled && !encryptedWebhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
+	const originFields = resolveSiteOriginFields(input, existing, await repository.primaryOrigin(id));
 	const updated: SiteRecord = {
 		...existing,
 		name: requiredString(input.name ?? existing.name, "Site name", 255),
 		public_host: publicHost,
-		origin_url: normalizeOriginUrl(input.originUrl ?? existing.origin_url),
+		origin_type: originFields.origin_type,
+		origin_url: originFields.origin_url,
 		origin_signing_secret: signingSecret(input.originSigningSecret) ?? existing.origin_signing_secret,
 		ip_extraction_preset: parseIpExtractionPreset(input.ipExtractionPreset, existing.ip_extraction_preset ?? "direct"),
 		enabled: enabledValue(input.enabled, existing.enabled === 1) ? 1 : 0,
@@ -584,7 +657,7 @@ export async function updateSite(
 		const deferred: SiteRecord = { ...updated, public_host: existing.public_host };
 		await repository.updateSite(deferred);
 		staticAssetCache.purge({ siteId: id });
-		await syncPrimaryOrigin(id, deferred);
+		await syncPrimaryOrigin(id, deferred, originFields);
 		const pendingChange = await stagePendingChange(
 			"site",
 			id,
@@ -598,7 +671,7 @@ export async function updateSite(
 
 	await repository.updateSite(updated);
 	staticAssetCache.purge({ siteId: id });
-	await syncPrimaryOrigin(id, updated);
+	await syncPrimaryOrigin(id, updated, originFields);
 	return { site: updated, pendingChange: null };
 }
 

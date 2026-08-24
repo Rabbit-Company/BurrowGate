@@ -122,6 +122,7 @@ function settingsKey(site: SiteRecord, origin: SiteOriginRecord): string {
 		site.health_check_failure_threshold,
 		site.health_check_recovery_threshold,
 		origin.enabled,
+		origin.origin_type,
 		origin.origin_url,
 		origin.health_check_path,
 	].join("\n");
@@ -268,7 +269,7 @@ export class OriginHealthManager {
 			existing.origin = origin;
 			return;
 		}
-		const enabled = site.enabled === 1 && site.health_check_enabled === 1 && origin.enabled === 1;
+		const enabled = origin.origin_type === "proxy" && site.enabled === 1 && site.health_check_enabled === 1 && origin.enabled === 1;
 		const base = healthStatusAfterConfigurationChange(site.id, previous, enabled);
 		const status: OriginBackendHealthStatusRecord = { ...base, origin_id: origin.id };
 		this.runtime.set(origin.id, {

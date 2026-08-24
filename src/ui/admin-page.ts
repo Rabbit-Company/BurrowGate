@@ -593,7 +593,11 @@ export function adminPage(): string {
             <div class="site-form-grid">
               <label><span>Site name</span><input id="siteName" class="input" name="name" maxlength="255" placeholder="Main website" required><small class="muted">A friendly name used throughout the admin dashboard.</small></label>
               <label><span>Public host</span><input id="sitePublicHost" class="input" name="publicHost" maxlength="255" placeholder="example.com or localhost" required><small class="muted">Hostname and optional port, without a scheme or path.</small></label>
-              <label class="site-origin-field"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000" required><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
+              <label><span>Origin type</span><select id="siteOriginType" class="select"><option value="proxy">Reverse proxy (HTTP/HTTPS)</option><option value="static">Static files (served from disk)</option></select><small class="muted">Static files are served directly by BurrowGate from a folder - no backend process required.</small></label>
+              <label class="site-origin-field" id="siteOriginUrlGroup"><span>Origin URL</span><input id="siteOriginUrl" class="input" name="originUrl" type="url" placeholder="http://127.0.0.1:3000"><small class="muted">HTTP or HTTPS origin. A path prefix is supported.</small></label>
+              <label class="site-origin-field hidden" id="siteStaticRootGroup"><span>Static folder</span><div class="secret-row"><input id="siteStaticRoot" class="input" placeholder="Use Browse to choose a folder" readonly><button id="browseSiteStaticRoot" class="button secondary" type="button">Browse...</button></div><small class="muted">Folder to serve, picked from BurrowGate's static-sites directory.</small></label>
+              <label class="hidden" id="siteStaticIndexGroup"><span>Index file</span><input id="siteStaticIndexFile" class="input" maxlength="255" placeholder="index.html"><small class="muted">Served for a directory request, and for any unmatched path when SPA fallback is on.</small></label>
+              <label class="check-row hidden" id="siteStaticSpaFallbackGroup"><input id="siteStaticSpaFallback" type="checkbox"><span><strong>SPA fallback</strong><small class="muted">Serve the index file for any unmatched path - needed for client-side routed single-page apps.</small></span></label>
               <label><span>Schedule hostname change for</span><input id="sitePendingChangeEffectiveAt" class="input" type="datetime-local"><small class="muted">Only used when the public host changes on a site with an active certificate - the HTTPS listener rebuild is deferred to this time instead of happening immediately. Leave blank to apply now. All other changes always apply immediately.</small></label>
             </div>
             <label class="check-row"><input id="siteEnabled" name="enabled" type="checkbox" checked><span><strong>Site enabled</strong><small class="muted">Disabled sites stop matching incoming requests but keep their stored data.</small></span></label>
@@ -730,13 +734,18 @@ export function adminPage(): string {
                 <input id="originId" type="hidden" form="originValidationForm">
                 <div class="site-form-grid">
                   <label><span>Name</span><input id="originName" class="input" form="originValidationForm" maxlength="255" placeholder="Application node 2" required><small class="muted">Shown in monitoring, health history, and traffic tables.</small></label>
-                  <label class="site-origin-field"><span>Origin URL</span><input id="originUrl" class="input" form="originValidationForm" type="url" placeholder="http://10.0.0.21:3000" required><small class="muted">Base HTTP or HTTPS address for this backend server.</small></label>
+                  <label><span>Origin type</span><select id="originType" class="select" form="originValidationForm"><option value="proxy">Reverse proxy (HTTP/HTTPS)</option><option value="static">Static files (served from disk)</option></select><small class="muted">Static files are served directly by BurrowGate from a folder.</small></label>
+                  <label class="site-origin-field" id="originUrlGroup"><span>Origin URL</span><input id="originUrl" class="input" form="originValidationForm" type="url" placeholder="http://10.0.0.21:3000"><small class="muted">Base HTTP or HTTPS address for this backend server.</small></label>
+                  <label class="site-origin-field hidden" id="originStaticRootGroup"><span>Static folder</span><div class="secret-row"><input id="originStaticRoot" class="input" form="originValidationForm" placeholder="Use Browse to choose a folder" readonly><button id="browseOriginStaticRoot" class="button secondary" type="button">Browse...</button></div><small class="muted">Folder to serve, picked from BurrowGate's static-sites directory.</small></label>
+                  <label class="hidden" id="originStaticIndexGroup"><span>Index file</span><input id="originStaticIndexFile" class="input" form="originValidationForm" maxlength="255" placeholder="index.html"><small class="muted">Served for a directory request, and for any unmatched path when SPA fallback is on.</small></label>
+                  <label class="check-row hidden" id="originStaticSpaFallbackGroup"><input id="originStaticSpaFallback" form="originValidationForm" type="checkbox"><span><strong>SPA fallback</strong><small class="muted">Serve the index file for any unmatched path.</small></span></label>
                   <label><span>Priority</span><input id="originPriority" class="input" form="originValidationForm" type="number" min="0" max="10000" value="10" required><small class="muted">Lower values are preferred in failover mode.</small></label>
                   <label><span>Weight</span><input id="originWeight" class="input" form="originValidationForm" type="number" min="1" max="1000" value="1" required><small class="muted">Relative traffic share in weighted round-robin mode.</small></label>
-                  <label class="site-origin-field"><span>Health path override</span><input id="originHealthPath" class="input" form="originValidationForm" maxlength="2048" placeholder="Use the site health path"><small class="muted">Leave blank to use the site-level health-check path.</small></label>
+                  <label class="site-origin-field" id="originHealthPathGroup"><span>Health path override</span><input id="originHealthPath" class="input" form="originValidationForm" maxlength="2048" placeholder="Use the site health path"><small class="muted">Leave blank to use the site-level health-check path. Static origins are never health-checked.</small></label>
                 </div>
                 <label class="check-row"><input id="originEnabled" form="originValidationForm" type="checkbox" checked><span><strong>Origin enabled</strong><small class="muted">Disabled origins remain configured but receive no traffic.</small></span></label>
                 <label class="check-row"><input id="originDraining" form="originValidationForm" type="checkbox"><span><strong>Drain origin</strong><small class="muted">Existing sticky sessions continue using it; new assignments avoid it.</small></span></label>
+                <div id="originMtlsGroup">
                 <div class="section-heading error-response-heading"><div><h3>Origin server certificate trust</h3><p class="muted">Validate this origin's TLS certificate against a specific certificate instead of the public CA store. Works whether or not mTLS below is enabled.</p></div></div>
                 <p class="muted">Don't have a certificate for your origin? Click <strong>Generate origin certificate</strong> below - BurrowGate creates one for you to install on the origin as its HTTPS certificate. Use this alone if your origin can't verify client certificates.</p>
                 <div id="originTrustedCaActions" class="row site-form-actions hidden">
@@ -767,6 +776,7 @@ export function adminPage(): string {
                 <div id="originMtlsSettings" class="site-form-grid hidden">
                   <label class="site-origin-field"><span>Client certificate (PEM)</span><textarea id="originMtlsCertificatePem" form="originValidationForm" class="input code-input compact-code-input" rows="6" spellcheck="false" placeholder="Leave blank to keep the existing certificate"></textarea></label>
                   <label class="site-origin-field"><span>Private key (PEM)</span><textarea id="originMtlsPrivateKeyPem" form="originValidationForm" class="input code-input compact-code-input" rows="6" spellcheck="false" placeholder="Leave blank to keep the existing key"></textarea></label>
+                </div>
                 </div>
                 <div class="row site-form-actions"><button id="saveOrigin" class="button" type="button">Add origin</button><button id="cancelOriginEdit" class="button secondary" type="button">Cancel</button></div>
               </div>
@@ -949,6 +959,17 @@ export function adminPage(): string {
   </div>
 </div>
 
+<div id="modal-static-browser" class="modal-overlay hidden" data-modal="static-browser">
+  <div class="modal">
+    <div class="modal-header"><h2>Choose a static folder</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>
+    <div class="modal-body">
+      <p class="muted">Folders are confined to BurrowGate's static-sites directory. Copy or sync your site's files there first, then pick the folder to serve.</p>
+      <div class="row between"><strong id="staticBrowserPath">/</strong><button id="staticBrowserUp" class="button secondary compact" type="button" disabled>Up one level</button></div>
+      <div id="staticBrowserList" class="health-event-list"><p class="muted">Loading folders...</p></div>
+      <div class="row site-form-actions"><button id="staticBrowserSelect" class="button" type="button">Use this folder</button><button class="button secondary modal-close" type="button" data-modal-close>Cancel</button></div>
+    </div>
+  </div>
+</div>
 <div id="modal-event" class="modal-overlay hidden" data-modal="event">
   <div class="modal modal-xlarge">
     <div class="modal-header"><h2>Request detail</h2><button class="button secondary icon-button modal-close" type="button" data-modal-close aria-label="Close">&times;</button></div>

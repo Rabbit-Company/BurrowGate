@@ -21,6 +21,7 @@ export async function writePrivateFile(path: string, value: string): Promise<voi
 
 export async function initializeRuntimeSecrets(): Promise<void> {
 	await mkdir(config.dataDirectory, { recursive: true, mode: 0o700 });
+	await mkdir(config.staticSites.rootDirectory, { recursive: true, mode: 0o700 });
 
 	if (!config.masterKey && !config.masterKeyFile) {
 		const path = join(config.dataDirectory, "master.key");

@@ -100,6 +100,7 @@ import {
 	deleteOrigin,
 	generateOriginMtlsCertificate,
 	generateOriginServerCertificate,
+	listStaticRootChildren,
 	originView,
 	updateOrigin,
 	type OriginInput,
@@ -652,8 +653,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (guarded instanceof Response) return guarded;
 		const { user } = guarded;
 		const sites = await sitesVisibleToUser(user);
+		const primaryOriginBySiteId = new Map(
+			(await repository.allOrigins()).filter((origin) => origin.is_primary === 1).map((origin) => [origin.site_id, origin]),
+		);
 		return jsonResponse({
-			items: sites.map((site) => ({ ...siteView(site), originHealth: originHealthManager.summary(site.id) })),
+			items: sites.map((site) => ({ ...siteView(site, primaryOriginBySiteId.get(site.id)), originHealth: originHealthManager.summary(site.id) })),
 			pendingChanges: (
 				await pendingChangesFor(
 					"site",
@@ -703,7 +707,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			});
 			return jsonResponse(
 				{
-					site: siteView(created.site),
+					site: siteView(created.site, await repository.primaryOrigin(created.site.id)),
 					generatedSigningSecret: created.generatedSigningSecret,
 				},
 				201,
@@ -734,7 +738,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: pendingChange ? `Updated site ${site.name} (${pendingChange.summary}, scheduled)` : `Updated site ${site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ site: siteView(site), pendingChange: pendingChange ? pendingChangeView(pendingChange) : null });
+			return jsonResponse({
+				site: siteView(site, await repository.primaryOrigin(site.id)),
+				pendingChange: pendingChange ? pendingChangeView(pendingChange) : null,
+			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update site";
 			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
@@ -940,6 +947,17 @@ export function registerAdminRoutes(app: Web<any>): void {
 				deliveredAt: event.delivered_at === null ? null : Number(event.delivered_at),
 			})),
 		});
+	});
+
+	app.get("/_burrowgate/api/admin/static-roots", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		try {
+			const listing = await listStaticRootChildren(new URL(ctx.req.url).searchParams.get("path"));
+			return jsonResponse(listing);
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list that folder" }, 400);
+		}
 	});
 
 	app.get("/_burrowgate/api/admin/sites/:id/origins", async (ctx: any) => {

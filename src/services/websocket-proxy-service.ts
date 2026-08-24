@@ -616,6 +616,10 @@ export async function handleWebSocketUpgrade(
 				? "bypass"
 				: "verified";
 	let selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip);
+	if (selectedOrigin?.origin_type === "static") {
+		selectedOrigin = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
+		if (selectedOrigin?.origin_type === "static") selectedOrigin = null;
+	}
 	if (!selectedOrigin) {
 		await recordEvent({
 			...eventBase,
@@ -629,7 +633,7 @@ export async function handleWebSocketUpgrade(
 			code: "origin_pool_unavailable",
 			error: "No WebSocket origin is available",
 			clientIp: ip,
-			reason: "Every configured origin is unhealthy, disabled, or draining.",
+			reason: "Every configured origin is unhealthy, disabled, draining, or serves static files.",
 			retryAfterSeconds: Number(site.health_check_interval_seconds ?? 10),
 		});
 	}
@@ -653,7 +657,7 @@ export async function handleWebSocketUpgrade(
 		} catch (firstError) {
 			loadBalancer.reportPassiveFailure(selectedOrigin.id);
 			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
-			if (!replacement) throw firstError;
+			if (!replacement || replacement.origin_type === "static") throw firstError;
 			selectedOrigin = replacement;
 			target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
 			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);

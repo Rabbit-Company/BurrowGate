@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS sites (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   public_host VARCHAR(255) NOT NULL UNIQUE,
+  origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy',
   origin_url TEXT NOT NULL,
   origin_signing_secret TEXT NOT NULL,
   ip_extraction_preset VARCHAR(32) NOT NULL DEFAULT 'direct',
@@ -487,7 +488,10 @@ CREATE TABLE IF NOT EXISTS site_origins (
   id VARCHAR(64) PRIMARY KEY,
   site_id VARCHAR(64) NOT NULL,
   name VARCHAR(255) NOT NULL,
+  origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy',
   origin_url TEXT NOT NULL,
+  static_index_file VARCHAR(255) NULL,
+  static_spa_fallback INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   draining INTEGER NOT NULL DEFAULT 0,
   priority INTEGER NOT NULL DEFAULT 0,
@@ -844,6 +848,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN http_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN notification_event_types_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy'",
 	];
 	for (const statement of statements) {
 		try {
@@ -948,6 +953,9 @@ async function ensureOriginColumns(): Promise<void> {
 		"ALTER TABLE site_origins ADD COLUMN mtls_certificate_pem TEXT NULL",
 		"ALTER TABLE site_origins ADD COLUMN mtls_encrypted_private_key TEXT NULL",
 		"ALTER TABLE site_origins ADD COLUMN mtls_ca_pem TEXT NULL",
+		"ALTER TABLE site_origins ADD COLUMN origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy'",
+		"ALTER TABLE site_origins ADD COLUMN static_index_file VARCHAR(255) NULL",
+		"ALTER TABLE site_origins ADD COLUMN static_spa_fallback INTEGER NOT NULL DEFAULT 0",
 	];
 	for (const statement of statements) {
 		try {

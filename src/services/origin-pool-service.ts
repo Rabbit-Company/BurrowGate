@@ -1,12 +1,20 @@
+import { statSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { SiteOriginRecord, SiteRecord } from "../types.ts";
+import type { OriginType, SiteOriginRecord, SiteRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { generateClientCertificate, generateOriginCertificate, validateCaBundle, validateClientCertificatePair } from "./origin-mtls-service.ts";
 
 export interface OriginInput {
 	name?: unknown;
+	originType?: unknown;
 	originUrl?: unknown;
+	staticRoot?: unknown;
+	staticIndexFile?: unknown;
+	staticSpaFallback?: unknown;
 	enabled?: unknown;
 	draining?: unknown;
 	priority?: unknown;
@@ -53,6 +61,105 @@ export function normalizePoolOriginUrl(value: unknown, fallback?: string): strin
 	return parsed.toString().replace(/\/$/u, parsed.pathname === "/" ? "" : "/");
 }
 
+function normalizeOriginType(value: unknown, fallback: OriginType = "proxy"): OriginType {
+	const raw = value === undefined ? fallback : String(value).trim().toLowerCase();
+	if (raw === "proxy" || raw === "static") return raw;
+	throw new Error("Origin type must be proxy or static");
+}
+
+/**
+ * Confines a relative path under config.staticSites.rootDirectory so that an
+ * admin-supplied path can never point the file server (or the folder browser
+ * below) at arbitrary parts of the filesystem ("/etc" or "../../secrets").
+ */
+function resolveJailedPath(raw: string): string {
+	const base = resolve(config.staticSites.rootDirectory);
+	const resolved = resolve(base, raw);
+	if (resolved !== base && !resolved.startsWith(base + sep)) {
+		throw new Error(`Path must resolve inside ${base}`);
+	}
+	return resolved;
+}
+
+/** The resolved, absolute path is what gets stored - request-time serving re-validates against it. */
+export function normalizeStaticRoot(value: unknown, fallback?: string): string {
+	const raw = requiredString(value, fallback, "Static root", 1_024);
+	let resolved: string;
+	try {
+		resolved = resolveJailedPath(raw);
+	} catch {
+		throw new Error(`Static root must resolve inside ${resolve(config.staticSites.rootDirectory)}`);
+	}
+	let stats: ReturnType<typeof statSync>;
+	try {
+		stats = statSync(resolved);
+	} catch {
+		throw new Error(`Static root ${resolved} does not exist`);
+	}
+	if (!stats.isDirectory()) throw new Error(`Static root ${resolved} is not a directory`);
+	return resolved;
+}
+
+export interface StaticRootEntry {
+	name: string;
+	relativePath: string;
+	hasIndexFile: boolean;
+}
+
+export interface StaticRootListing {
+	relativePath: string;
+	parentPath: string | null;
+	rootDirectory: string;
+	entries: StaticRootEntry[];
+}
+
+/** Lists the subdirectories of a jailed path so the admin UI can offer a folder picker instead of a free-text field. */
+export async function listStaticRootChildren(rawPath: unknown): Promise<StaticRootListing> {
+	const base = resolve(config.staticSites.rootDirectory);
+	const raw = typeof rawPath === "string" ? rawPath.trim() : "";
+	const resolved = resolveJailedPath(raw || ".");
+
+	let stats: ReturnType<typeof statSync>;
+	try {
+		stats = statSync(resolved);
+	} catch {
+		throw new Error(`${resolved} does not exist`);
+	}
+	if (!stats.isDirectory()) throw new Error(`${resolved} is not a directory`);
+
+	const dirents = await readdir(resolved, { withFileTypes: true });
+	const entries: StaticRootEntry[] = dirents
+		.filter((dirent) => dirent.isDirectory())
+		.map((dirent) => {
+			const childPath = join(resolved, dirent.name);
+			let hasIndexFile = false;
+			try {
+				hasIndexFile = statSync(join(childPath, "index.html")).isFile();
+			} catch {
+				hasIndexFile = false;
+			}
+			return { name: dirent.name, relativePath: relative(base, childPath), hasIndexFile };
+		})
+		.sort((left, right) => left.name.localeCompare(right.name));
+
+	return {
+		relativePath: relative(base, resolved),
+		parentPath: resolved === base ? null : relative(base, dirname(resolved)),
+		rootDirectory: base,
+		entries,
+	};
+}
+
+export function staticIndexFile(value: unknown, fallback: string | null): string | null {
+	if (value === undefined) return fallback;
+	const raw = String(value ?? "").trim();
+	if (!raw) return "index.html";
+	if (raw.includes("/") || raw.includes("\\") || raw.length > 255) {
+		throw new Error("Static index file must be a bare filename");
+	}
+	return raw;
+}
+
 function healthPath(value: unknown, fallback: string | null): string | null {
 	if (value === undefined) return fallback;
 	const raw = String(value ?? "").trim();
@@ -74,7 +181,11 @@ export function originView(origin: SiteOriginRecord) {
 	return {
 		id: origin.id,
 		name: origin.name,
-		originUrl: origin.origin_url,
+		originType: origin.origin_type,
+		originUrl: origin.origin_type === "proxy" ? origin.origin_url : null,
+		staticRoot: origin.origin_type === "static" ? origin.origin_url : null,
+		staticIndexFile: origin.static_index_file,
+		staticSpaFallback: origin.static_spa_fallback === 1,
 		enabled: origin.enabled === 1,
 		draining: origin.draining === 1,
 		priority: Number(origin.priority),
@@ -88,6 +199,28 @@ export function originView(origin: SiteOriginRecord) {
 		},
 		createdAt: Number(origin.created_at),
 		updatedAt: Number(origin.updated_at),
+	};
+}
+
+/** Resolves the type-dependent fields together since a static origin stores its root in the origin_url column and never carries mTLS credentials. */
+function resolveTypeFields(
+	input: OriginInput,
+	existing?: SiteOriginRecord,
+): Pick<SiteOriginRecord, "origin_type" | "origin_url" | "static_index_file" | "static_spa_fallback"> {
+	const originType = normalizeOriginType(input.originType, existing?.origin_type ?? "proxy");
+	if (originType === "static") {
+		return {
+			origin_type: "static",
+			origin_url: normalizeStaticRoot(input.staticRoot, existing?.origin_type === "static" ? existing.origin_url : undefined),
+			static_index_file: staticIndexFile(input.staticIndexFile, existing?.static_index_file ?? "index.html"),
+			static_spa_fallback: booleanValue(input.staticSpaFallback, existing?.static_spa_fallback === 1, "Static SPA fallback") ? 1 : 0,
+		};
+	}
+	return {
+		origin_type: "proxy",
+		origin_url: normalizePoolOriginUrl(input.originUrl, existing?.origin_type === "proxy" ? existing.origin_url : undefined),
+		static_index_file: null,
+		static_spa_fallback: 0,
 	};
 }
 
@@ -124,13 +257,17 @@ export async function createOrigin(siteId: string, input: OriginInput): Promise<
 	if (!(await repository.siteById(siteId))) throw new Error("Site not found");
 	const name = requiredString(input.name, undefined, "Origin name", 255);
 	await uniqueName(siteId, name);
-	const mtls = await resolveMtlsFields(input);
+	const typeFields = resolveTypeFields(input);
+	const mtls =
+		typeFields.origin_type === "static"
+			? { mtls_enabled: 0, mtls_certificate_pem: null, mtls_encrypted_private_key: null, mtls_ca_pem: null }
+			: await resolveMtlsFields(input);
 	const now = Date.now();
 	const origin: SiteOriginRecord = {
 		id: randomId("origin"),
 		site_id: siteId,
 		name,
-		origin_url: normalizePoolOriginUrl(input.originUrl),
+		...typeFields,
 		enabled: booleanValue(input.enabled, true, "Origin enabled") ? 1 : 0,
 		draining: booleanValue(input.draining, false, "Origin draining") ? 1 : 0,
 		priority: integerValue(input.priority, 10, "Origin priority", 0, 10_000),
@@ -150,11 +287,15 @@ export async function updateOrigin(siteId: string, id: string, input: OriginInpu
 	if (!existing) throw new Error("Origin not found");
 	const name = requiredString(input.name, existing.name, "Origin name", 255);
 	await uniqueName(siteId, name, id);
-	const mtls = await resolveMtlsFields(input, existing);
+	const typeFields = resolveTypeFields(input, existing);
+	const mtls =
+		typeFields.origin_type === "static"
+			? { mtls_enabled: 0, mtls_certificate_pem: null, mtls_encrypted_private_key: null, mtls_ca_pem: null }
+			: await resolveMtlsFields(input, existing);
 	const updated: SiteOriginRecord = {
 		...existing,
 		name,
-		origin_url: normalizePoolOriginUrl(input.originUrl, existing.origin_url),
+		...typeFields,
 		enabled: booleanValue(input.enabled, existing.enabled === 1, "Origin enabled") ? 1 : 0,
 		draining: booleanValue(input.draining, existing.draining === 1, "Origin draining") ? 1 : 0,
 		priority: integerValue(input.priority, Number(existing.priority), "Origin priority", 0, 10_000),
@@ -164,9 +305,9 @@ export async function updateOrigin(siteId: string, id: string, input: OriginInpu
 		updated_at: Date.now(),
 	};
 	await repository.updateOrigin(updated);
-	if (updated.is_primary === 1 && updated.origin_url !== existing.origin_url) {
+	if (updated.is_primary === 1 && (updated.origin_url !== existing.origin_url || updated.origin_type !== existing.origin_type)) {
 		const site = await repository.siteById(siteId);
-		if (site) await repository.updateSite({ ...site, origin_url: updated.origin_url, updated_at: updated.updated_at });
+		if (site) await repository.updateSite({ ...site, origin_type: updated.origin_type, origin_url: updated.origin_url, updated_at: updated.updated_at });
 	}
 	return updated;
 }

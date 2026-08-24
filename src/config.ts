@@ -190,6 +190,9 @@ export const config = {
 		loginMaxFailureKeys: envNumber("BG_ADMIN_LOGIN_MAX_FAILURE_KEYS", 10_000, 100, 1_000_000),
 		pendingLoginTtlSeconds: envNumber("BG_ADMIN_PENDING_LOGIN_TTL_SECONDS", 300, 60, 3_600),
 	},
+	staticSites: {
+		rootDirectory: process.env.BG_STATIC_ROOT_DIR?.trim() || `${dataDirectory}/static-sites`,
+	},
 	seedDefaultSite: envBoolean("BG_SEED_DEFAULT_SITE", false),
 	defaultSite: {
 		name: process.env.BG_DEFAULT_SITE_NAME ?? "Default site",

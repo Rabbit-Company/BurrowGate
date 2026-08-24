@@ -92,6 +92,9 @@ export interface SiteRecord {
 	id: string;
 	name: string;
 	public_host: string;
+	// Mirrors the primary origin in site_origins: an absolute http(s) URL when
+	// origin_type is "proxy", or an absolute filesystem path when "static".
+	origin_type?: OriginType;
 	origin_url: string;
 	origin_signing_secret: string;
 	ip_extraction_preset: IpExtractionPreset;
@@ -127,11 +130,20 @@ export interface SiteRecord {
 	updated_at: number;
 }
 
+export type OriginType = "proxy" | "static";
+
 export interface SiteOriginRecord {
 	id: string;
 	site_id: string;
 	name: string;
+	origin_type: OriginType;
+	// For origin_type "proxy" this is an absolute http(s) URL. For "static" it
+	// is an absolute filesystem path (resolved under config.staticSites.rootDirectory)
+	// to the directory of files to serve. The column is shared across both types
+	// because a site's primary origin mirrors it into SiteRecord.origin_url.
 	origin_url: string;
+	static_index_file: string | null;
+	static_spa_fallback: number;
 	enabled: number;
 	draining: number;
 	priority: number;
