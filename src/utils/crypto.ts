@@ -25,8 +25,13 @@ export async function sha1Hex(value: string): Promise<string> {
 
 /** Raw-bytes HMAC, needed where the output feeds back in as the key of another HMAC (e.g. AWS SigV4's derived signing key chain) rather than being used as a hex string. */
 export async function hmacSha256(keyBytes: Uint8Array, value: string): Promise<Uint8Array<ArrayBuffer>> {
+	return await hmacSha256Raw(keyBytes, encoder.encode(value));
+}
+
+/** Same as hmacSha256, but signs raw bytes instead of text - needed for binary payloads such as a DNS UPDATE message (TSIG signing). */
+export async function hmacSha256Raw(keyBytes: Uint8Array, messageBytes: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
 	const key = await crypto.subtle.importKey("raw", keyBytes as Uint8Array<ArrayBuffer>, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-	return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
+	return new Uint8Array(await crypto.subtle.sign("HMAC", key, messageBytes as Uint8Array<ArrayBuffer>));
 }
 
 export async function hmacSha256Hex(secret: string, value: string): Promise<string> {
@@ -49,6 +54,12 @@ export function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
 	const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
 	const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
 	const binary = atob(padded);
+	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+/** Standard (non-URL-safe) base64, needed for values like TSIG shared secrets that are conventionally distributed in standard base64 (`tsig-keygen` output). */
+export function fromBase64(value: string): Uint8Array<ArrayBuffer> {
+	const binary = atob(value.trim());
 	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 

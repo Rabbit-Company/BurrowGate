@@ -3165,6 +3165,9 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { site } = access;
 		try {
 			const body = (await ctx.req.json()) as Record<string, unknown>;
+			if ((body.acmeChallengeType === "dns-01" || body.acmeDnsProviderId) && !isAdministrator(user)) {
+				return jsonResponse({ error: "Selecting a DNS provider for DNS-01 issuance requires administrator access" }, 403);
+			}
 			const current = await repository.ensureTlsSettings(site.id);
 			const requestedMode = body.mode === undefined ? current.mode : String(body.mode);
 			if (requestedMode === "uploaded" || requestedMode === "letsencrypt") {
@@ -3231,12 +3234,24 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if ("error" in access) return access.error;
 		const { site } = access;
 		try {
-			const body = (await ctx.req.json()) as { email?: string; directoryUrl?: string; forceHttps?: boolean; termsAccepted?: boolean };
+			const body = (await ctx.req.json()) as {
+				email?: string;
+				directoryUrl?: string;
+				forceHttps?: boolean;
+				termsAccepted?: boolean;
+				challengeType?: string;
+				dnsProviderId?: string;
+			};
+			if ((body.challengeType === "dns-01" || body.dnsProviderId) && !isAdministrator(user)) {
+				return jsonResponse({ error: "Selecting a DNS provider for DNS-01 issuance requires administrator access" }, 403);
+			}
 			await issueLetsEncryptCertificate(site, {
 				...(body.email ? { email: body.email } : {}),
 				...(body.directoryUrl ? { directoryUrl: body.directoryUrl } : {}),
 				forceHttps: Boolean(body.forceHttps),
 				termsAccepted: body.termsAccepted === true,
+				...(body.challengeType === "http-01" || body.challengeType === "dns-01" ? { challengeType: body.challengeType } : {}),
+				...(body.dnsProviderId ? { dnsProviderId: body.dnsProviderId } : {}),
 			});
 			await recordAdminAudit({
 				actor: user,

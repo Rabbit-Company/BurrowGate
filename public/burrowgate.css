@@ -2168,3 +2168,7 @@ form.grid label {
 .small-top-margin {
 	margin-top: 12px;
 }
+
+#providerTestResult {
+	margin-top: 12px;
+}

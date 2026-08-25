@@ -23,12 +23,16 @@ export type TlsMode = "disabled" | "uploaded" | "letsencrypt";
 export type CertificateSource = "uploaded" | "letsencrypt";
 export type CertificateStatus = "pending" | "active" | "renewal-failed" | "expired" | "invalid";
 
+export type AcmeChallengeType = "http-01" | "dns-01";
+
 export interface SiteTlsSettingsRecord {
 	site_id: string;
 	mode: TlsMode;
 	force_https: number;
 	acme_email: string | null;
 	acme_directory_url: string | null;
+	acme_challenge_type: AcmeChallengeType;
+	acme_dns_provider_id: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -801,6 +805,17 @@ export interface AdminAuditLogRecord {
 	detail_json: string | null;
 	ip: string;
 	created_at: number;
+}
+
+export type DnsProviderType = "rfc2136";
+
+export interface DnsProviderRecord {
+	id: string;
+	name: string;
+	type: DnsProviderType;
+	config_json: string;
+	created_at: number;
+	updated_at: number;
 }
 
 export type FirewallSyncProviderType = "unifi" | "nftables" | "ovh" | "aws-nacl";

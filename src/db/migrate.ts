@@ -370,6 +370,8 @@ CREATE TABLE IF NOT EXISTS site_tls_settings (
   force_https INTEGER NOT NULL DEFAULT 0,
   acme_email VARCHAR(512) NULL,
   acme_directory_url TEXT NULL,
+  acme_challenge_type VARCHAR(16) NOT NULL DEFAULT 'http-01',
+  acme_dns_provider_id VARCHAR(64) NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -698,6 +700,14 @@ CREATE TABLE IF NOT EXISTS firewall_sync_whitelist_cidrs (
   network_cidr VARCHAR(160) NOT NULL,
   note TEXT NULL,
   created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dns_providers (
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(16) NOT NULL,
+  config_json TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
 );
 `;
 
@@ -1115,6 +1125,19 @@ async function ensureAccessUserSsoColumns(): Promise<void> {
 	}
 }
 
+async function ensureTlsSettingsColumns(): Promise<void> {
+	for (const statement of [
+		"ALTER TABLE site_tls_settings ADD COLUMN acme_challenge_type VARCHAR(16) NOT NULL DEFAULT 'http-01'",
+		"ALTER TABLE site_tls_settings ADD COLUMN acme_dns_provider_id VARCHAR(64) NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAdminSessionColumns(): Promise<void> {
 	try {
 		await db.unsafe("ALTER TABLE admin_sessions ADD COLUMN user_id VARCHAR(64) NULL");
@@ -1225,6 +1248,7 @@ export async function migrate(): Promise<void> {
 	await ensureAccessUserSsoColumns();
 	await ensureSsoSessionColumns();
 	await ensureAdminSessionColumns();
+	await ensureTlsSettingsColumns();
 	await ensureRequestEventColumns();
 	await ensureStreamEventColumns();
 	await ensureNotificationSchema();

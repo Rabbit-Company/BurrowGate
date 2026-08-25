@@ -8,7 +8,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 
 - Native HTTP and HTTPS listeners on ports 80 and 443
 - Multi-site reverse proxy routing by hostname
-- Automatic Let's Encrypt certificates using ACME HTTP-01
+- Automatic Let's Encrypt certificates using ACME HTTP-01 or DNS-01 (RFC 2136 dynamic updates)
 - Uploaded PEM certificate support
 - SNI certificate selection for multiple domains
 - Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying

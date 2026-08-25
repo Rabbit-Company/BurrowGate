@@ -1,6 +1,6 @@
 # BurrowGate TLS and ACME
 
-BurrowGate can terminate TLS itself and select a certificate by SNI for every protected hostname. It supports uploaded PEM certificates and ACME HTTP-01 issuance through `acme-client`.
+BurrowGate can terminate TLS itself and select a certificate by SNI for every protected hostname. It supports uploaded PEM certificates and ACME issuance through `acme-client`, using either HTTP-01 or DNS-01 (RFC 2136).
 
 ## Listener model
 
@@ -72,6 +72,38 @@ The ACME route is served directly at:
 
 It bypasses proof-of-work, visitor sessions, origin proxying, IP rules, and force-HTTPS redirects.
 
+## Let's Encrypt DNS-01 (RFC 2136)
+
+Use DNS-01 instead of HTTP-01 when a site's public hostname can't have port 80 reachable from the internet - the origin is behind a firewall, on a LAN, or fronted by something else on port 80. DNS-01 proves control of the domain by publishing a TXT record instead, so no inbound port is required at all.
+
+BurrowGate speaks DNS-01 through **RFC 2136 dynamic DNS updates**, signed with a TSIG key, against a self-hosted authoritative nameserver (BIND, PowerDNS, Technitium, Knot, ...). There is no built-in integration with a specific cloud DNS provider's API.
+
+1. On the nameserver authoritative for the zone, generate a TSIG key (only `hmac-sha256` is supported):
+   ```bash
+   tsig-keygen -a hmac-sha256 burrowgate-key
+   ```
+2. Grant that key update rights, scoped to just the `_acme-challenge` records it needs. In BIND:
+
+   ```
+   key "burrowgate-key" {
+     algorithm hmac-sha256;
+     secret "<the generated secret>";
+   };
+
+   zone "example.com" {
+     type master;
+     ...
+     update-policy { grant burrowgate-key name _acme-challenge.example.com. TXT; };
+   };
+   ```
+
+3. In BurrowGate, open **DNS Providers** (next to Firewall Sync in the dashboard nav) and add a provider with the nameserver's address, the zone, the TSIG key name, and its secret.
+4. On the site's TLS panel, set **Challenge type** to DNS-01 and pick the provider, then request the certificate as usual.
+
+After publishing the TXT record, BurrowGate waits the provider's configured **propagation** window (default 30s) before asking the ACME server to validate - a fixed wait rather than active polling, so a secondary/hidden-master DNS setup with any replication lag needs a longer window. `docs/TLS.md`'s wildcard restriction still applies: DNS-01 issues the same single-hostname certificates as HTTP-01, not `*.example.com` wildcards.
+
+If the nameserver rejects an update, the certificate event log shows the DNS RCODE - `REFUSED` or `NOTAUTH` almost always means the TSIG key name/secret or the `update-policy` grant doesn't match.
+
 ## Renewal
 
 BurrowGate stores `next_renewal_at` for ACME-managed certificates. Maintenance checks due certificates automatically. A failed renewal does not overwrite the currently active certificate. Errors and issuance activity appear in the site's TLS panel.
@@ -90,8 +122,8 @@ Leave this off unless you specifically want to experiment with it.
 
 ## Current constraints
 
-- HTTP-01 supports public DNS hostnames, not `localhost`, `.local` names, IP literals, or wildcard names.
-- DNS-01 provider plugins are not implemented yet.
+- HTTP-01 and DNS-01 both support public DNS hostnames, not `localhost`, `.local` names, IP literals, or wildcard names.
+- DNS-01 only speaks RFC 2136 dynamic updates - there is no built-in Cloudflare/Route53/other cloud DNS API integration.
 - If a replacement listener cannot bind or load its TLS material, BurrowGate keeps the existing HTTPS listener active and records the activation failure.
 - Upstream WebSocket proxying remains a separate gateway feature.
 

@@ -3251,6 +3251,26 @@ function certificateStatusClass(certificate) {
 	return "bad";
 }
 
+let dnsProviders = [];
+
+async function loadDnsProviders() {
+	try {
+		dnsProviders = (await api("/dns-providers", {}, false)).items ?? [];
+	} catch {
+		dnsProviders = [];
+	}
+	const select = byId("acmeDnsProvider");
+	const currentValue = select.value;
+	select.innerHTML = dnsProviders.map((provider) => `<option value="${escapeHtml(provider.id)}">${escapeHtml(provider.name)}</option>`).join("");
+	if (dnsProviders.some((provider) => provider.id === currentValue)) select.value = currentValue;
+	byId("acmeDnsProviderHint").innerHTML =
+		dnsProviders.length === 0 ? 'No DNS providers configured yet - add one on the <a href="/_burrowgate/admin/dns-providers">DNS Providers</a> page.' : "";
+}
+
+function updateAcmeChallengeTypeFields() {
+	byId("acmeDnsProviderRow").classList.toggle("hidden", byId("acmeChallengeType").value !== "dns-01");
+}
+
 function renderTls(data) {
 	currentTls = data;
 	const settings = data.settings;
@@ -3259,6 +3279,9 @@ function renderTls(data) {
 	byId("tlsForceHttps").checked = Boolean(settings.forceHttps);
 	byId("acmeEmail").value = settings.acmeEmail ?? data.defaults.acmeEmail ?? "";
 	byId("acmeDirectoryUrl").value = settings.acmeDirectoryUrl ?? data.defaults.acmeDirectoryUrl;
+	byId("acmeChallengeType").value = settings.acmeChallengeType ?? "http-01";
+	byId("acmeDnsProvider").value = settings.acmeDnsProviderId ?? "";
+	updateAcmeChallengeTypeFields();
 	byId("acmeForceHttps").checked = Boolean(settings.forceHttps || !certificate);
 	byId("uploadedForceHttps").checked = Boolean(settings.forceHttps);
 
@@ -3306,7 +3329,7 @@ function renderTls(data) {
 async function loadSiteTls(siteId = editingSiteId) {
 	if (!siteId) return;
 	if (activeSiteEditorTab === "tls") byId("siteTlsPanel").classList.remove("hidden");
-	const data = await api(`/sites/${encodeURIComponent(siteId)}/tls`, {}, false);
+	const [data] = await Promise.all([api(`/sites/${encodeURIComponent(siteId)}/tls`, {}, false), loadDnsProviders()]);
 	if (editingSiteId === siteId) renderTls(data);
 }
 
@@ -3320,7 +3343,12 @@ async function saveTlsSettings(event) {
 			{
 				method: "PUT",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ mode: byId("tlsMode").value, forceHttps: byId("tlsForceHttps").checked }),
+				body: JSON.stringify({
+					mode: byId("tlsMode").value,
+					forceHttps: byId("tlsForceHttps").checked,
+					acmeChallengeType: byId("acmeChallengeType").value,
+					acmeDnsProviderId: byId("acmeDnsProvider").value || null,
+				}),
 			},
 			false,
 		);
@@ -3344,6 +3372,8 @@ async function requestAcmeCertificate(event) {
 					directoryUrl: byId("acmeDirectoryUrl").value.trim(),
 					forceHttps: byId("acmeForceHttps").checked,
 					termsAccepted: byId("acmeTermsAccepted").checked,
+					challengeType: byId("acmeChallengeType").value,
+					dnsProviderId: byId("acmeDnsProvider").value || null,
 				}),
 			},
 			false,
@@ -5470,6 +5500,7 @@ function bindActions() {
 	});
 	byId("tlsSettingsForm").addEventListener("submit", (event) => void saveTlsSettings(event).catch((error) => showToast(error.message, "bad")));
 	byId("acmeForm").addEventListener("submit", (event) => void requestAcmeCertificate(event).catch((error) => showToast(error.message, "bad")));
+	byId("acmeChallengeType").addEventListener("change", updateAcmeChallengeTypeFields);
 	byId("uploadCertificateForm").addEventListener("submit", (event) => void uploadCertificate(event).catch((error) => showToast(error.message, "bad")));
 	byId("renewAcmeCertificate").addEventListener("click", () => void renewAcmeCertificate().catch((error) => showToast(error.message, "bad")));
 	byId("removeCertificate").addEventListener("click", () => void removeCertificate().catch((error) => showToast(error.message, "bad")));

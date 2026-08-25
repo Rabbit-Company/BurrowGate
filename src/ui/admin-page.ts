@@ -126,7 +126,7 @@ export function adminPage(): string {
 		"Dashboard",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a href="/_burrowgate/admin/host">Host</a><a href="/_burrowgate/admin/notifications">Notifications</a><a href="/_burrowgate/admin/firewall-sync">Firewall Sync</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a class="active" href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a href="/_burrowgate/admin/host">Host</a><a href="/_burrowgate/admin/notifications">Notifications</a><a href="/_burrowgate/admin/firewall-sync">Firewall Sync</a><a href="/_burrowgate/admin/dns-providers">DNS Providers</a></nav><p id="siteDescription" class="muted header-subtitle">Reverse proxy control plane</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Protected site</span><select id="siteSelector" class="select"><option>Loading sites...</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>
@@ -847,9 +847,11 @@ export function adminPage(): string {
 
           <div class="tls-method-grid">
             <form id="acmeForm" class="tls-method">
-              <div><h3>Automatic certificate</h3><p class="muted">Issue and renew through an ACME provider using HTTP-01 on public port 80.</p></div>
+              <div><h3>Automatic certificate</h3><p class="muted">Issue and renew through an ACME provider using HTTP-01 on public port 80, or DNS-01 when port 80 isn't publicly reachable.</p></div>
               <label><span>Contact email</span><input id="acmeEmail" class="input" type="email" autocomplete="email" placeholder="admin@example.com" required></label>
               <label><span>ACME directory URL</span><input id="acmeDirectoryUrl" class="input" type="url" required></label>
+              <label><span>Challenge type</span><select id="acmeChallengeType" class="select"><option value="http-01">HTTP-01 (port 80)</option><option value="dns-01">DNS-01 (TXT record)</option></select></label>
+              <label id="acmeDnsProviderRow" class="hidden"><span>DNS provider</span><select id="acmeDnsProvider" class="select"></select><small id="acmeDnsProviderHint" class="muted"></small></label>
               <label class="check-row compact-check"><input id="acmeForceHttps" type="checkbox" checked><span><strong>Force HTTPS after issuance</strong></span></label>
               <label class="check-row compact-check"><input id="acmeTermsAccepted" type="checkbox" required><span><strong>I accept the ACME provider's terms of service</strong></span></label>
               <div class="row responsive"><button id="requestAcmeCertificate" class="button" type="submit">Request certificate</button><button id="renewAcmeCertificate" class="button secondary hidden" type="button">Renew now</button></div>

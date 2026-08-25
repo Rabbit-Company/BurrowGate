@@ -1,7 +1,7 @@
 import { X509Certificate, createPrivateKey, createPublicKey, timingSafeEqual } from "node:crypto";
 import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import type { CertificateEventRecord, CertificateRecord, CertificateSource, SiteRecord, SiteTlsSettingsRecord, TlsMode } from "../types.ts";
+import type { AcmeChallengeType, CertificateEventRecord, CertificateRecord, CertificateSource, SiteRecord, SiteTlsSettingsRecord, TlsMode } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { decryptSecret, encryptSecret } from "./secret-encryption-service.ts";
 import type { TlsCertificateOption } from "./bootstrap-tls-service.ts";
@@ -26,6 +26,8 @@ export interface TlsSiteView {
 		forceHttps: boolean;
 		acmeEmail: string | null;
 		acmeDirectoryUrl: string | null;
+		acmeChallengeType: AcmeChallengeType;
+		acmeDnsProviderId: string | null;
 	};
 	certificate: null | {
 		id: string;
@@ -218,6 +220,8 @@ export async function updateTlsSettings(
 		forceHttps?: unknown;
 		acmeEmail?: unknown;
 		acmeDirectoryUrl?: unknown;
+		acmeChallengeType?: unknown;
+		acmeDnsProviderId?: unknown;
 	},
 ): Promise<SiteTlsSettingsRecord> {
 	const existing = await repository.ensureTlsSettings(site.id);
@@ -231,6 +235,18 @@ export async function updateTlsSettings(
 		const parsed = new URL(acmeDirectoryUrl);
 		if (parsed.protocol !== "https:") throw new Error("ACME directory URL must use HTTPS");
 	}
+	const acmeChallengeType = input.acmeChallengeType === undefined ? existing.acme_challenge_type : String(input.acmeChallengeType);
+	if (acmeChallengeType !== "http-01" && acmeChallengeType !== "dns-01") throw new Error("ACME challenge type must be http-01 or dns-01");
+	const acmeDnsProviderId =
+		acmeChallengeType === "dns-01"
+			? input.acmeDnsProviderId === undefined
+				? existing.acme_dns_provider_id
+				: String(input.acmeDnsProviderId ?? "").trim() || null
+			: null;
+	if (acmeChallengeType === "dns-01") {
+		if (!acmeDnsProviderId) throw new Error("A DNS provider is required for DNS-01 issuance");
+		if (!(await repository.dnsProviderById(acmeDnsProviderId))) throw new Error("The selected DNS provider was not found");
+	}
 	const now = Date.now();
 	const settings: SiteTlsSettingsRecord = {
 		...existing,
@@ -238,6 +254,8 @@ export async function updateTlsSettings(
 		force_https: forceHttps ? 1 : 0,
 		acme_email: acmeEmail,
 		acme_directory_url: acmeDirectoryUrl,
+		acme_challenge_type: acmeChallengeType,
+		acme_dns_provider_id: acmeDnsProviderId,
 		updated_at: now,
 	};
 	await repository.saveTlsSettings(settings);
@@ -254,6 +272,8 @@ export async function tlsView(site: SiteRecord): Promise<TlsSiteView> {
 			forceHttps: settings.force_https === 1,
 			acmeEmail: settings.acme_email,
 			acmeDirectoryUrl: settings.acme_directory_url,
+			acmeChallengeType: settings.acme_challenge_type,
+			acmeDnsProviderId: settings.acme_dns_provider_id,
 		},
 		certificate: certificate
 			? {

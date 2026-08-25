@@ -22,6 +22,7 @@ import type {
 	CountryRuleRecord,
 	AsnRuleRecord,
 	ChallengeStepRecord,
+	DnsProviderRecord,
 	FirewallSyncProviderRecord,
 	FirewallSyncStatus,
 	FirewallSyncWhitelistCidrRecord,
@@ -2653,11 +2654,13 @@ export const repository = {
 			force_https: 0,
 			acme_email: null,
 			acme_directory_url: null,
+			acme_challenge_type: "http-01",
+			acme_dns_provider_id: null,
 			created_at: now,
 			updated_at: now,
 		};
 		try {
-			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.created_at},${settings.updated_at})`;
+			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,acme_challenge_type,acme_dns_provider_id,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.acme_challenge_type},${settings.acme_dns_provider_id},${settings.created_at},${settings.updated_at})`;
 		} catch {
 			return (await this.tlsSettings(siteId)) ?? settings;
 		}
@@ -2666,9 +2669,9 @@ export const repository = {
 	async saveTlsSettings(settings: SiteTlsSettingsRecord): Promise<void> {
 		const existing = await this.tlsSettings(settings.site_id);
 		if (existing) {
-			await db`UPDATE site_tls_settings SET mode=${settings.mode},force_https=${settings.force_https},acme_email=${settings.acme_email},acme_directory_url=${settings.acme_directory_url},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+			await db`UPDATE site_tls_settings SET mode=${settings.mode},force_https=${settings.force_https},acme_email=${settings.acme_email},acme_directory_url=${settings.acme_directory_url},acme_challenge_type=${settings.acme_challenge_type},acme_dns_provider_id=${settings.acme_dns_provider_id},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
 		} else {
-			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.created_at},${settings.updated_at})`;
+			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,acme_challenge_type,acme_dns_provider_id,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.acme_challenge_type},${settings.acme_dns_provider_id},${settings.created_at},${settings.updated_at})`;
 		}
 	},
 	async certificateBySite(siteId: string): Promise<CertificateRecord | null> {
@@ -3662,6 +3665,30 @@ export const repository = {
 		} else {
 			await db`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
 		}
+	},
+	async allDnsProviders(): Promise<DnsProviderRecord[]> {
+		return (await db`SELECT * FROM dns_providers ORDER BY created_at ASC`) as DnsProviderRecord[];
+	},
+	async dnsProviderById(id: string): Promise<DnsProviderRecord | null> {
+		const rows = (await db`SELECT * FROM dns_providers WHERE id=${id}`) as DnsProviderRecord[];
+		return rows[0] ?? null;
+	},
+	async insertDnsProvider(record: DnsProviderRecord): Promise<void> {
+		await db`INSERT INTO dns_providers (id,name,type,config_json,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.config_json},${record.created_at},${record.updated_at})`;
+	},
+	async updateDnsProviderConfig(id: string, name: string, configJson: string, updatedAt: number): Promise<void> {
+		await db`UPDATE dns_providers SET name=${name}, config_json=${configJson}, updated_at=${updatedAt} WHERE id=${id}`;
+	},
+	async deleteDnsProvider(id: string): Promise<void> {
+		await db`DELETE FROM dns_providers WHERE id=${id}`;
+	},
+	async sitesUsingDnsProvider(dnsProviderId: string): Promise<SiteRecord[]> {
+		return (await db`
+			SELECT sites.* FROM sites
+			JOIN site_tls_settings ON site_tls_settings.site_id = sites.id
+			WHERE site_tls_settings.acme_dns_provider_id = ${dnsProviderId} AND site_tls_settings.acme_challenge_type = 'dns-01'
+			ORDER BY sites.name ASC
+		`) as SiteRecord[];
 	},
 	async allFirewallSyncProviders(): Promise<FirewallSyncProviderRecord[]> {
 		return (await db`SELECT * FROM firewall_sync_providers ORDER BY created_at ASC`) as FirewallSyncProviderRecord[];
