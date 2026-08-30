@@ -57,6 +57,29 @@ describe("pending change lifecycle", () => {
 		expect(finished?.status).toBe("applied");
 	});
 
+	test("does nothing on a replica, even with a due row present, instead of throwing", async () => {
+		registerPendingChangeApplier("stream", async () => {
+			throw new Error("must not be called on a replica");
+		});
+		const staged = await stagePendingChange("stream", "stream-lifecycle-replica-guard", { forward_port: 1 }, "Replica guard", Date.now() - 1_000, null);
+
+		const originalEnabled = config.ha.enabled;
+		const originalRole = config.ha.role;
+		config.ha.enabled = true;
+		config.ha.role = "replica";
+		try {
+			await expect(applyDuePendingChanges()).resolves.toBeUndefined();
+
+			const row = await repository.pendingChangeById(staged.id);
+			expect(row?.status).toBe("pending");
+			expect(row?.attempts).toBe(0);
+		} finally {
+			config.ha.enabled = originalEnabled;
+			config.ha.role = originalRole;
+			await repository.deletePendingChange(staged.id);
+		}
+	});
+
 	test("retries on failure and eventually marks the change failed", async () => {
 		let attempts = 0;
 		registerPendingChangeApplier("stream", async () => {
@@ -70,7 +93,6 @@ describe("pending change lifecycle", () => {
 			await applyDuePendingChanges();
 			const row = await repository.pendingChangeById(staged.id);
 			if (row?.status === "failed") break;
-			// Force the row due again immediately instead of waiting out the real retry backoff.
 			await repository.updatePendingChangeStatus(staged.id, "pending", row!.attempts, Date.now(), row!.last_error, null);
 		}
 
@@ -79,9 +101,7 @@ describe("pending change lifecycle", () => {
 		expect(finalRow?.attempts).toBe(config.pendingChanges.maxAttempts);
 		expect(attempts).toBe(config.pendingChanges.maxAttempts);
 
-		// A failed change is no longer an active schedule (staging a new one isn't blocked)...
 		expect(await currentPendingChange("stream", "stream-lifecycle-2")).toBeNull();
-		// ...but it's still visible for display and for apply-now/cancel to act on.
 		expect((await pendingOrFailedChangeFor("stream", "stream-lifecycle-2"))?.id).toBe(staged.id);
 		expect((await pendingChangesFor("stream", ["stream-lifecycle-2"])).map((row) => row.id)).toEqual([staged.id]);
 	});

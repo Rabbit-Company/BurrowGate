@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { config } from "../src/config.ts";
 import { repository } from "../src/db/repository.ts";
-import { createSite, outboundFetchProtocolOption, siteRestartRequired, siteView, updateSite } from "../src/services/site-service.ts";
+import { createSite, outboundFetchProtocolOption, seedDefaultSite, siteRestartRequired, siteView, updateSite } from "../src/services/site-service.ts";
 import type { CertificateRecord, SiteRecord } from "../src/types.ts";
 
 async function makeSite(publicHost: string): Promise<SiteRecord> {
@@ -17,9 +18,6 @@ function fakeCertificate(siteId: string): CertificateRecord {
 		status: "active",
 		primary_domain: "placeholder.test",
 		alternative_names_json: "[]",
-		// No PEM material - this is enough to make `certificateBySite` return a truthy row
-		// (so restart-staging kicks in) without needing real X.509 validation, since the
-		// certificate-coverage re-check in updateSite only runs when certificate_pem is set.
 		certificate_pem: null,
 		encrypted_private_key: null,
 		issuer: null,
@@ -175,5 +173,30 @@ describe("outboundFetchProtocolOption", () => {
 			BunFetchRequestInit,
 			"protocol"
 		>);
+	});
+});
+
+describe("seedDefaultSite", () => {
+	let previousEnabled: boolean;
+	let previousRole: typeof config.ha.role;
+	let previousSeed: boolean;
+
+	afterEach(() => {
+		config.ha.enabled = previousEnabled;
+		config.ha.role = previousRole;
+		config.seedDefaultSite = previousSeed;
+	});
+
+	test("does not seed (or throw) on a replica", async () => {
+		previousEnabled = config.ha.enabled;
+		previousRole = config.ha.role;
+		previousSeed = config.seedDefaultSite;
+		config.ha.enabled = true;
+		config.ha.role = "replica";
+		config.seedDefaultSite = true;
+		const countBefore = (await repository.allSites()).length;
+
+		await expect(seedDefaultSite()).resolves.toBeUndefined();
+		expect((await repository.allSites()).length).toBe(countBefore);
 	});
 });

@@ -104,6 +104,7 @@ export function pendingChangeView(record: PendingChangeRecord) {
 let running = false;
 
 export async function applyDuePendingChanges(): Promise<void> {
+	if (config.ha.enabled && config.ha.role === "replica") return;
 	if (running) return;
 	running = true;
 	try {

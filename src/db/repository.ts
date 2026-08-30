@@ -1,5 +1,8 @@
-import { config } from "../config.ts";
+import { config, type HaRole } from "../config.ts";
+import { MEMBERSHIP_SHRINK_GRACE_MS } from "../ha-timing.ts";
+import { haPrimaryWriteBarrier } from "../services/ha-write-barrier.ts";
 import { db } from "./client.ts";
+import type { TransactionSQL } from "bun";
 import type {
 	IpRuleAction,
 	AccessUserRecord,
@@ -369,6 +372,27 @@ function isSqliteDatabase(): boolean {
 	return config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:";
 }
 
+const TRANSIENT_POSTGRES_SQLSTATES = new Set(["40001", "40P01", "53300", "53400", "57P03", "08000", "08001", "08003", "08004", "08006"]);
+const TRANSIENT_MYSQL_CODES = new Set([
+	"ER_LOCK_DEADLOCK",
+	"ER_LOCK_WAIT_TIMEOUT",
+	"ER_LOCK_TIMEOUT",
+	"ER_CON_COUNT_ERROR",
+	"PROTOCOL_CONNECTION_LOST",
+	"PROTOCOL_SEQUENCE_TIMEOUT",
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"ETIMEDOUT",
+]);
+const TRANSIENT_SQLITE_CODES = new Set(["SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_INTERRUPT", "SQLITE_PROTOCOL"]);
+
+export function isTransientDatabaseError(error: unknown): boolean {
+	if (error instanceof Bun.SQL.PostgresError) return TRANSIENT_POSTGRES_SQLSTATES.has(error.code);
+	if (error instanceof Bun.SQL.MySQLError) return TRANSIENT_MYSQL_CODES.has(error.code);
+	if (error instanceof Bun.SQL.SQLiteError) return TRANSIENT_SQLITE_CODES.has(error.code);
+	return false;
+}
+
 function deletedRowCount(result: unknown): number {
 	const metadata = result as { count?: number | null; affectedRows?: number | null };
 	return toNumber(metadata.count ?? metadata.affectedRows);
@@ -422,6 +446,609 @@ function tabScopeFilter(scope: Exclude<TabMetricsScope, "bandwidth" | "sessions"
 	}
 }
 
+export type ReplicatedEntityType =
+	| "site"
+	| "site_origin"
+	| "route_policy"
+	| "route_ip_rule"
+	| "route_country_rule"
+	| "route_asn_rule"
+	| "dns_provider"
+	| "admin_session"
+	| "access_session"
+	| "certificate"
+	| "site_tls_settings"
+	| "acme_http_challenge"
+	| "ip_rule"
+	| "country_rule"
+	| "asn_rule"
+	| "site_access_settings"
+	| "admin_sso_settings"
+	| "site_sso_settings"
+	| "admin_user"
+	| "access_user"
+	| "admin_recovery_code"
+	| "admin_webauthn_credential"
+	| "access_webauthn_credential"
+	| "site_access_user"
+	| "admin_site_permission"
+	| "admin_stream_permission"
+	| "stream"
+	| "stream_ip_rule"
+	| "stream_country_rule"
+	| "stream_asn_rule"
+	| "relay_watermark"
+	| "firewall_sync_provider"
+	| "firewall_sync_whitelist_cidr"
+	| "pending_change"
+	| "acme_account"
+	| "ha_cluster_member";
+
+export type MultiWriterEntityType =
+	| "admin_session"
+	| "access_session"
+	| "ip_rule"
+	| "country_rule"
+	| "asn_rule"
+	| "stream_ip_rule"
+	| "admin_user"
+	| "access_user"
+	| "admin_recovery_code"
+	| "admin_webauthn_credential"
+	| "access_webauthn_credential"
+	| "site_access_user"
+	| "admin_site_permission"
+	| "admin_stream_permission";
+
+function assertPrimaryWritable(action: string): void {
+	if (config.ha.enabled && config.ha.role === "replica") {
+		throw new Error(`Replica nodes cannot write ${action} directly - writes must go through the primary`);
+	}
+	if (config.ha.enabled && config.ha.role === "primary" && config.ha.versionMismatchNodes.length > 0) {
+		const versions = config.ha.versionMismatchNodes.map((node) => `${node.name} (${node.version})`).join(", ");
+		throw new Error(`Cannot write ${action} while HA cluster versions differ from this primary: ${versions}`);
+	}
+
+	if (config.ha.fencedForPromotion && !haPrimaryWriteBarrier.hasActiveLease()) {
+		throw new Error(`Cannot write ${action} right now - this node is promoting a replica and will restart shortly, try again in a moment`);
+	}
+}
+
+async function acquireChangelogOrderingLock(tx: TransactionSQL): Promise<void> {
+	if (isSqliteDatabase()) return;
+	await tx`SELECT id FROM replication_changelog_lock WHERE id=1 FOR UPDATE`;
+}
+
+async function appendChangelogEntry(
+	tx: TransactionSQL,
+	entityType: ReplicatedEntityType,
+	entityId: string,
+	op: "insert" | "update" | "delete",
+	payload: object | null,
+): Promise<void> {
+	if (!config.ha.enabled) return;
+	await acquireChangelogOrderingLock(tx);
+	await tx`INSERT INTO replication_changelog (entity_type,entity_id,op,payload_json,created_at) VALUES (${entityType},${entityId},${op},${payload === null ? null : JSON.stringify(payload)},${Date.now()})`;
+	const seqRows = (await tx`SELECT MAX(seq) AS max_seq FROM replication_changelog`) as Array<{ max_seq: number | null }>;
+	const stateRows = (await tx`SELECT high_watermark FROM replication_changelog_state WHERE id=1`) as Array<{ high_watermark: number }>;
+	const highWatermark = Math.max(Number(seqRows[0]?.max_seq ?? 0), Number(stateRows[0]?.high_watermark ?? 0));
+	await tx`UPDATE replication_changelog_state SET high_watermark=${highWatermark} WHERE id=1`;
+}
+
+async function applyRecentMaxMemberCount(tx: TransactionSQL, count: number): Promise<void> {
+	const now = Date.now();
+	await tx`UPDATE ha_cluster_config SET
+		recent_max_member_count = CASE WHEN recent_max_member_count IS NULL OR ${count} >= recent_max_member_count OR ${now} - COALESCE(recent_max_member_count_at, 0) >= ${MEMBERSHIP_SHRINK_GRACE_MS} THEN ${count} ELSE recent_max_member_count END,
+		recent_max_member_count_at = CASE WHEN recent_max_member_count IS NULL OR ${count} >= recent_max_member_count OR ${now} - COALESCE(recent_max_member_count_at, 0) >= ${MEMBERSHIP_SHRINK_GRACE_MS} THEN ${now} ELSE recent_max_member_count_at END,
+		updated_at = ${now}
+		WHERE id=1`;
+}
+
+async function replicateSessionChange(
+	tx: TransactionSQL,
+	entityType: MultiWriterEntityType,
+	entityId: string,
+	op: "insert" | "update" | "delete",
+	relayPayload: object | null,
+	primaryPayload: object | null = relayPayload,
+): Promise<void> {
+	if (!config.ha.enabled) return;
+	if (config.ha.role === "primary") {
+		await appendChangelogEntry(tx, entityType, entityId, op, primaryPayload);
+		return;
+	}
+	await tx`INSERT INTO session_relay_outbox (entity_type,entity_id,op,payload_json,created_at) VALUES (${entityType},${entityId},${op},${relayPayload === null ? null : JSON.stringify(relayPayload)},${Date.now()})`;
+}
+
+const ADMIN_USER_MUTABLE_FIELDS = [
+	"username",
+	"password_hash",
+	"role",
+	"totp_secret_encrypted",
+	"totp_enrolled_at",
+	"must_enroll_totp",
+	"enabled",
+	"sso_subject",
+	"auth_source",
+] as const;
+const ACCESS_USER_MUTABLE_FIELDS = [
+	"username",
+	"password_hash",
+	"enabled",
+	"totp_required",
+	"totp_secret_encrypted",
+	"totp_enrolled_at",
+	"api_token_hash",
+	"api_token_created_at",
+	"sso_subject",
+	"auth_source",
+] as const;
+const RELAY_PATCH_MARKER = "burrowgate-ha-field-patch-v1";
+const RELAY_EVENT_MARKER = "burrowgate-ha-relay-event-v1";
+
+function relayFieldPatch<T extends Record<string, unknown>>(before: T | undefined, after: T, fields: readonly string[]): object {
+	const changes: Record<string, unknown> = {};
+	for (const field of fields) if (!before || !Object.is(before[field], after[field])) changes[field] = after[field];
+	return { __haRelayPatch: RELAY_PATCH_MARKER, changes };
+}
+
+function parseRelayFieldPatch(payload: object | null, allowedFields: readonly string[]): Record<string, unknown> | null {
+	const envelope = payload as { __haRelayPatch?: unknown; changes?: unknown } | null;
+	if (
+		!envelope ||
+		envelope.__haRelayPatch !== RELAY_PATCH_MARKER ||
+		!envelope.changes ||
+		typeof envelope.changes !== "object" ||
+		Array.isArray(envelope.changes)
+	)
+		return null;
+	const changes = envelope.changes as Record<string, unknown>;
+	if (Object.keys(changes).some((field) => !allowedFields.includes(field))) throw new Error("Invalid field in HA identity patch");
+	return changes;
+}
+
+async function applyChangelogRow(
+	transaction: TransactionSQL,
+	entityType: ReplicatedEntityType,
+	entityId: string,
+	row: Record<string, unknown> | null,
+	localNodeId?: string,
+): Promise<void> {
+	const relayEvent = row as {
+		__haRelayEvent?: unknown;
+		nodeId?: unknown;
+		relayId?: unknown;
+		op?: unknown;
+		payload?: unknown;
+		watermark?: unknown;
+	} | null;
+	if (relayEvent?.__haRelayEvent === RELAY_EVENT_MARKER) {
+		const watermark = relayEvent.watermark as { node_id?: unknown; last_relay_id?: unknown; updated_at?: unknown } | null;
+		if (
+			typeof relayEvent.nodeId !== "string" ||
+			!Number.isSafeInteger(relayEvent.relayId) ||
+			!["insert", "update", "delete"].includes(String(relayEvent.op)) ||
+			watermark?.node_id !== relayEvent.nodeId ||
+			Number(watermark?.last_relay_id) !== Number(relayEvent.relayId) ||
+			!Number.isFinite(Number(watermark?.updated_at))
+		) {
+			throw new Error("Invalid HA relay event in changelog");
+		}
+		const op = relayEvent.op as "insert" | "update" | "delete";
+		const payload = op === "delete" ? null : (relayEvent.payload as Record<string, unknown> | null);
+
+		if (relayEvent.nodeId !== localNodeId) await applyChangelogRow(transaction, entityType, entityId, payload);
+		await transaction`DELETE FROM replication_relay_watermarks WHERE node_id=${relayEvent.nodeId}`;
+		await transaction`INSERT INTO replication_relay_watermarks ${transaction(watermark as Record<string, unknown>)}`;
+		return;
+	}
+	switch (entityType) {
+		case "site":
+			await transaction`DELETE FROM sites WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO sites ${transaction(row)}`;
+			return;
+		case "site_origin":
+			await transaction`DELETE FROM site_origins WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO site_origins ${transaction(row)}`;
+			return;
+		case "route_policy":
+			await transaction`DELETE FROM route_policies WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO route_policies ${transaction(row)}`;
+			return;
+		case "route_ip_rule":
+			await transaction`DELETE FROM route_ip_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO route_ip_rules ${transaction(row)}`;
+			return;
+		case "route_country_rule":
+			await transaction`DELETE FROM route_country_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO route_country_rules ${transaction(row)}`;
+			return;
+		case "route_asn_rule":
+			await transaction`DELETE FROM route_asn_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO route_asn_rules ${transaction(row)}`;
+			return;
+		case "dns_provider":
+			await transaction`DELETE FROM dns_providers WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO dns_providers ${transaction(row)}`;
+			return;
+		case "admin_session":
+			await transaction`DELETE FROM admin_sessions WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO admin_sessions ${transaction(row)}`;
+			return;
+		case "access_session":
+			await transaction`DELETE FROM access_sessions WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO access_sessions ${transaction(row)}`;
+			return;
+		case "certificate":
+			await transaction`DELETE FROM certificates WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO certificates ${transaction(row)}`;
+			return;
+
+		case "site_tls_settings":
+			await transaction`DELETE FROM site_tls_settings WHERE site_id=${entityId}`;
+			if (row) await transaction`INSERT INTO site_tls_settings ${transaction(row)}`;
+			return;
+
+		case "acme_http_challenge":
+			await transaction`DELETE FROM acme_http_challenges WHERE token=${entityId}`;
+			if (row) await transaction`INSERT INTO acme_http_challenges ${transaction(row)}`;
+			return;
+		case "ip_rule":
+			await transaction`DELETE FROM ip_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO ip_rules ${transaction(row)}`;
+			return;
+		case "country_rule":
+			await transaction`DELETE FROM country_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO country_rules ${transaction(row)}`;
+			return;
+		case "asn_rule":
+			await transaction`DELETE FROM asn_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO asn_rules ${transaction(row)}`;
+			return;
+		case "site_access_settings":
+			await transaction`DELETE FROM site_access_settings WHERE site_id=${entityId}`;
+			if (row) await transaction`INSERT INTO site_access_settings ${transaction(row)}`;
+			return;
+		case "admin_sso_settings":
+			await transaction`DELETE FROM admin_sso_settings WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO admin_sso_settings ${transaction(row)}`;
+			return;
+		case "site_sso_settings":
+			await transaction`DELETE FROM site_sso_settings WHERE site_id=${entityId}`;
+			if (row) await transaction`INSERT INTO site_sso_settings ${transaction(row)}`;
+			return;
+		case "admin_user":
+			await transaction`DELETE FROM admin_users WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO admin_users ${transaction(row)}`;
+			return;
+		case "access_user":
+			await transaction`DELETE FROM access_users WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO access_users ${transaction(row)}`;
+			return;
+		case "admin_recovery_code":
+			await transaction`DELETE FROM admin_recovery_codes WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO admin_recovery_codes ${transaction(row)}`;
+			return;
+		case "admin_webauthn_credential":
+			await transaction`DELETE FROM admin_webauthn_credentials WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO admin_webauthn_credentials ${transaction(row)}`;
+			return;
+		case "access_webauthn_credential":
+			await transaction`DELETE FROM access_webauthn_credentials WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO access_webauthn_credentials ${transaction(row)}`;
+			return;
+
+		case "site_access_user": {
+			const [siteId, userId] = entityId.split(":");
+			await transaction`DELETE FROM site_access_users WHERE site_id=${siteId} AND user_id=${userId}`;
+			if (row) await transaction`INSERT INTO site_access_users ${transaction(row)}`;
+			return;
+		}
+		case "relay_watermark":
+			await transaction`DELETE FROM replication_relay_watermarks WHERE node_id=${entityId}`;
+			if (row) await transaction`INSERT INTO replication_relay_watermarks ${transaction(row)}`;
+			return;
+
+		case "admin_site_permission": {
+			const [userId, siteId] = entityId.split(":");
+			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId} AND site_id=${siteId}`;
+			if (row) await transaction`INSERT INTO admin_user_site_permissions ${transaction(row)}`;
+			return;
+		}
+
+		case "admin_stream_permission": {
+			const [userId, streamId] = entityId.split(":");
+			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId} AND stream_id=${streamId}`;
+			if (row) await transaction`INSERT INTO admin_user_stream_permissions ${transaction(row)}`;
+			return;
+		}
+
+		case "stream":
+			await transaction`DELETE FROM stream_bindings WHERE stream_id=${entityId}`;
+			await transaction`DELETE FROM streams WHERE id=${entityId}`;
+			if (row) {
+				await transaction`INSERT INTO streams ${transaction(row)}`;
+				if (row.tcp_enabled === 1)
+					await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${entityId},'tcp',${row.incoming_port as number})`;
+				if (row.udp_enabled === 1)
+					await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${entityId},'udp',${row.incoming_port as number})`;
+			}
+			return;
+		case "stream_ip_rule":
+			await transaction`DELETE FROM stream_ip_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO stream_ip_rules ${transaction(row)}`;
+			return;
+		case "stream_country_rule":
+			await transaction`DELETE FROM stream_country_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO stream_country_rules ${transaction(row)}`;
+			return;
+		case "stream_asn_rule":
+			await transaction`DELETE FROM stream_asn_rules WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO stream_asn_rules ${transaction(row)}`;
+			return;
+		case "firewall_sync_provider":
+			await transaction`DELETE FROM firewall_sync_providers WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO firewall_sync_providers ${transaction(row)}`;
+			return;
+		case "firewall_sync_whitelist_cidr":
+			await transaction`DELETE FROM firewall_sync_whitelist_cidrs WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO firewall_sync_whitelist_cidrs ${transaction(row)}`;
+			return;
+		case "pending_change":
+			await transaction`DELETE FROM pending_changes WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO pending_changes ${transaction(row)}`;
+			return;
+		case "acme_account":
+			await transaction`DELETE FROM acme_accounts WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO acme_accounts ${transaction(row)}`;
+			return;
+		case "ha_cluster_member":
+			await transaction`DELETE FROM ha_cluster_members WHERE node_id=${entityId}`;
+			if (row) await transaction`INSERT INTO ha_cluster_members ${transaction(row)}`;
+			return;
+		default:
+			throw new Error(`Unknown replicated entity type: ${String(entityType)}`);
+	}
+}
+
+async function applyMultiWriterMutation(
+	transaction: TransactionSQL,
+	entityType: MultiWriterEntityType,
+	entityId: string,
+	op: "insert" | "update" | "delete",
+	payload: object | null,
+): Promise<Record<string, unknown> | null> {
+	let appliedPayload = payload as Record<string, unknown> | null;
+	if (op === "update" && entityType === "admin_user") {
+		const changes = parseRelayFieldPatch(payload, ADMIN_USER_MUTABLE_FIELDS);
+		if (changes) {
+			const current = (await transaction`SELECT * FROM admin_users WHERE id=${entityId} LIMIT 1`) as Array<Record<string, unknown>>;
+			if (!current[0]) throw new Error(`Cannot apply an HA patch to missing admin user ${entityId}`);
+			appliedPayload = { ...current[0], ...changes, updated_at: Math.max(Date.now(), Number(current[0].updated_at ?? 0) + 1) };
+		}
+	} else if (op === "update" && entityType === "access_user") {
+		const changes = parseRelayFieldPatch(payload, ACCESS_USER_MUTABLE_FIELDS);
+		if (changes) {
+			const current = (await transaction`SELECT * FROM access_users WHERE id=${entityId} LIMIT 1`) as Array<Record<string, unknown>>;
+			if (!current[0]) throw new Error(`Cannot apply an HA patch to missing access user ${entityId}`);
+			appliedPayload = { ...current[0], ...changes, updated_at: Math.max(Date.now(), Number(current[0].updated_at ?? 0) + 1) };
+		}
+	}
+	await applyChangelogRow(transaction, entityType, entityId, op === "delete" ? null : appliedPayload);
+	return op === "delete" ? null : appliedPayload;
+}
+
+async function reapplyPendingSessionRelays(transaction: TransactionSQL): Promise<void> {
+	const identityRows = (await transaction`SELECT node_uuid FROM ha_node_identity WHERE id=1 LIMIT 1`) as Array<{ node_uuid: string }>;
+	const localNodeId = identityRows[0]?.node_uuid;
+	const watermarkRows = localNodeId
+		? ((await transaction`SELECT last_relay_id FROM replication_relay_watermarks WHERE node_id=${localNodeId} LIMIT 1`) as Array<{
+				last_relay_id: number;
+			}>)
+		: [];
+
+	const acceptedThrough = Number(watermarkRows[0]?.last_relay_id ?? 0);
+	const pending =
+		(await transaction`SELECT id,entity_type,entity_id,op,payload_json FROM session_relay_outbox WHERE id > ${acceptedThrough} ORDER BY id ASC`) as Array<{
+			id: number;
+			entity_type: MultiWriterEntityType;
+			entity_id: string;
+			op: "insert" | "update" | "delete";
+			payload_json: string | null;
+		}>;
+	for (const row of pending) {
+		const payload = row.payload_json ? (JSON.parse(row.payload_json) as object) : null;
+		await applyMultiWriterMutation(transaction, row.entity_type, row.entity_id, row.op, payload);
+	}
+}
+
+const SNAPSHOT_TABLES: Array<{ entityType: ReplicatedEntityType; table: string; entityId: (row: Record<string, unknown>) => string }> = [
+	{ entityType: "site", table: "sites", entityId: (row) => row.id as string },
+	{ entityType: "site_origin", table: "site_origins", entityId: (row) => row.id as string },
+	{ entityType: "route_policy", table: "route_policies", entityId: (row) => row.id as string },
+	{ entityType: "route_ip_rule", table: "route_ip_rules", entityId: (row) => row.id as string },
+	{ entityType: "route_country_rule", table: "route_country_rules", entityId: (row) => row.id as string },
+	{ entityType: "route_asn_rule", table: "route_asn_rules", entityId: (row) => row.id as string },
+	{ entityType: "dns_provider", table: "dns_providers", entityId: (row) => row.id as string },
+	{ entityType: "admin_session", table: "admin_sessions", entityId: (row) => row.id as string },
+	{ entityType: "access_session", table: "access_sessions", entityId: (row) => row.id as string },
+	{ entityType: "certificate", table: "certificates", entityId: (row) => row.id as string },
+	{ entityType: "site_tls_settings", table: "site_tls_settings", entityId: (row) => row.site_id as string },
+	{ entityType: "acme_http_challenge", table: "acme_http_challenges", entityId: (row) => row.token as string },
+	{ entityType: "ip_rule", table: "ip_rules", entityId: (row) => row.id as string },
+	{ entityType: "country_rule", table: "country_rules", entityId: (row) => row.id as string },
+	{ entityType: "asn_rule", table: "asn_rules", entityId: (row) => row.id as string },
+	{ entityType: "site_access_settings", table: "site_access_settings", entityId: (row) => row.site_id as string },
+	{ entityType: "admin_sso_settings", table: "admin_sso_settings", entityId: (row) => row.id as string },
+	{ entityType: "site_sso_settings", table: "site_sso_settings", entityId: (row) => row.site_id as string },
+	{ entityType: "admin_user", table: "admin_users", entityId: (row) => row.id as string },
+	{ entityType: "access_user", table: "access_users", entityId: (row) => row.id as string },
+	{ entityType: "admin_recovery_code", table: "admin_recovery_codes", entityId: (row) => row.id as string },
+	{ entityType: "admin_webauthn_credential", table: "admin_webauthn_credentials", entityId: (row) => row.id as string },
+	{ entityType: "access_webauthn_credential", table: "access_webauthn_credentials", entityId: (row) => row.id as string },
+	{ entityType: "site_access_user", table: "site_access_users", entityId: (row) => `${row.site_id as string}:${row.user_id as string}` },
+	{ entityType: "relay_watermark", table: "replication_relay_watermarks", entityId: (row) => row.node_id as string },
+	{ entityType: "admin_site_permission", table: "admin_user_site_permissions", entityId: (row) => `${row.user_id as string}:${row.site_id as string}` },
+	{ entityType: "admin_stream_permission", table: "admin_user_stream_permissions", entityId: (row) => `${row.user_id as string}:${row.stream_id as string}` },
+	{ entityType: "stream", table: "streams", entityId: (row) => row.id as string },
+	{ entityType: "stream_ip_rule", table: "stream_ip_rules", entityId: (row) => row.id as string },
+	{ entityType: "stream_country_rule", table: "stream_country_rules", entityId: (row) => row.id as string },
+	{ entityType: "stream_asn_rule", table: "stream_asn_rules", entityId: (row) => row.id as string },
+	{ entityType: "firewall_sync_provider", table: "firewall_sync_providers", entityId: (row) => row.id as string },
+	{ entityType: "firewall_sync_whitelist_cidr", table: "firewall_sync_whitelist_cidrs", entityId: (row) => row.id as string },
+	{ entityType: "pending_change", table: "pending_changes", entityId: (row) => row.id as string },
+	{ entityType: "acme_account", table: "acme_accounts", entityId: (row) => row.id as string },
+	{ entityType: "ha_cluster_member", table: "ha_cluster_members", entityId: (row) => row.node_id as string },
+];
+
+async function withConsistentSnapshot<T>(fn: (transaction: TransactionSQL) => Promise<T>): Promise<T> {
+	if (isSqliteDatabase()) return await db.begin(fn);
+	if (isMySqlDatabase()) {
+		const connection = await db.reserve();
+		try {
+			await connection.unsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+			return await connection.begin(fn);
+		} finally {
+			connection.release();
+		}
+	}
+	return await db.begin("isolation level repeatable read read only", fn);
+}
+
+async function scanSnapshotRows(transaction: TransactionSQL, pageSize: number, onRow: (row: ReplicationSnapshotRow) => Promise<void>): Promise<void> {
+	const limit = Math.max(1, Math.trunc(pageSize));
+	for (const table of SNAPSHOT_TABLES) {
+		const orderBy =
+			table.entityType === "site_tls_settings" || table.entityType === "site_access_settings" || table.entityType === "site_sso_settings"
+				? "site_id"
+				: table.entityType === "acme_http_challenge"
+					? "token"
+					: table.entityType === "site_access_user"
+						? "site_id,user_id"
+						: table.entityType === "relay_watermark" || table.entityType === "ha_cluster_member"
+							? "node_id"
+							: table.entityType === "admin_site_permission"
+								? "user_id,site_id"
+								: table.entityType === "admin_stream_permission"
+									? "user_id,stream_id"
+									: "id";
+		let offset = 0;
+		for (;;) {
+			const tableRows = (await transaction.unsafe(`SELECT * FROM ${table.table} ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}`)) as Array<
+				Record<string, unknown>
+			>;
+			for (const row of tableRows) {
+				await onRow({ entity_type: table.entityType, entity_id: table.entityId(row), payload_json: JSON.stringify(row) });
+			}
+			if (tableRows.length < limit) break;
+			offset += tableRows.length;
+		}
+	}
+}
+
+export interface ReplicationChangelogRow {
+	seq: number;
+	entity_type: ReplicatedEntityType;
+	entity_id: string;
+	op: "insert" | "update" | "delete";
+	payload_json: string | null;
+	created_at: number;
+}
+
+export interface ReplicationSnapshotRow {
+	entity_type: ReplicatedEntityType;
+	entity_id: string;
+	payload_json: string;
+}
+
+export interface HaClusterConfigRow {
+	id: number;
+	enabled: number;
+
+	role: HaRole;
+	node_name: string;
+	primary_url: string | null;
+	primary_admin_url: string | null;
+	shared_token_encrypted: string | null;
+	self_admin_url: string | null;
+
+	cluster_epoch: number;
+
+	authority_fenced: number;
+	authority_fence_epoch: number | null;
+	authority_fence_node_id: string | null;
+	authority_fenced_at: number | null;
+
+	voted_for_term: number | null;
+	voted_for_node_id: string | null;
+
+	quorum_fenced: number;
+	quorum_fenced_at: number | null;
+
+	recent_max_member_count: number | null;
+	recent_max_member_count_at: number | null;
+	updated_at: number;
+}
+
+export interface HaClusterConfigInsert {
+	enabled: boolean;
+	role: HaRole;
+	nodeName: string;
+	primaryUrl: string | null;
+	primaryAdminUrl: string | null;
+	sharedTokenEncrypted: string | null;
+	selfAdminUrl: string | null;
+	clusterEpoch: number;
+}
+
+export interface HaPromotionIntentRecord {
+	id: number;
+	promotion_id: string;
+	target_node_id: string;
+	target_url: string;
+	target_admin_url: string;
+	new_epoch: number;
+	created_at: number;
+}
+
+export interface HaClusterMemberRecord {
+	node_id: string;
+	name: string;
+	version: string;
+	admin_url: string | null;
+	first_seen_at: number;
+	last_seen_at: number;
+	credential_hash?: string | null;
+	activated_at?: number | null;
+	revoked_at?: number | null;
+}
+
+export interface HaAuthenticatedMember {
+	node_id: string;
+	active: boolean;
+}
+
+export interface SessionRelayRow {
+	id: number;
+	entity_type: MultiWriterEntityType;
+	entity_id: string;
+	op: "insert" | "update" | "delete";
+	payload_json: string | null;
+	created_at: number;
+}
+
+export interface DeadLetteredRelayRecord {
+	id: string;
+	node_id: string;
+	relay_id: number;
+	entity_type: string;
+	entity_id: string;
+	op: string;
+	payload_json: string | null;
+	reason: string;
+	occurred_at: number;
+}
+
 export const repository = {
 	async siteByHost(host: string): Promise<SiteRecord | null> {
 		const rows = (await db`SELECT * FROM sites WHERE public_host = ${host} AND enabled = 1 LIMIT 1`) as SiteRecord[];
@@ -439,19 +1066,48 @@ export const repository = {
 		return (await db`SELECT * FROM sites ORDER BY name ASC`) as SiteRecord[];
 	},
 	async insertSite(site: SiteRecord): Promise<void> {
-		await db`INSERT INTO sites (id,name,public_host,origin_type,origin_url,origin_signing_secret,ip_extraction_preset,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,outbound_fetch_protocol,websocket_policy_json,http_policy_json,created_at,updated_at)
-		VALUES (${site.id},${site.name},${site.public_host},${site.origin_type ?? "proxy"},${site.origin_url},${site.origin_signing_secret},${site.ip_extraction_preset},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.load_balancing_algorithm},${site.load_balancing_affinity},${site.outbound_fetch_protocol ?? "http1"},${site.websocket_policy_json ?? null},${site.http_policy_json ?? null},${site.created_at},${site.updated_at})`;
+		assertPrimaryWritable("a site");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO sites (id,name,public_host,origin_type,origin_url,origin_signing_secret,ip_extraction_preset,enabled,session_ttl_seconds,challenge_policy_json,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,outbound_fetch_protocol,websocket_policy_json,http_policy_json,created_at,updated_at)
+			VALUES (${site.id},${site.name},${site.public_host},${site.origin_type ?? "proxy"},${site.origin_url},${site.origin_signing_secret},${site.ip_extraction_preset},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.load_balancing_algorithm},${site.load_balancing_affinity},${site.outbound_fetch_protocol ?? "http1"},${site.websocket_policy_json ?? null},${site.http_policy_json ?? null},${site.created_at},${site.updated_at})`;
+			await appendChangelogEntry(transaction, "site", site.id, "insert", site);
+		});
 	},
 	async updateSite(site: SiteRecord): Promise<void> {
-		await db`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_type=${site.origin_type ?? "proxy"}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, ip_extraction_preset=${site.ip_extraction_preset}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, load_balancing_algorithm=${site.load_balancing_algorithm}, load_balancing_affinity=${site.load_balancing_affinity}, outbound_fetch_protocol=${site.outbound_fetch_protocol ?? "http1"}, websocket_policy_json=${site.websocket_policy_json ?? null}, http_policy_json=${site.http_policy_json ?? null}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+		assertPrimaryWritable("a site");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_type=${site.origin_type ?? "proxy"}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, ip_extraction_preset=${site.ip_extraction_preset}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, load_balancing_algorithm=${site.load_balancing_algorithm}, load_balancing_affinity=${site.load_balancing_affinity}, outbound_fetch_protocol=${site.outbound_fetch_protocol ?? "http1"}, websocket_policy_json=${site.websocket_policy_json ?? null}, http_policy_json=${site.http_policy_json ?? null}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+			await appendChangelogEntry(transaction, "site", site.id, "update", site);
+		});
 	},
 	async deleteSiteCascade(siteId: string): Promise<void> {
+		assertPrimaryWritable("a site");
 		const flowRows = (await db`SELECT id FROM challenge_flows WHERE site_id=${siteId}`) as Array<{ id: string }>;
 		const flowIds = flowRows.map((row) => row.id);
 		const stepRows = flowIds.length ? ((await db`SELECT id FROM challenge_steps WHERE flow_id IN ${db(flowIds)}`) as Array<{ id: string }>) : [];
 		const stepIds = stepRows.map((row) => row.id);
 		const routePolicyRows = (await db`SELECT id FROM route_policies WHERE site_id=${siteId}`) as Array<{ id: string }>;
 		const routePolicyIds = routePolicyRows.map((row) => row.id);
+		const routeRuleIds = routePolicyIds.length
+			? {
+					ip: ((await db`SELECT id FROM route_ip_rules WHERE route_policy_id IN ${db(routePolicyIds)}`) as Array<{ id: string }>).map((r) => r.id),
+					country: ((await db`SELECT id FROM route_country_rules WHERE route_policy_id IN ${db(routePolicyIds)}`) as Array<{ id: string }>).map((r) => r.id),
+					asn: ((await db`SELECT id FROM route_asn_rules WHERE route_policy_id IN ${db(routePolicyIds)}`) as Array<{ id: string }>).map((r) => r.id),
+				}
+			: { ip: [] as string[], country: [] as string[], asn: [] as string[] };
+		const certificateRow = (await db`SELECT id FROM certificates WHERE site_id=${siteId} LIMIT 1`) as Array<{ id: string }>;
+		const hasTlsSettings = ((await db`SELECT site_id FROM site_tls_settings WHERE site_id=${siteId} LIMIT 1`) as Array<{ site_id: string }>).length > 0;
+		const hasAccessSettings = ((await db`SELECT site_id FROM site_access_settings WHERE site_id=${siteId} LIMIT 1`) as Array<{ site_id: string }>).length > 0;
+		const hasSsoSettings = ((await db`SELECT site_id FROM site_sso_settings WHERE site_id=${siteId} LIMIT 1`) as Array<{ site_id: string }>).length > 0;
+		const accessUserIds = ((await db`SELECT user_id FROM site_access_users WHERE site_id=${siteId}`) as Array<{ user_id: string }>).map((r) => r.user_id);
+		const acmeChallengeTokens = ((await db`SELECT token FROM acme_http_challenges WHERE site_id=${siteId}`) as Array<{ token: string }>).map((r) => r.token);
+		const originIds = ((await db`SELECT id FROM site_origins WHERE site_id=${siteId}`) as Array<{ id: string }>).map((r) => r.id);
+		const sitePermissionUserIds = ((await db`SELECT user_id FROM admin_user_site_permissions WHERE site_id=${siteId}`) as Array<{ user_id: string }>).map(
+			(r) => r.user_id,
+		);
+		const pendingChangeIds = ((await db`SELECT id FROM pending_changes WHERE entity_type='site' AND entity_id=${siteId}`) as Array<{ id: string }>).map(
+			(r) => r.id,
+		);
 		await db.begin(async (transaction) => {
 			if (stepIds.length > 0) await transaction`DELETE FROM challenge_consumptions WHERE step_id IN ${transaction(stepIds)}`;
 			if (flowIds.length > 0) await transaction`DELETE FROM challenge_steps WHERE flow_id IN ${transaction(flowIds)}`;
@@ -486,6 +1142,20 @@ export const repository = {
 			await transaction`DELETE FROM site_sso_settings WHERE site_id=${siteId}`;
 			await transaction`DELETE FROM pending_changes WHERE entity_type='site' AND entity_id=${siteId}`;
 			await transaction`DELETE FROM sites WHERE id=${siteId}`;
+			for (const ruleId of routeRuleIds.ip) await appendChangelogEntry(transaction, "route_ip_rule", ruleId, "delete", null);
+			for (const ruleId of routeRuleIds.country) await appendChangelogEntry(transaction, "route_country_rule", ruleId, "delete", null);
+			for (const ruleId of routeRuleIds.asn) await appendChangelogEntry(transaction, "route_asn_rule", ruleId, "delete", null);
+			for (const routePolicyId of routePolicyIds) await appendChangelogEntry(transaction, "route_policy", routePolicyId, "delete", null);
+			for (const token of acmeChallengeTokens) await appendChangelogEntry(transaction, "acme_http_challenge", token, "delete", null);
+			if (certificateRow[0]) await appendChangelogEntry(transaction, "certificate", certificateRow[0].id, "delete", null);
+			if (hasTlsSettings) await appendChangelogEntry(transaction, "site_tls_settings", siteId, "delete", null);
+			if (hasAccessSettings) await appendChangelogEntry(transaction, "site_access_settings", siteId, "delete", null);
+			if (hasSsoSettings) await appendChangelogEntry(transaction, "site_sso_settings", siteId, "delete", null);
+			for (const userId of accessUserIds) await appendChangelogEntry(transaction, "site_access_user", `${siteId}:${userId}`, "delete", null);
+			for (const originId of originIds) await appendChangelogEntry(transaction, "site_origin", originId, "delete", null);
+			for (const userId of sitePermissionUserIds) await appendChangelogEntry(transaction, "admin_site_permission", `${userId}:${siteId}`, "delete", null);
+			for (const changeId of pendingChangeIds) await appendChangelogEntry(transaction, "pending_change", changeId, "delete", null);
+			await appendChangelogEntry(transaction, "site", siteId, "delete", null);
 		});
 	},
 	async originsForSite(siteId: string): Promise<SiteOriginRecord[]> {
@@ -505,13 +1175,25 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertOrigin(origin: SiteOriginRecord): Promise<void> {
-		await db`INSERT INTO site_origins (id,site_id,name,origin_type,origin_url,static_index_file,static_spa_fallback,enabled,draining,priority,weight,health_check_path,is_primary,mtls_enabled,mtls_certificate_pem,mtls_encrypted_private_key,mtls_ca_pem,created_at,updated_at) VALUES (${origin.id},${origin.site_id},${origin.name},${origin.origin_type},${origin.origin_url},${origin.static_index_file},${origin.static_spa_fallback},${origin.enabled},${origin.draining},${origin.priority},${origin.weight},${origin.health_check_path},${origin.is_primary},${origin.mtls_enabled},${origin.mtls_certificate_pem},${origin.mtls_encrypted_private_key},${origin.mtls_ca_pem},${origin.created_at},${origin.updated_at})`;
+		assertPrimaryWritable("an origin");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO site_origins (id,site_id,name,origin_type,origin_url,static_index_file,static_spa_fallback,enabled,draining,priority,weight,health_check_path,is_primary,mtls_enabled,mtls_certificate_pem,mtls_encrypted_private_key,mtls_ca_pem,created_at,updated_at) VALUES (${origin.id},${origin.site_id},${origin.name},${origin.origin_type},${origin.origin_url},${origin.static_index_file},${origin.static_spa_fallback},${origin.enabled},${origin.draining},${origin.priority},${origin.weight},${origin.health_check_path},${origin.is_primary},${origin.mtls_enabled},${origin.mtls_certificate_pem},${origin.mtls_encrypted_private_key},${origin.mtls_ca_pem},${origin.created_at},${origin.updated_at})`;
+			await appendChangelogEntry(transaction, "site_origin", origin.id, "insert", origin);
+		});
 	},
 	async updateOrigin(origin: SiteOriginRecord): Promise<void> {
-		await db`UPDATE site_origins SET name=${origin.name}, origin_type=${origin.origin_type}, origin_url=${origin.origin_url}, static_index_file=${origin.static_index_file}, static_spa_fallback=${origin.static_spa_fallback}, enabled=${origin.enabled}, draining=${origin.draining}, priority=${origin.priority}, weight=${origin.weight}, health_check_path=${origin.health_check_path}, mtls_enabled=${origin.mtls_enabled}, mtls_certificate_pem=${origin.mtls_certificate_pem}, mtls_encrypted_private_key=${origin.mtls_encrypted_private_key}, mtls_ca_pem=${origin.mtls_ca_pem}, updated_at=${origin.updated_at} WHERE id=${origin.id} AND site_id=${origin.site_id}`;
+		assertPrimaryWritable("an origin");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE site_origins SET name=${origin.name}, origin_type=${origin.origin_type}, origin_url=${origin.origin_url}, static_index_file=${origin.static_index_file}, static_spa_fallback=${origin.static_spa_fallback}, enabled=${origin.enabled}, draining=${origin.draining}, priority=${origin.priority}, weight=${origin.weight}, health_check_path=${origin.health_check_path}, mtls_enabled=${origin.mtls_enabled}, mtls_certificate_pem=${origin.mtls_certificate_pem}, mtls_encrypted_private_key=${origin.mtls_encrypted_private_key}, mtls_ca_pem=${origin.mtls_ca_pem}, updated_at=${origin.updated_at} WHERE id=${origin.id} AND site_id=${origin.site_id}`;
+			await appendChangelogEntry(transaction, "site_origin", origin.id, "update", origin);
+		});
 	},
 	async deleteOrigin(id: string, siteId: string): Promise<void> {
-		await db`DELETE FROM site_origins WHERE id=${id} AND site_id=${siteId} AND is_primary=0`;
+		assertPrimaryWritable("an origin");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM site_origins WHERE id=${id} AND site_id=${siteId} AND is_primary=0`;
+			await appendChangelogEntry(transaction, "site_origin", id, "delete", null);
+		});
 	},
 	async originHealthStatus(siteId: string): Promise<OriginHealthStatusRecord | null> {
 		const rows = (await db`SELECT * FROM origin_health_status WHERE site_id=${siteId} LIMIT 1`) as OriginHealthStatusRecord[];
@@ -571,7 +1253,11 @@ export const repository = {
 		await db`UPDATE notification_outbox SET status=${status}, attempts=${attempts}, next_attempt_at=${nextAttemptAt}, last_error=${error}, delivered_at=${deliveredAt} WHERE id=${id}`;
 	},
 	async insertPendingChange(change: PendingChangeRecord): Promise<void> {
-		await db`INSERT INTO pending_changes (id,entity_type,entity_id,changes_json,summary,apply_at,status,attempts,last_error,created_by,created_at,applied_at) VALUES (${change.id},${change.entity_type},${change.entity_id},${change.changes_json},${change.summary},${change.apply_at},${change.status},${change.attempts},${change.last_error},${change.created_by},${change.created_at},${change.applied_at})`;
+		assertPrimaryWritable("a scheduled change");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO pending_changes (id,entity_type,entity_id,changes_json,summary,apply_at,status,attempts,last_error,created_by,created_at,applied_at) VALUES (${change.id},${change.entity_type},${change.entity_id},${change.changes_json},${change.summary},${change.apply_at},${change.status},${change.attempts},${change.last_error},${change.created_by},${change.created_at},${change.applied_at})`;
+			await appendChangelogEntry(transaction, "pending_change", change.id, "insert", change);
+		});
 	},
 	async pendingChangeById(id: string): Promise<PendingChangeRecord | null> {
 		const rows = (await db`SELECT * FROM pending_changes WHERE id=${id} LIMIT 1`) as PendingChangeRecord[];
@@ -596,7 +1282,15 @@ export const repository = {
 			SELECT * FROM pending_changes WHERE entity_type=${entityType} AND entity_id IN ${db(entityIds)} AND status IN ('pending', 'failed')`) as PendingChangeRecord[];
 	},
 	async deleteFailedPendingChangesFor(entityType: PendingChangeEntityType, entityId: string): Promise<void> {
-		await db`DELETE FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status='failed'`;
+		assertPrimaryWritable("a scheduled change");
+		const ids = (
+			(await db`SELECT id FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status='failed'`) as Array<{ id: string }>
+		).map((row) => row.id);
+		if (ids.length === 0) return;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM pending_changes WHERE entity_type=${entityType} AND entity_id=${entityId} AND status='failed'`;
+			for (const id of ids) await appendChangelogEntry(transaction, "pending_change", id, "delete", null);
+		});
 	},
 	async duePendingChanges(now: number, limit: number): Promise<PendingChangeRecord[]> {
 		return (await db`SELECT * FROM pending_changes WHERE status='pending' AND apply_at <= ${now} ORDER BY apply_at ASC LIMIT ${limit}`) as PendingChangeRecord[];
@@ -609,10 +1303,19 @@ export const repository = {
 		lastError: string | null,
 		appliedAt: number | null,
 	): Promise<void> {
-		await db`UPDATE pending_changes SET status=${status}, attempts=${attempts}, apply_at=${applyAt}, last_error=${lastError}, applied_at=${appliedAt} WHERE id=${id}`;
+		assertPrimaryWritable("a scheduled change");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE pending_changes SET status=${status}, attempts=${attempts}, apply_at=${applyAt}, last_error=${lastError}, applied_at=${appliedAt} WHERE id=${id}`;
+			const rows = (await transaction`SELECT * FROM pending_changes WHERE id=${id}`) as PendingChangeRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "pending_change", id, "update", rows[0]);
+		});
 	},
 	async deletePendingChange(id: string): Promise<void> {
-		await db`DELETE FROM pending_changes WHERE id=${id}`;
+		assertPrimaryWritable("a scheduled change");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM pending_changes WHERE id=${id}`;
+			await appendChangelogEntry(transaction, "pending_change", id, "delete", null);
+		});
 	},
 	async pagedNotificationsForSite(query: NotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
 		const pattern = searchPattern(query.search);
@@ -774,18 +1477,36 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
-		await db`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,default_ip_action,default_country_action,priority,enabled,created_at,updated_at)
-			VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.default_ip_action ?? "inherit"},${policy.default_country_action ?? "inherit"},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
+		assertPrimaryWritable("a route policy");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,default_ip_action,default_country_action,priority,enabled,created_at,updated_at)
+				VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.default_ip_action ?? "inherit"},${policy.default_country_action ?? "inherit"},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
+			await appendChangelogEntry(transaction, "route_policy", policy.id, "insert", policy);
+		});
 	},
 	async updateRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
-		await db`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, default_ip_action=${policy.default_ip_action ?? "inherit"}, default_country_action=${policy.default_country_action ?? "inherit"}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
+		assertPrimaryWritable("a route policy");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, default_ip_action=${policy.default_ip_action ?? "inherit"}, default_country_action=${policy.default_country_action ?? "inherit"}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
+			await appendChangelogEntry(transaction, "route_policy", policy.id, "update", policy);
+		});
 	},
 	async deleteRoutePolicy(id: string, siteId: string): Promise<void> {
+		assertPrimaryWritable("a route policy");
+		const ruleIds = {
+			ip: ((await db`SELECT id FROM route_ip_rules WHERE route_policy_id=${id}`) as Array<{ id: string }>).map((r) => r.id),
+			country: ((await db`SELECT id FROM route_country_rules WHERE route_policy_id=${id}`) as Array<{ id: string }>).map((r) => r.id),
+			asn: ((await db`SELECT id FROM route_asn_rules WHERE route_policy_id=${id}`) as Array<{ id: string }>).map((r) => r.id),
+		};
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM route_ip_rules WHERE route_policy_id=${id}`;
 			await transaction`DELETE FROM route_country_rules WHERE route_policy_id=${id}`;
 			await transaction`DELETE FROM route_asn_rules WHERE route_policy_id=${id}`;
 			await transaction`DELETE FROM route_policies WHERE id=${id} AND site_id=${siteId}`;
+			for (const ruleId of ruleIds.ip) await appendChangelogEntry(transaction, "route_ip_rule", ruleId, "delete", null);
+			for (const ruleId of ruleIds.country) await appendChangelogEntry(transaction, "route_country_rule", ruleId, "delete", null);
+			for (const ruleId of ruleIds.asn) await appendChangelogEntry(transaction, "route_asn_rule", ruleId, "delete", null);
+			await appendChangelogEntry(transaction, "route_policy", id, "delete", null);
 		});
 	},
 	async sessionByHash(siteId: string, hash: string): Promise<AccessSessionRecord | null> {
@@ -797,14 +1518,37 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertSession(session: AccessSessionRecord): Promise<void> {
-		await db`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,asn,asn_org,access_user_id,authenticated_at,origin_id,sso_sid)
-		VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.asn},${session.asn_org},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null},${session.sso_sid ?? null})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO access_sessions (id,site_id,token_hash,initial_ip,last_ip,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at,verification_summary_json,request_count,country_code,asn,asn_org,access_user_id,authenticated_at,origin_id,sso_sid)
+			VALUES (${session.id},${session.site_id},${session.token_hash},${session.initial_ip},${session.last_ip},${session.user_agent_hash},${session.created_at},${session.last_seen_at},${session.expires_at},${session.revoked_at},${session.verification_summary_json},${session.request_count},${session.country_code},${session.asn},${session.asn_org},${session.access_user_id},${session.authenticated_at},${session.origin_id ?? null},${session.sso_sid ?? null})`;
+			await replicateSessionChange(transaction, "access_session", session.id, "insert", session);
+		});
 	},
 	async authenticateSession(id: string, siteId: string, userId: string, now: number, ssoSid: string | null = null): Promise<void> {
-		await db`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now}, sso_sid=${ssoSid} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
+		await db.begin(async (transaction) => {
+			const existing =
+				(await transaction`SELECT * FROM access_sessions WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now} LIMIT 1`) as AccessSessionRecord[];
+			await transaction`UPDATE access_sessions SET access_user_id=${userId}, authenticated_at=${now}, sso_sid=${ssoSid} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL AND expires_at > ${now}`;
+			if (existing[0]) {
+				await replicateSessionChange(transaction, "access_session", id, "update", {
+					...existing[0],
+					access_user_id: userId,
+					authenticated_at: now,
+					sso_sid: ssoSid,
+				});
+			}
+		});
 	},
 	async revokeAccessSessionsBySsoSid(siteId: string, sid: string, now: number): Promise<number> {
-		return deletedRowCount(await db`UPDATE access_sessions SET revoked_at=${now} WHERE site_id=${siteId} AND sso_sid=${sid} AND revoked_at IS NULL`);
+		return await db.begin(async (transaction) => {
+			const matches =
+				(await transaction`SELECT * FROM access_sessions WHERE site_id=${siteId} AND sso_sid=${sid} AND revoked_at IS NULL`) as AccessSessionRecord[];
+			const affected = deletedRowCount(
+				await transaction`UPDATE access_sessions SET revoked_at=${now} WHERE site_id=${siteId} AND sso_sid=${sid} AND revoked_at IS NULL`,
+			);
+			for (const session of matches) await replicateSessionChange(transaction, "access_session", session.id, "update", { ...session, revoked_at: now });
+			return affected;
+		});
 	},
 	async activeAccessSessionForUser(siteId: string, userId: string, now: number): Promise<AccessSessionRecord | null> {
 		const rows =
@@ -812,11 +1556,17 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async revokeSessionsForAccessUser(userId: string, now: number, siteId?: string): Promise<void> {
-		if (siteId) {
-			await db`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND site_id=${siteId} AND revoked_at IS NULL`;
-			return;
-		}
-		await db`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND revoked_at IS NULL`;
+		await db.begin(async (transaction) => {
+			const matches = siteId
+				? ((await transaction`SELECT * FROM access_sessions WHERE access_user_id=${userId} AND site_id=${siteId} AND revoked_at IS NULL`) as AccessSessionRecord[])
+				: ((await transaction`SELECT * FROM access_sessions WHERE access_user_id=${userId} AND revoked_at IS NULL`) as AccessSessionRecord[]);
+			if (siteId) {
+				await transaction`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND site_id=${siteId} AND revoked_at IS NULL`;
+			} else {
+				await transaction`UPDATE access_sessions SET revoked_at=${now} WHERE access_user_id=${userId} AND revoked_at IS NULL`;
+			}
+			for (const session of matches) await replicateSessionChange(transaction, "access_session", session.id, "update", { ...session, revoked_at: now });
+		});
 	},
 	async accessSettings(siteId: string): Promise<SiteAccessSettingsRecord | null> {
 		const rows = (await db`SELECT * FROM site_access_settings WHERE site_id=${siteId} LIMIT 1`) as SiteAccessSettingsRecord[];
@@ -842,7 +1592,11 @@ export const repository = {
 		return settings;
 	},
 	async updateAccessSettings(settings: SiteAccessSettingsRecord): Promise<void> {
-		await db`UPDATE site_access_settings SET enabled=${settings.enabled},send_username_to_upstream=${settings.send_username_to_upstream},session_verification_token_hash=${settings.session_verification_token_hash},session_verification_token_created_at=${settings.session_verification_token_created_at},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+		assertPrimaryWritable("site access settings");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE site_access_settings SET enabled=${settings.enabled},send_username_to_upstream=${settings.send_username_to_upstream},session_verification_token_hash=${settings.session_verification_token_hash},session_verification_token_created_at=${settings.session_verification_token_created_at},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+			await appendChangelogEntry(transaction, "site_access_settings", settings.site_id, "update", settings);
+		});
 	},
 	async accessUsersForSite(siteId: string): Promise<Array<AccessUserRecord & { site_count: number | string }>> {
 		return (await db`SELECT u.*, (SELECT COUNT(*) FROM site_access_users memberships WHERE memberships.user_id=u.id) AS site_count
@@ -874,11 +1628,23 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at,totp_required,totp_secret_encrypted,totp_enrolled_at,api_token_hash,api_token_created_at,sso_subject,auth_source)
-		VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at},${user.totp_required},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.api_token_hash},${user.api_token_created_at},${user.sso_subject},${user.auth_source})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO access_users (id,username,password_hash,enabled,created_at,updated_at,totp_required,totp_secret_encrypted,totp_enrolled_at,api_token_hash,api_token_created_at,sso_subject,auth_source)
+			VALUES (${user.id},${user.username},${user.password_hash},${user.enabled},${user.created_at},${user.updated_at},${user.totp_required},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.api_token_hash},${user.api_token_created_at},${user.sso_subject},${user.auth_source})`;
+			await replicateSessionChange(transaction, "access_user", user.id, "insert", user);
+		});
 	},
 	async updateAccessUser(user: AccessUserRecord): Promise<void> {
-		await db`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at},totp_required=${user.totp_required},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},api_token_hash=${user.api_token_hash},api_token_created_at=${user.api_token_created_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT * FROM access_users WHERE id=${user.id} LIMIT 1`) as AccessUserRecord[];
+			await transaction`UPDATE access_users SET username=${user.username},password_hash=${user.password_hash},enabled=${user.enabled},updated_at=${user.updated_at},totp_required=${user.totp_required},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},api_token_hash=${user.api_token_hash},api_token_created_at=${user.api_token_created_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
+			const patch = relayFieldPatch(
+				existing[0] as unknown as Record<string, unknown> | undefined,
+				user as unknown as Record<string, unknown>,
+				ACCESS_USER_MUTABLE_FIELDS,
+			);
+			await replicateSessionChange(transaction, "access_user", user.id, "update", patch, user);
+		});
 	},
 	async accessUserByApiTokenHash(hash: string): Promise<AccessUserRecord | null> {
 		const rows = (await db`SELECT * FROM access_users WHERE api_token_hash=${hash} LIMIT 1`) as AccessUserRecord[];
@@ -889,13 +1655,22 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async deleteAccessUser(userId: string): Promise<void> {
-		await db`DELETE FROM access_users WHERE id=${userId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM access_users WHERE id=${userId}`;
+			await replicateSessionChange(transaction, "access_user", userId, "delete", null);
+		});
 	},
 	async assignAccessUser(siteId: string, userId: string, now = Date.now()): Promise<void> {
-		await db`INSERT INTO site_access_users (site_id,user_id,created_at) VALUES (${siteId},${userId},${now})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO site_access_users (site_id,user_id,created_at) VALUES (${siteId},${userId},${now})`;
+			await replicateSessionChange(transaction, "site_access_user", `${siteId}:${userId}`, "insert", { site_id: siteId, user_id: userId, created_at: now });
+		});
 	},
 	async unassignAccessUser(siteId: string, userId: string): Promise<void> {
-		await db`DELETE FROM site_access_users WHERE site_id=${siteId} AND user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM site_access_users WHERE site_id=${siteId} AND user_id=${userId}`;
+			await replicateSessionChange(transaction, "site_access_user", `${siteId}:${userId}`, "delete", null);
+		});
 	},
 	async accessSiteIdsForUser(userId: string): Promise<string[]> {
 		const rows = (await db`SELECT site_id FROM site_access_users WHERE user_id=${userId}`) as Array<{ site_id: string }>;
@@ -915,32 +1690,61 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAccessWebauthnCredential(record: AccessWebauthnCredentialRecord): Promise<void> {
-		await db`INSERT INTO access_webauthn_credentials (id,user_id,site_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
-		VALUES (${record.id},${record.user_id},${record.site_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO access_webauthn_credentials (id,user_id,site_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
+			VALUES (${record.id},${record.user_id},${record.site_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+			await replicateSessionChange(transaction, "access_webauthn_credential", record.id, "insert", record);
+		});
 	},
+
 	async touchAccessWebauthnCredential(id: string, signCount: number, now: number): Promise<void> {
 		await db`UPDATE access_webauthn_credentials SET sign_count=${signCount}, last_used_at=${now}, updated_at=${now} WHERE id=${id}`;
 	},
 	async renameAccessWebauthnCredential(id: string, userId: string, siteId: string, nickname: string | null, now: number): Promise<void> {
-		await db`UPDATE access_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			const existing =
+				(await transaction`SELECT * FROM access_webauthn_credentials WHERE id=${id} AND user_id=${userId} AND site_id=${siteId} LIMIT 1`) as AccessWebauthnCredentialRecord[];
+			await transaction`UPDATE access_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+			if (existing[0]) await replicateSessionChange(transaction, "access_webauthn_credential", id, "update", { ...existing[0], nickname, updated_at: now });
+		});
 	},
 	async deleteAccessWebauthnCredential(id: string, userId: string, siteId: string): Promise<void> {
-		await db`DELETE FROM access_webauthn_credentials WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM access_webauthn_credentials WHERE id=${id} AND user_id=${userId} AND site_id=${siteId}`;
+			await replicateSessionChange(transaction, "access_webauthn_credential", id, "delete", null);
+		});
 	},
 	async deleteAccessWebauthnCredentialsForUserAndSite(userId: string, siteId: string): Promise<void> {
-		await db`DELETE FROM access_webauthn_credentials WHERE user_id=${userId} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM access_webauthn_credentials WHERE user_id=${userId} AND site_id=${siteId}`) as Array<{ id: string }>;
+			await transaction`DELETE FROM access_webauthn_credentials WHERE user_id=${userId} AND site_id=${siteId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "access_webauthn_credential", row.id, "delete", null);
+		});
 	},
 	async deleteAllAccessWebauthnCredentialsForUser(userId: string): Promise<void> {
-		await db`DELETE FROM access_webauthn_credentials WHERE user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM access_webauthn_credentials WHERE user_id=${userId}`) as Array<{ id: string }>;
+			await transaction`DELETE FROM access_webauthn_credentials WHERE user_id=${userId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "access_webauthn_credential", row.id, "delete", null);
+		});
 	},
 	async touchSession(id: string, ip: string, now: number): Promise<void> {
 		await db`UPDATE access_sessions SET last_ip=${ip}, last_seen_at=${now}, request_count=request_count+1 WHERE id=${id}`;
 	},
 	async revokeSession(id: string, now: number): Promise<void> {
-		await db`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND revoked_at IS NULL`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT * FROM access_sessions WHERE id=${id} AND revoked_at IS NULL LIMIT 1`) as AccessSessionRecord[];
+			await transaction`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND revoked_at IS NULL`;
+			if (existing[0]) await replicateSessionChange(transaction, "access_session", id, "update", { ...existing[0], revoked_at: now });
+		});
 	},
 	async revokeSessionForSite(id: string, siteId: string, now: number): Promise<void> {
-		await db`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL`;
+		await db.begin(async (transaction) => {
+			const existing =
+				(await transaction`SELECT * FROM access_sessions WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL LIMIT 1`) as AccessSessionRecord[];
+			await transaction`UPDATE access_sessions SET revoked_at=${now} WHERE id=${id} AND site_id=${siteId} AND revoked_at IS NULL`;
+			if (existing[0]) await replicateSessionChange(transaction, "access_session", id, "update", { ...existing[0], revoked_at: now });
+		});
 	},
 	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord & { access_username: string | null }>> {
 		const pattern = searchPattern(query.search);
@@ -1042,20 +1846,32 @@ export const repository = {
 		return (await db`SELECT * FROM ip_rules WHERE site_id=${siteId} ORDER BY created_at DESC`) as IpRuleRecord[];
 	},
 	async insertRule(rule: IpRuleRecord): Promise<void> {
-		await db`INSERT INTO ip_rules (id,site_id,network_cidr,action,reason,created_at,expires_at,rule_id) VALUES (${rule.id},${rule.site_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at},${rule.rule_id})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO ip_rules (id,site_id,network_cidr,action,reason,created_at,expires_at,rule_id) VALUES (${rule.id},${rule.site_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at},${rule.rule_id})`;
+			await replicateSessionChange(transaction, "ip_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteRule(id: string): Promise<void> {
-		await db`DELETE FROM ip_rules WHERE id=${id}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM ip_rules WHERE id=${id}`;
+			await replicateSessionChange(transaction, "ip_rule", id, "delete", null);
+		});
 	},
 	async deleteRuleForSite(id: string, siteId: string): Promise<void> {
-		await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+			await replicateSessionChange(transaction, "ip_rule", id, "delete", null);
+		});
 	},
 	async deleteRulesForSite(ids: string[], siteId: string): Promise<number> {
 		let deleted = 0;
-		for (const id of ids) {
-			await db`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
-			deleted += 1;
-		}
+		await db.begin(async (transaction) => {
+			for (const id of ids) {
+				await transaction`DELETE FROM ip_rules WHERE id=${id} AND site_id=${siteId}`;
+				await replicateSessionChange(transaction, "ip_rule", id, "delete", null);
+				deleted += 1;
+			}
+		});
 		return deleted;
 	},
 	async countryRules(siteId: string): Promise<CountryRuleRecord[]> {
@@ -1066,10 +1882,16 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertCountryRule(rule: CountryRuleRecord): Promise<void> {
-		await db`INSERT INTO country_rules (id,site_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO country_rules (id,site_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await replicateSessionChange(transaction, "country_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteCountryRuleForSite(id: string, siteId: string): Promise<void> {
-		await db`DELETE FROM country_rules WHERE id=${id} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM country_rules WHERE id=${id} AND site_id=${siteId}`;
+			await replicateSessionChange(transaction, "country_rule", id, "delete", null);
+		});
 	},
 	async asnRules(siteId: string): Promise<AsnRuleRecord[]> {
 		return (await db`SELECT * FROM asn_rules WHERE site_id=${siteId} ORDER BY asn ASC`) as AsnRuleRecord[];
@@ -1079,19 +1901,33 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAsnRule(rule: AsnRuleRecord): Promise<void> {
-		await db`INSERT INTO asn_rules (id,site_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO asn_rules (id,site_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.site_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await replicateSessionChange(transaction, "asn_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteAsnRuleForSite(id: string, siteId: string): Promise<void> {
-		await db`DELETE FROM asn_rules WHERE id=${id} AND site_id=${siteId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM asn_rules WHERE id=${id} AND site_id=${siteId}`;
+			await replicateSessionChange(transaction, "asn_rule", id, "delete", null);
+		});
 	},
 	async routeIpRules(routePolicyId: string): Promise<RouteIpRuleRecord[]> {
 		return (await db`SELECT * FROM route_ip_rules WHERE route_policy_id=${routePolicyId} ORDER BY created_at DESC`) as RouteIpRuleRecord[];
 	},
 	async insertRouteIpRule(rule: RouteIpRuleRecord): Promise<void> {
-		await db`INSERT INTO route_ip_rules (id,route_policy_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		assertPrimaryWritable("a route IP rule");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO route_ip_rules (id,route_policy_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await appendChangelogEntry(transaction, "route_ip_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteRouteIpRuleForRoute(id: string, routePolicyId: string): Promise<void> {
-		await db`DELETE FROM route_ip_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+		assertPrimaryWritable("a route IP rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM route_ip_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+			await appendChangelogEntry(transaction, "route_ip_rule", id, "delete", null);
+		});
 	},
 	async routeCountryRules(routePolicyId: string): Promise<RouteCountryRuleRecord[]> {
 		return (await db`SELECT * FROM route_country_rules WHERE route_policy_id=${routePolicyId} ORDER BY country_code ASC`) as RouteCountryRuleRecord[];
@@ -1102,10 +1938,18 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertRouteCountryRule(rule: RouteCountryRuleRecord): Promise<void> {
-		await db`INSERT INTO route_country_rules (id,route_policy_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		assertPrimaryWritable("a route country rule");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO route_country_rules (id,route_policy_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await appendChangelogEntry(transaction, "route_country_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteRouteCountryRuleForRoute(id: string, routePolicyId: string): Promise<void> {
-		await db`DELETE FROM route_country_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+		assertPrimaryWritable("a route country rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM route_country_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+			await appendChangelogEntry(transaction, "route_country_rule", id, "delete", null);
+		});
 	},
 	async routeAsnRules(routePolicyId: string): Promise<RouteAsnRuleRecord[]> {
 		return (await db`SELECT * FROM route_asn_rules WHERE route_policy_id=${routePolicyId} ORDER BY asn ASC`) as RouteAsnRuleRecord[];
@@ -1115,13 +1959,26 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertRouteAsnRule(rule: RouteAsnRuleRecord): Promise<void> {
-		await db`INSERT INTO route_asn_rules (id,route_policy_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		assertPrimaryWritable("a route ASN rule");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO route_asn_rules (id,route_policy_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.route_policy_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await appendChangelogEntry(transaction, "route_asn_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteRouteAsnRuleForRoute(id: string, routePolicyId: string): Promise<void> {
-		await db`DELETE FROM route_asn_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+		assertPrimaryWritable("a route ASN rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM route_asn_rules WHERE id=${id} AND route_policy_id=${routePolicyId}`;
+			await appendChangelogEntry(transaction, "route_asn_rule", id, "delete", null);
+		});
 	},
 	async updateSiteNetworkDefaults(siteId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
-		await db`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
+		assertPrimaryWritable("a site");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE sites SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${siteId}`;
+			const rows = (await transaction`SELECT * FROM sites WHERE id=${siteId} LIMIT 1`) as SiteRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "site", siteId, "update", rows[0]);
+		});
 	},
 	async pagedStreamRules(query: StreamRuleQuery): Promise<PageResult<StreamIpRuleRecord>> {
 		const pattern = searchPattern(query.search);
@@ -1152,17 +2009,28 @@ export const repository = {
 		return (await db`SELECT * FROM stream_ip_rules WHERE stream_id=${streamId} ORDER BY created_at DESC`) as StreamIpRuleRecord[];
 	},
 	async insertStreamRule(rule: StreamIpRuleRecord): Promise<void> {
-		await db`INSERT INTO stream_ip_rules (id,stream_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO stream_ip_rules (id,stream_id,network_cidr,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.network_cidr},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await replicateSessionChange(transaction, "stream_ip_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteStreamRuleForStream(id: string, streamId: string): Promise<void> {
-		await db`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
+		assertPrimaryWritable("a stream network rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
+			await appendChangelogEntry(transaction, "stream_ip_rule", id, "delete", null);
+		});
 	},
 	async deleteStreamRulesForStream(ids: string[], streamId: string): Promise<number> {
+		assertPrimaryWritable("a stream network rule");
 		let deleted = 0;
-		for (const id of ids) {
-			await db`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
-			deleted += 1;
-		}
+		await db.begin(async (transaction) => {
+			for (const id of ids) {
+				await transaction`DELETE FROM stream_ip_rules WHERE id=${id} AND stream_id=${streamId}`;
+				await appendChangelogEntry(transaction, "stream_ip_rule", id, "delete", null);
+				deleted += 1;
+			}
+		});
 		return deleted;
 	},
 	async streamCountryRules(streamId: string): Promise<StreamCountryRuleRecord[]> {
@@ -1174,10 +2042,18 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertStreamCountryRule(rule: StreamCountryRuleRecord): Promise<void> {
-		await db`INSERT INTO stream_country_rules (id,stream_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		assertPrimaryWritable("a stream network rule");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO stream_country_rules (id,stream_id,country_code,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.country_code},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await appendChangelogEntry(transaction, "stream_country_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteStreamCountryRuleForStream(id: string, streamId: string): Promise<void> {
-		await db`DELETE FROM stream_country_rules WHERE id=${id} AND stream_id=${streamId}`;
+		assertPrimaryWritable("a stream network rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM stream_country_rules WHERE id=${id} AND stream_id=${streamId}`;
+			await appendChangelogEntry(transaction, "stream_country_rule", id, "delete", null);
+		});
 	},
 	async streamAsnRules(streamId: string): Promise<StreamAsnRuleRecord[]> {
 		return (await db`SELECT * FROM stream_asn_rules WHERE stream_id=${streamId} ORDER BY asn ASC`) as StreamAsnRuleRecord[];
@@ -1187,22 +2063,50 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertStreamAsnRule(rule: StreamAsnRuleRecord): Promise<void> {
-		await db`INSERT INTO stream_asn_rules (id,stream_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+		assertPrimaryWritable("a stream network rule");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO stream_asn_rules (id,stream_id,asn,action,reason,created_at,expires_at) VALUES (${rule.id},${rule.stream_id},${rule.asn},${rule.action},${rule.reason},${rule.created_at},${rule.expires_at})`;
+			await appendChangelogEntry(transaction, "stream_asn_rule", rule.id, "insert", rule);
+		});
 	},
 	async deleteStreamAsnRuleForStream(id: string, streamId: string): Promise<void> {
-		await db`DELETE FROM stream_asn_rules WHERE id=${id} AND stream_id=${streamId}`;
+		assertPrimaryWritable("a stream network rule");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM stream_asn_rules WHERE id=${id} AND stream_id=${streamId}`;
+			await appendChangelogEntry(transaction, "stream_asn_rule", id, "delete", null);
+		});
 	},
 	async updateStreamNetworkDefaults(streamId: string, defaultIpAction: string, defaultCountryAction: string, updatedAt: number): Promise<void> {
-		await db`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
+		assertPrimaryWritable("a stream");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
+			const rows = (await transaction`SELECT * FROM streams WHERE id=${streamId} LIMIT 1`) as StreamRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "stream", streamId, "update", rows[0]);
+		});
 	},
 	async updateStreamProtectionPolicy(streamId: string, protectionPolicyJson: string, updatedAt: number): Promise<void> {
-		await db`UPDATE streams SET protection_policy_json=${protectionPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+		assertPrimaryWritable("a stream");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE streams SET protection_policy_json=${protectionPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+			const rows = (await transaction`SELECT * FROM streams WHERE id=${streamId} LIMIT 1`) as StreamRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "stream", streamId, "update", rows[0]);
+		});
 	},
 	async updateStreamBandwidthPolicy(streamId: string, bandwidthPolicyJson: string, updatedAt: number): Promise<void> {
-		await db`UPDATE streams SET bandwidth_policy_json=${bandwidthPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+		assertPrimaryWritable("a stream");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE streams SET bandwidth_policy_json=${bandwidthPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+			const rows = (await transaction`SELECT * FROM streams WHERE id=${streamId} LIMIT 1`) as StreamRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "stream", streamId, "update", rows[0]);
+		});
 	},
 	async updateStreamNotificationPolicy(streamId: string, notificationPolicyJson: string, updatedAt: number): Promise<void> {
-		await db`UPDATE streams SET notification_policy_json=${notificationPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+		assertPrimaryWritable("a stream");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE streams SET notification_policy_json=${notificationPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+			const rows = (await transaction`SELECT * FROM streams WHERE id=${streamId} LIMIT 1`) as StreamRecord[];
+			if (rows[0]) await appendChangelogEntry(transaction, "stream", streamId, "update", rows[0]);
+		});
 	},
 	async deleteExpiredStreamRulesBeforeForStreamBatch(streamId: string, cutoff: number, limit: number): Promise<number> {
 		const rows =
@@ -2667,12 +3571,16 @@ export const repository = {
 		return settings;
 	},
 	async saveTlsSettings(settings: SiteTlsSettingsRecord): Promise<void> {
+		assertPrimaryWritable("site TLS settings");
 		const existing = await this.tlsSettings(settings.site_id);
-		if (existing) {
-			await db`UPDATE site_tls_settings SET mode=${settings.mode},force_https=${settings.force_https},acme_email=${settings.acme_email},acme_directory_url=${settings.acme_directory_url},acme_challenge_type=${settings.acme_challenge_type},acme_dns_provider_id=${settings.acme_dns_provider_id},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
-		} else {
-			await db`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,acme_challenge_type,acme_dns_provider_id,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.acme_challenge_type},${settings.acme_dns_provider_id},${settings.created_at},${settings.updated_at})`;
-		}
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE site_tls_settings SET mode=${settings.mode},force_https=${settings.force_https},acme_email=${settings.acme_email},acme_directory_url=${settings.acme_directory_url},acme_challenge_type=${settings.acme_challenge_type},acme_dns_provider_id=${settings.acme_dns_provider_id},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+			} else {
+				await transaction`INSERT INTO site_tls_settings (site_id,mode,force_https,acme_email,acme_directory_url,acme_challenge_type,acme_dns_provider_id,created_at,updated_at) VALUES (${settings.site_id},${settings.mode},${settings.force_https},${settings.acme_email},${settings.acme_directory_url},${settings.acme_challenge_type},${settings.acme_dns_provider_id},${settings.created_at},${settings.updated_at})`;
+			}
+			await appendChangelogEntry(transaction, "site_tls_settings", settings.site_id, existing ? "update" : "insert", settings);
+		});
 	},
 	async certificateBySite(siteId: string): Promise<CertificateRecord | null> {
 		const rows = (await db`SELECT * FROM certificates WHERE site_id=${siteId} LIMIT 1`) as CertificateRecord[];
@@ -2684,18 +3592,39 @@ export const repository = {
 		>;
 	},
 	async saveCertificate(certificate: CertificateRecord): Promise<void> {
+		assertPrimaryWritable("a certificate");
 		const existing = await this.certificateBySite(certificate.site_id);
-		if (existing) {
-			await db`UPDATE certificates SET id=${certificate.id},source=${certificate.source},status=${certificate.status},primary_domain=${certificate.primary_domain},alternative_names_json=${certificate.alternative_names_json},certificate_pem=${certificate.certificate_pem},encrypted_private_key=${certificate.encrypted_private_key},issuer=${certificate.issuer},serial_number=${certificate.serial_number},valid_from=${certificate.valid_from},expires_at=${certificate.expires_at},next_renewal_at=${certificate.next_renewal_at},last_attempt_at=${certificate.last_attempt_at},last_error=${certificate.last_error},updated_at=${certificate.updated_at} WHERE site_id=${certificate.site_id}`;
-		} else {
-			await db`INSERT INTO certificates (id,site_id,source,status,primary_domain,alternative_names_json,certificate_pem,encrypted_private_key,issuer,serial_number,valid_from,expires_at,next_renewal_at,last_attempt_at,last_error,created_at,updated_at) VALUES (${certificate.id},${certificate.site_id},${certificate.source},${certificate.status},${certificate.primary_domain},${certificate.alternative_names_json},${certificate.certificate_pem},${certificate.encrypted_private_key},${certificate.issuer},${certificate.serial_number},${certificate.valid_from},${certificate.expires_at},${certificate.next_renewal_at},${certificate.last_attempt_at},${certificate.last_error},${certificate.created_at},${certificate.updated_at})`;
-		}
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE certificates SET id=${certificate.id},source=${certificate.source},status=${certificate.status},primary_domain=${certificate.primary_domain},alternative_names_json=${certificate.alternative_names_json},certificate_pem=${certificate.certificate_pem},encrypted_private_key=${certificate.encrypted_private_key},issuer=${certificate.issuer},serial_number=${certificate.serial_number},valid_from=${certificate.valid_from},expires_at=${certificate.expires_at},next_renewal_at=${certificate.next_renewal_at},last_attempt_at=${certificate.last_attempt_at},last_error=${certificate.last_error},updated_at=${certificate.updated_at} WHERE site_id=${certificate.site_id}`;
+			} else {
+				await transaction`INSERT INTO certificates (id,site_id,source,status,primary_domain,alternative_names_json,certificate_pem,encrypted_private_key,issuer,serial_number,valid_from,expires_at,next_renewal_at,last_attempt_at,last_error,created_at,updated_at) VALUES (${certificate.id},${certificate.site_id},${certificate.source},${certificate.status},${certificate.primary_domain},${certificate.alternative_names_json},${certificate.certificate_pem},${certificate.encrypted_private_key},${certificate.issuer},${certificate.serial_number},${certificate.valid_from},${certificate.expires_at},${certificate.next_renewal_at},${certificate.last_attempt_at},${certificate.last_error},${certificate.created_at},${certificate.updated_at})`;
+			}
+			await appendChangelogEntry(transaction, "certificate", certificate.id, existing ? "update" : "insert", certificate);
+		});
 	},
 	async updateCertificateAttempt(siteId: string, attemptedAt: number, error: string | null): Promise<void> {
-		await db`UPDATE certificates SET last_attempt_at=${attemptedAt},last_error=${error},updated_at=${attemptedAt} WHERE site_id=${siteId}`;
+		assertPrimaryWritable("a certificate");
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT * FROM certificates WHERE site_id=${siteId} LIMIT 1`) as CertificateRecord[];
+			await transaction`UPDATE certificates SET last_attempt_at=${attemptedAt},last_error=${error},updated_at=${attemptedAt} WHERE site_id=${siteId}`;
+			if (existing[0]) {
+				await appendChangelogEntry(transaction, "certificate", existing[0].id, "update", {
+					...existing[0],
+					last_attempt_at: attemptedAt,
+					last_error: error,
+					updated_at: attemptedAt,
+				});
+			}
+		});
 	},
 	async deleteCertificate(siteId: string): Promise<void> {
-		await db`DELETE FROM certificates WHERE site_id=${siteId}`;
+		assertPrimaryWritable("a certificate");
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM certificates WHERE site_id=${siteId} LIMIT 1`) as Array<{ id: string }>;
+			await transaction`DELETE FROM certificates WHERE site_id=${siteId}`;
+			if (existing[0]) await appendChangelogEntry(transaction, "certificate", existing[0].id, "delete", null);
+		});
 	},
 	async dueAcmeCertificates(cutoff: number): Promise<CertificateRecord[]> {
 		return (await db`SELECT c.* FROM certificates c JOIN site_tls_settings t ON t.site_id=c.site_id JOIN sites s ON s.id=c.site_id WHERE c.source='letsencrypt' AND c.status='active' AND ((t.mode='letsencrypt' AND s.enabled=1) OR EXISTS (SELECT 1 FROM streams st WHERE st.certificate_id=c.id AND st.tcp_enabled=1)) AND c.next_renewal_at IS NOT NULL AND c.next_renewal_at <= ${cutoff} ORDER BY c.next_renewal_at ASC`) as CertificateRecord[];
@@ -2706,11 +3635,15 @@ export const repository = {
 	},
 	async saveAcmeAccount(account: AcmeAccountRecord): Promise<void> {
 		const existing = await this.acmeAccount(account.directory_url);
-		if (existing) {
-			await db`UPDATE acme_accounts SET email=${account.email},account_url=${account.account_url},encrypted_account_key=${account.encrypted_account_key},terms_accepted_at=${account.terms_accepted_at},updated_at=${account.updated_at} WHERE directory_url=${account.directory_url}`;
-		} else {
-			await db`INSERT INTO acme_accounts (id,directory_url,email,account_url,encrypted_account_key,terms_accepted_at,created_at,updated_at) VALUES (${account.id},${account.directory_url},${account.email},${account.account_url},${account.encrypted_account_key},${account.terms_accepted_at},${account.created_at},${account.updated_at})`;
-		}
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE acme_accounts SET email=${account.email},account_url=${account.account_url},encrypted_account_key=${account.encrypted_account_key},terms_accepted_at=${account.terms_accepted_at},updated_at=${account.updated_at} WHERE directory_url=${account.directory_url}`;
+			} else {
+				await transaction`INSERT INTO acme_accounts (id,directory_url,email,account_url,encrypted_account_key,terms_accepted_at,created_at,updated_at) VALUES (${account.id},${account.directory_url},${account.email},${account.account_url},${account.encrypted_account_key},${account.terms_accepted_at},${account.created_at},${account.updated_at})`;
+			}
+
+			await appendChangelogEntry(transaction, "acme_account", account.id, existing ? "update" : "insert", account);
+		});
 	},
 	async acmeChallenge(token: string, hostname: string): Promise<AcmeHttpChallengeRecord | null> {
 		const rows =
@@ -2718,14 +3651,27 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async saveAcmeChallenge(challenge: AcmeHttpChallengeRecord): Promise<void> {
-		await db`DELETE FROM acme_http_challenges WHERE token=${challenge.token}`;
-		await db`INSERT INTO acme_http_challenges (token,site_id,hostname,key_authorization,created_at,expires_at) VALUES (${challenge.token},${challenge.site_id},${challenge.hostname},${challenge.key_authorization},${challenge.created_at},${challenge.expires_at})`;
+		assertPrimaryWritable("an ACME challenge");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM acme_http_challenges WHERE token=${challenge.token}`;
+			await transaction`INSERT INTO acme_http_challenges (token,site_id,hostname,key_authorization,created_at,expires_at) VALUES (${challenge.token},${challenge.site_id},${challenge.hostname},${challenge.key_authorization},${challenge.created_at},${challenge.expires_at})`;
+			await appendChangelogEntry(transaction, "acme_http_challenge", challenge.token, "insert", challenge);
+		});
 	},
 	async deleteAcmeChallenge(token: string): Promise<void> {
-		await db`DELETE FROM acme_http_challenges WHERE token=${token}`;
+		assertPrimaryWritable("an ACME challenge");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM acme_http_challenges WHERE token=${token}`;
+			await appendChangelogEntry(transaction, "acme_http_challenge", token, "delete", null);
+		});
 	},
 	async deleteAcmeChallengesForSite(siteId: string): Promise<void> {
-		await db`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
+		assertPrimaryWritable("an ACME challenge");
+		await db.begin(async (transaction) => {
+			const matches = (await transaction`SELECT token FROM acme_http_challenges WHERE site_id=${siteId}`) as Array<{ token: string }>;
+			await transaction`DELETE FROM acme_http_challenges WHERE site_id=${siteId}`;
+			for (const row of matches) await appendChangelogEntry(transaction, "acme_http_challenge", row.token, "delete", null);
+		});
 	},
 	async deleteExpiredAcmeChallengesBatch(now: number, limit: number): Promise<number> {
 		const rows = (await db`SELECT token FROM acme_http_challenges WHERE expires_at <= ${now} ORDER BY expires_at ASC LIMIT ${limit}`) as Array<{
@@ -2895,6 +3841,7 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async saveStream(stream: StreamRecord): Promise<void> {
+		assertPrimaryWritable("a stream");
 		const existing = await this.streamById(stream.id);
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
@@ -2909,9 +3856,20 @@ export const repository = {
 			if (stream.udp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'udp',${stream.incoming_port})`;
 			}
+			await appendChangelogEntry(transaction, "stream", stream.id, existing ? "update" : "insert", stream);
 		});
 	},
 	async deleteStream(id: string): Promise<void> {
+		assertPrimaryWritable("a stream");
+		const ipRuleIds = ((await db`SELECT id FROM stream_ip_rules WHERE stream_id=${id}`) as Array<{ id: string }>).map((r) => r.id);
+		const countryRuleIds = ((await db`SELECT id FROM stream_country_rules WHERE stream_id=${id}`) as Array<{ id: string }>).map((r) => r.id);
+		const asnRuleIds = ((await db`SELECT id FROM stream_asn_rules WHERE stream_id=${id}`) as Array<{ id: string }>).map((r) => r.id);
+		const permissionUserIds = ((await db`SELECT user_id FROM admin_user_stream_permissions WHERE stream_id=${id}`) as Array<{ user_id: string }>).map(
+			(r) => r.user_id,
+		);
+		const pendingChangeIds = ((await db`SELECT id FROM pending_changes WHERE entity_type='stream' AND entity_id=${id}`) as Array<{ id: string }>).map(
+			(r) => r.id,
+		);
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${id}`;
 			await transaction`DELETE FROM stream_events WHERE stream_id=${id}`;
@@ -2925,6 +3883,12 @@ export const repository = {
 			await transaction`DELETE FROM notification_events WHERE stream_id=${id}`;
 			await transaction`DELETE FROM pending_changes WHERE entity_type='stream' AND entity_id=${id}`;
 			await transaction`DELETE FROM streams WHERE id=${id}`;
+			for (const ruleId of ipRuleIds) await appendChangelogEntry(transaction, "stream_ip_rule", ruleId, "delete", null);
+			for (const ruleId of countryRuleIds) await appendChangelogEntry(transaction, "stream_country_rule", ruleId, "delete", null);
+			for (const ruleId of asnRuleIds) await appendChangelogEntry(transaction, "stream_asn_rule", ruleId, "delete", null);
+			for (const userId of permissionUserIds) await appendChangelogEntry(transaction, "admin_stream_permission", `${userId}:${id}`, "delete", null);
+			for (const changeId of pendingChangeIds) await appendChangelogEntry(transaction, "pending_change", changeId, "delete", null);
+			await appendChangelogEntry(transaction, "stream", id, "delete", null);
 		});
 	},
 	async certificateById(id: string): Promise<CertificateRecord | null> {
@@ -3252,9 +4216,7 @@ export const repository = {
 		minDurationMs: number,
 	): Promise<{ series: Array<{ bucket: number; connected: number; disconnected: number }> }> {
 		const eventStreamFilter = streamScopeFilter(streamId);
-		// Duration is only known once a connection closes, so both series are derived from
-		// 'disconnected' rows: the disconnect bucket uses created_at directly, and the connect
-		// bucket is reconstructed as created_at - duration_ms (the connection's open time).
+
 		const disconnectedBucket = metricBucketExpression("created_at", bucketMs);
 		const connectedBucket = isMySqlDatabase()
 			? db`FLOOR((created_at - duration_ms) / ${bucketMs})`
@@ -3423,19 +4385,35 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAdmin(session: AdminSessionRecord): Promise<void> {
-		await db`INSERT INTO admin_sessions (id,token_hash,username,user_id,created_at,expires_at,last_seen_at,sso_sid) VALUES (${session.id},${session.token_hash},${session.username},${session.user_id},${session.created_at},${session.expires_at},${session.last_seen_at},${session.sso_sid ?? null})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO admin_sessions (id,token_hash,username,user_id,created_at,expires_at,last_seen_at,sso_sid) VALUES (${session.id},${session.token_hash},${session.username},${session.user_id},${session.created_at},${session.expires_at},${session.last_seen_at},${session.sso_sid ?? null})`;
+			await replicateSessionChange(transaction, "admin_session", session.id, "insert", session);
+		});
 	},
 	async revokeAdminSessionsBySsoSid(sid: string): Promise<number> {
-		return deletedRowCount(await db`DELETE FROM admin_sessions WHERE sso_sid=${sid}`);
+		return await db.begin(async (transaction) => {
+			const matches = (await transaction`SELECT id FROM admin_sessions WHERE sso_sid=${sid}`) as Array<{ id: string }>;
+			const affected = deletedRowCount(await transaction`DELETE FROM admin_sessions WHERE sso_sid=${sid}`);
+			for (const row of matches) await replicateSessionChange(transaction, "admin_session", row.id, "delete", null);
+			return affected;
+		});
 	},
 	async touchAdmin(id: string, now: number): Promise<void> {
 		await db`UPDATE admin_sessions SET last_seen_at=${now} WHERE id=${id}`;
 	},
 	async deleteAdmin(hash: string): Promise<void> {
-		await db`DELETE FROM admin_sessions WHERE token_hash=${hash}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM admin_sessions WHERE token_hash=${hash} LIMIT 1`) as Array<{ id: string }>;
+			await transaction`DELETE FROM admin_sessions WHERE token_hash=${hash}`;
+			if (existing[0]) await replicateSessionChange(transaction, "admin_session", existing[0].id, "delete", null);
+		});
 	},
 	async revokeAdminSessionsForUser(userId: string): Promise<void> {
-		await db`DELETE FROM admin_sessions WHERE user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			const matches = (await transaction`SELECT id FROM admin_sessions WHERE user_id=${userId}`) as Array<{ id: string }>;
+			await transaction`DELETE FROM admin_sessions WHERE user_id=${userId}`;
+			for (const row of matches) await replicateSessionChange(transaction, "admin_session", row.id, "delete", null);
+		});
 	},
 	async anyAdminUserExists(): Promise<boolean> {
 		const rows = (await db`SELECT id FROM admin_users LIMIT 1`) as Array<{ id: string }>;
@@ -3457,11 +4435,23 @@ export const repository = {
 		return rows.filter((row) => row.id !== excludedUserId).length;
 	},
 	async insertAdminUser(user: AdminUserRecord): Promise<void> {
-		await db`INSERT INTO admin_users (id,username,password_hash,role,totp_secret_encrypted,totp_enrolled_at,must_enroll_totp,enabled,created_at,updated_at,created_by_user_id,sso_subject,auth_source)
-		VALUES (${user.id},${user.username},${user.password_hash},${user.role},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.must_enroll_totp},${user.enabled},${user.created_at},${user.updated_at},${user.created_by_user_id},${user.sso_subject},${user.auth_source})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO admin_users (id,username,password_hash,role,totp_secret_encrypted,totp_enrolled_at,must_enroll_totp,enabled,created_at,updated_at,created_by_user_id,sso_subject,auth_source)
+			VALUES (${user.id},${user.username},${user.password_hash},${user.role},${user.totp_secret_encrypted},${user.totp_enrolled_at},${user.must_enroll_totp},${user.enabled},${user.created_at},${user.updated_at},${user.created_by_user_id},${user.sso_subject},${user.auth_source})`;
+			await replicateSessionChange(transaction, "admin_user", user.id, "insert", user);
+		});
 	},
 	async updateAdminUser(user: AdminUserRecord): Promise<void> {
-		await db`UPDATE admin_users SET username=${user.username},password_hash=${user.password_hash},role=${user.role},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},must_enroll_totp=${user.must_enroll_totp},enabled=${user.enabled},updated_at=${user.updated_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT * FROM admin_users WHERE id=${user.id} LIMIT 1`) as AdminUserRecord[];
+			await transaction`UPDATE admin_users SET username=${user.username},password_hash=${user.password_hash},role=${user.role},totp_secret_encrypted=${user.totp_secret_encrypted},totp_enrolled_at=${user.totp_enrolled_at},must_enroll_totp=${user.must_enroll_totp},enabled=${user.enabled},updated_at=${user.updated_at},sso_subject=${user.sso_subject},auth_source=${user.auth_source} WHERE id=${user.id}`;
+			const patch = relayFieldPatch(
+				existing[0] as unknown as Record<string, unknown> | undefined,
+				user as unknown as Record<string, unknown>,
+				ADMIN_USER_MUTABLE_FIELDS,
+			);
+			await replicateSessionChange(transaction, "admin_user", user.id, "update", patch, user);
+		});
 	},
 	async adminUserBySsoSubject(subject: string): Promise<AdminUserRecord | null> {
 		const rows = (await db`SELECT * FROM admin_users WHERE sso_subject=${subject} LIMIT 1`) as AdminUserRecord[];
@@ -3469,19 +4459,35 @@ export const repository = {
 	},
 	async deleteAdminUserCascade(userId: string): Promise<void> {
 		await db.begin(async (transaction) => {
+			const sitePermissions = (await transaction`SELECT site_id FROM admin_user_site_permissions WHERE user_id=${userId}`) as Array<{ site_id: string }>;
 			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId}`;
+			const streamPermissions = (await transaction`SELECT stream_id FROM admin_user_stream_permissions WHERE user_id=${userId}`) as Array<{
+				stream_id: string;
+			}>;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId}`;
+			const recoveryCodes = (await transaction`SELECT id FROM admin_recovery_codes WHERE user_id=${userId}`) as Array<{ id: string }>;
 			await transaction`DELETE FROM admin_recovery_codes WHERE user_id=${userId}`;
+			const webauthnCredentials = (await transaction`SELECT id FROM admin_webauthn_credentials WHERE user_id=${userId}`) as Array<{ id: string }>;
 			await transaction`DELETE FROM admin_webauthn_credentials WHERE user_id=${userId}`;
+			const sessions = (await transaction`SELECT id FROM admin_sessions WHERE user_id=${userId}`) as Array<{ id: string }>;
 			await transaction`DELETE FROM admin_sessions WHERE user_id=${userId}`;
 			await transaction`DELETE FROM admin_users WHERE id=${userId}`;
+			for (const row of sessions) await replicateSessionChange(transaction, "admin_session", row.id, "delete", null);
+			for (const row of recoveryCodes) await replicateSessionChange(transaction, "admin_recovery_code", row.id, "delete", null);
+			for (const row of webauthnCredentials) await replicateSessionChange(transaction, "admin_webauthn_credential", row.id, "delete", null);
+			for (const row of sitePermissions) await replicateSessionChange(transaction, "admin_site_permission", `${userId}:${row.site_id}`, "delete", null);
+			for (const row of streamPermissions) await replicateSessionChange(transaction, "admin_stream_permission", `${userId}:${row.stream_id}`, "delete", null);
+			await replicateSessionChange(transaction, "admin_user", userId, "delete", null);
 		});
 	},
 	async replaceAdminRecoveryCodes(userId: string, codes: AdminRecoveryCodeRecord[]): Promise<void> {
 		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM admin_recovery_codes WHERE user_id=${userId}`) as Array<{ id: string }>;
 			await transaction`DELETE FROM admin_recovery_codes WHERE user_id=${userId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "admin_recovery_code", row.id, "delete", null);
 			for (const code of codes) {
 				await transaction`INSERT INTO admin_recovery_codes (id,user_id,code_hash,created_at,used_at) VALUES (${code.id},${code.user_id},${code.code_hash},${code.created_at},${code.used_at})`;
+				await replicateSessionChange(transaction, "admin_recovery_code", code.id, "insert", code);
 			}
 		});
 	},
@@ -3490,8 +4496,14 @@ export const repository = {
 		return rows.length;
 	},
 	async consumeAdminRecoveryCodeByHash(userId: string, codeHash: string, now: number): Promise<boolean> {
-		const result = await db`UPDATE admin_recovery_codes SET used_at=${now} WHERE user_id=${userId} AND code_hash=${codeHash} AND used_at IS NULL`;
-		return deletedRowCount(result) > 0;
+		return await db.begin(async (transaction) => {
+			const existing =
+				(await transaction`SELECT * FROM admin_recovery_codes WHERE user_id=${userId} AND code_hash=${codeHash} AND used_at IS NULL LIMIT 1`) as AdminRecoveryCodeRecord[];
+			const result = await transaction`UPDATE admin_recovery_codes SET used_at=${now} WHERE user_id=${userId} AND code_hash=${codeHash} AND used_at IS NULL`;
+			const consumed = deletedRowCount(result) > 0;
+			if (consumed && existing[0]) await replicateSessionChange(transaction, "admin_recovery_code", existing[0].id, "update", { ...existing[0], used_at: now });
+			return consumed;
+		});
 	},
 	async adminWebauthnCredentialsForUser(userId: string): Promise<AdminWebauthnCredentialRecord[]> {
 		return (await db`SELECT * FROM admin_webauthn_credentials WHERE user_id=${userId} ORDER BY created_at ASC`) as AdminWebauthnCredentialRecord[];
@@ -3505,20 +4517,36 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertAdminWebauthnCredential(record: AdminWebauthnCredentialRecord): Promise<void> {
-		await db`INSERT INTO admin_webauthn_credentials (id,user_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
-		VALUES (${record.id},${record.user_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO admin_webauthn_credentials (id,user_id,rp_id,credential_id,credential_id_hash,public_key,sign_count,transports_json,aaguid,device_type,backed_up,nickname,created_at,last_used_at,updated_at)
+			VALUES (${record.id},${record.user_id},${record.rp_id},${record.credential_id},${record.credential_id_hash},${record.public_key},${record.sign_count},${record.transports_json},${record.aaguid},${record.device_type},${record.backed_up},${record.nickname},${record.created_at},${record.last_used_at},${record.updated_at})`;
+			await replicateSessionChange(transaction, "admin_webauthn_credential", record.id, "insert", record);
+		});
 	},
+
 	async touchAdminWebauthnCredential(id: string, signCount: number, now: number): Promise<void> {
 		await db`UPDATE admin_webauthn_credentials SET sign_count=${signCount}, last_used_at=${now}, updated_at=${now} WHERE id=${id}`;
 	},
 	async renameAdminWebauthnCredential(id: string, userId: string, nickname: string | null, now: number): Promise<void> {
-		await db`UPDATE admin_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			const existing =
+				(await transaction`SELECT * FROM admin_webauthn_credentials WHERE id=${id} AND user_id=${userId} LIMIT 1`) as AdminWebauthnCredentialRecord[];
+			await transaction`UPDATE admin_webauthn_credentials SET nickname=${nickname}, updated_at=${now} WHERE id=${id} AND user_id=${userId}`;
+			if (existing[0]) await replicateSessionChange(transaction, "admin_webauthn_credential", id, "update", { ...existing[0], nickname, updated_at: now });
+		});
 	},
 	async deleteAdminWebauthnCredential(id: string, userId: string): Promise<void> {
-		await db`DELETE FROM admin_webauthn_credentials WHERE id=${id} AND user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM admin_webauthn_credentials WHERE id=${id} AND user_id=${userId}`;
+			await replicateSessionChange(transaction, "admin_webauthn_credential", id, "delete", null);
+		});
 	},
 	async deleteAllAdminWebauthnCredentialsForUser(userId: string): Promise<void> {
-		await db`DELETE FROM admin_webauthn_credentials WHERE user_id=${userId}`;
+		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT id FROM admin_webauthn_credentials WHERE user_id=${userId}`) as Array<{ id: string }>;
+			await transaction`DELETE FROM admin_webauthn_credentials WHERE user_id=${userId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "admin_webauthn_credential", row.id, "delete", null);
+		});
 	},
 	async adminSitePermission(userId: string, siteId: string): Promise<AdminUserSitePermissionRecord | null> {
 		const rows = (await db`SELECT * FROM admin_user_site_permissions WHERE user_id=${userId} AND site_id=${siteId} LIMIT 1`) as AdminUserSitePermissionRecord[];
@@ -3541,9 +4569,18 @@ export const repository = {
 		now = Date.now(),
 	): Promise<void> {
 		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT site_id FROM admin_user_site_permissions WHERE user_id=${userId}`) as Array<{ site_id: string }>;
 			await transaction`DELETE FROM admin_user_site_permissions WHERE user_id=${userId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "admin_site_permission", `${userId}:${row.site_id}`, "delete", null);
 			for (const permission of permissions) {
 				await transaction`INSERT INTO admin_user_site_permissions (user_id,site_id,level,created_at,updated_at) VALUES (${userId},${permission.siteId},${permission.level},${now},${now})`;
+				await replicateSessionChange(transaction, "admin_site_permission", `${userId}:${permission.siteId}`, "insert", {
+					user_id: userId,
+					site_id: permission.siteId,
+					level: permission.level,
+					created_at: now,
+					updated_at: now,
+				});
 			}
 		});
 	},
@@ -3553,9 +4590,18 @@ export const repository = {
 		now = Date.now(),
 	): Promise<void> {
 		await db.begin(async (transaction) => {
+			const existing = (await transaction`SELECT stream_id FROM admin_user_stream_permissions WHERE user_id=${userId}`) as Array<{ stream_id: string }>;
 			await transaction`DELETE FROM admin_user_stream_permissions WHERE user_id=${userId}`;
+			for (const row of existing) await replicateSessionChange(transaction, "admin_stream_permission", `${userId}:${row.stream_id}`, "delete", null);
 			for (const permission of permissions) {
 				await transaction`INSERT INTO admin_user_stream_permissions (user_id,stream_id,level,created_at,updated_at) VALUES (${userId},${permission.streamId},${permission.level},${now},${now})`;
+				await replicateSessionChange(transaction, "admin_stream_permission", `${userId}:${permission.streamId}`, "insert", {
+					user_id: userId,
+					stream_id: permission.streamId,
+					level: permission.level,
+					created_at: now,
+					updated_at: now,
+				});
 			}
 		});
 	},
@@ -3625,12 +4671,16 @@ export const repository = {
 		return settings;
 	},
 	async saveAdminSsoSettings(settings: AdminSsoSettingsRecord): Promise<void> {
+		assertPrimaryWritable("admin SSO settings");
 		const existing = await this.adminSsoSettings();
-		if (existing) {
-			await db`UPDATE admin_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE id=${settings.id}`;
-		} else {
-			await db`INSERT INTO admin_sso_settings (id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
-		}
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE admin_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE id=${settings.id}`;
+			} else {
+				await transaction`INSERT INTO admin_sso_settings (id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+			}
+			await appendChangelogEntry(transaction, "admin_sso_settings", settings.id, existing ? "update" : "insert", settings);
+		});
 	},
 	async siteSsoSettings(siteId: string): Promise<SiteSsoSettingsRecord | null> {
 		const rows = (await db`SELECT * FROM site_sso_settings WHERE site_id=${siteId} LIMIT 1`) as SiteSsoSettingsRecord[];
@@ -3659,12 +4709,16 @@ export const repository = {
 		return settings;
 	},
 	async saveSiteSsoSettings(settings: SiteSsoSettingsRecord): Promise<void> {
+		assertPrimaryWritable("site SSO settings");
 		const existing = await this.siteSsoSettings(settings.site_id);
-		if (existing) {
-			await db`UPDATE site_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
-		} else {
-			await db`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
-		}
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE site_sso_settings SET enabled=${settings.enabled},enforce_sso=${settings.enforce_sso},issuer_url=${settings.issuer_url},client_id=${settings.client_id},client_secret_encrypted=${settings.client_secret_encrypted},scopes=${settings.scopes},button_label=${settings.button_label},updated_at=${settings.updated_at} WHERE site_id=${settings.site_id}`;
+			} else {
+				await transaction`INSERT INTO site_sso_settings (site_id,enabled,enforce_sso,issuer_url,client_id,client_secret_encrypted,scopes,button_label,created_at,updated_at) VALUES (${settings.site_id},${settings.enabled},${settings.enforce_sso},${settings.issuer_url},${settings.client_id},${settings.client_secret_encrypted},${settings.scopes},${settings.button_label},${settings.created_at},${settings.updated_at})`;
+			}
+			await appendChangelogEntry(transaction, "site_sso_settings", settings.site_id, existing ? "update" : "insert", settings);
+		});
 	},
 	async allDnsProviders(): Promise<DnsProviderRecord[]> {
 		return (await db`SELECT * FROM dns_providers ORDER BY created_at ASC`) as DnsProviderRecord[];
@@ -3674,13 +4728,26 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertDnsProvider(record: DnsProviderRecord): Promise<void> {
-		await db`INSERT INTO dns_providers (id,name,type,config_json,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.config_json},${record.created_at},${record.updated_at})`;
+		assertPrimaryWritable("a DNS provider");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO dns_providers (id,name,type,config_json,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.config_json},${record.created_at},${record.updated_at})`;
+			await appendChangelogEntry(transaction, "dns_provider", record.id, "insert", record);
+		});
 	},
 	async updateDnsProviderConfig(id: string, name: string, configJson: string, updatedAt: number): Promise<void> {
-		await db`UPDATE dns_providers SET name=${name}, config_json=${configJson}, updated_at=${updatedAt} WHERE id=${id}`;
+		assertPrimaryWritable("a DNS provider");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE dns_providers SET name=${name}, config_json=${configJson}, updated_at=${updatedAt} WHERE id=${id}`;
+			const rows = (await transaction`SELECT * FROM dns_providers WHERE id=${id}`) as Array<Record<string, unknown>>;
+			if (rows[0]) await appendChangelogEntry(transaction, "dns_provider", id, "update", rows[0]);
+		});
 	},
 	async deleteDnsProvider(id: string): Promise<void> {
-		await db`DELETE FROM dns_providers WHERE id=${id}`;
+		assertPrimaryWritable("a DNS provider");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM dns_providers WHERE id=${id}`;
+			await appendChangelogEntry(transaction, "dns_provider", id, "delete", null);
+		});
 	},
 	async sitesUsingDnsProvider(dnsProviderId: string): Promise<SiteRecord[]> {
 		return (await db`
@@ -3698,7 +4765,11 @@ export const repository = {
 		return rows[0] ?? null;
 	},
 	async insertFirewallSyncProvider(record: FirewallSyncProviderRecord): Promise<void> {
-		await db`INSERT INTO firewall_sync_providers (id,name,type,enabled,max_entries,config_json,acknowledged_no_whitelist,last_checked_at,last_synced_at,last_sync_status,last_sync_error,last_applied_count,last_applied_hash,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.enabled},${record.max_entries},${record.config_json},${record.acknowledged_no_whitelist},${record.last_checked_at},${record.last_synced_at},${record.last_sync_status},${record.last_sync_error},${record.last_applied_count},${record.last_applied_hash},${record.created_at},${record.updated_at})`;
+		assertPrimaryWritable("a firewall sync provider");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO firewall_sync_providers (id,name,type,enabled,max_entries,config_json,acknowledged_no_whitelist,last_checked_at,last_synced_at,last_sync_status,last_sync_error,last_applied_count,last_applied_hash,created_at,updated_at) VALUES (${record.id},${record.name},${record.type},${record.enabled},${record.max_entries},${record.config_json},${record.acknowledged_no_whitelist},${record.last_checked_at},${record.last_synced_at},${record.last_sync_status},${record.last_sync_error},${record.last_applied_count},${record.last_applied_hash},${record.created_at},${record.updated_at})`;
+			await appendChangelogEntry(transaction, "firewall_sync_provider", record.id, "insert", record);
+		});
 	},
 	async updateFirewallSyncProviderConfig(
 		id: string,
@@ -3709,7 +4780,12 @@ export const repository = {
 		acknowledgedNoWhitelist: number,
 		updatedAt: number,
 	): Promise<void> {
-		await db`UPDATE firewall_sync_providers SET name=${name}, enabled=${enabled}, max_entries=${maxEntries}, config_json=${configJson}, acknowledged_no_whitelist=${acknowledgedNoWhitelist}, updated_at=${updatedAt} WHERE id=${id}`;
+		assertPrimaryWritable("a firewall sync provider");
+		await db.begin(async (transaction) => {
+			await transaction`UPDATE firewall_sync_providers SET name=${name}, enabled=${enabled}, max_entries=${maxEntries}, config_json=${configJson}, acknowledged_no_whitelist=${acknowledgedNoWhitelist}, updated_at=${updatedAt} WHERE id=${id}`;
+			const rows = (await transaction`SELECT * FROM firewall_sync_providers WHERE id=${id}`) as Array<Record<string, unknown>>;
+			if (rows[0]) await appendChangelogEntry(transaction, "firewall_sync_provider", id, "update", rows[0]);
+		});
 	},
 	async updateFirewallSyncProviderResult(
 		id: string,
@@ -3723,7 +4799,11 @@ export const repository = {
 		await db`UPDATE firewall_sync_providers SET last_checked_at=${checkedAt}, last_synced_at=${syncedAt}, last_sync_status=${status}, last_sync_error=${error}, last_applied_count=${appliedCount}, last_applied_hash=${appliedHash} WHERE id=${id}`;
 	},
 	async deleteFirewallSyncProvider(id: string): Promise<void> {
-		await db`DELETE FROM firewall_sync_providers WHERE id=${id}`;
+		assertPrimaryWritable("a firewall sync provider");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM firewall_sync_providers WHERE id=${id}`;
+			await appendChangelogEntry(transaction, "firewall_sync_provider", id, "delete", null);
+		});
 	},
 	async activeBannedCidrRows(now: number): Promise<Array<{ network_cidr: string; created_at: number }>> {
 		return (await db`
@@ -3736,9 +4816,601 @@ export const repository = {
 		return (await db`SELECT * FROM firewall_sync_whitelist_cidrs ORDER BY created_at ASC`) as FirewallSyncWhitelistCidrRecord[];
 	},
 	async insertFirewallSyncWhitelistCidr(record: FirewallSyncWhitelistCidrRecord): Promise<void> {
-		await db`INSERT INTO firewall_sync_whitelist_cidrs (id,network_cidr,note,created_at) VALUES (${record.id},${record.network_cidr},${record.note},${record.created_at})`;
+		assertPrimaryWritable("a firewall sync whitelist entry");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO firewall_sync_whitelist_cidrs (id,network_cidr,note,created_at) VALUES (${record.id},${record.network_cidr},${record.note},${record.created_at})`;
+			await appendChangelogEntry(transaction, "firewall_sync_whitelist_cidr", record.id, "insert", record);
+		});
 	},
 	async deleteFirewallSyncWhitelistCidr(id: string): Promise<void> {
-		await db`DELETE FROM firewall_sync_whitelist_cidrs WHERE id=${id}`;
+		assertPrimaryWritable("a firewall sync whitelist entry");
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM firewall_sync_whitelist_cidrs WHERE id=${id}`;
+			await appendChangelogEntry(transaction, "firewall_sync_whitelist_cidr", id, "delete", null);
+		});
+	},
+
+	async applyReplicatedChange(row: ReplicationChangelogRow, localNodeId?: string): Promise<void> {
+		const payload = row.payload_json ? (JSON.parse(row.payload_json) as Record<string, unknown>) : null;
+		await db.begin(async (transaction) => {
+			await applyChangelogRow(transaction, row.entity_type, row.entity_id, payload, localNodeId);
+		});
+	},
+	async changelogSince(seq: number, limit: number): Promise<ReplicationChangelogRow[]> {
+		return (await db`SELECT * FROM replication_changelog WHERE seq > ${seq} ORDER BY seq ASC LIMIT ${limit}`) as ReplicationChangelogRow[];
+	},
+	async latestChangelogSeq(): Promise<number> {
+		const rows = (await db`SELECT high_watermark FROM replication_changelog_state WHERE id=1`) as Array<{ high_watermark: number }>;
+		return Number(rows[0]?.high_watermark ?? 0);
+	},
+
+	async bumpChangelogSequenceTo(minNextSeq: number): Promise<void> {
+		if (minNextSeq <= 0) return;
+		if (isSqliteDatabase()) {
+			const rows = (await db`SELECT seq FROM sqlite_sequence WHERE name='replication_changelog'`) as Array<{ seq: number }>;
+			if (rows.length > 0) {
+				if (rows[0]!.seq < minNextSeq) await db`UPDATE sqlite_sequence SET seq=${minNextSeq} WHERE name='replication_changelog'`;
+			} else {
+				await db`INSERT INTO sqlite_sequence (name, seq) VALUES ('replication_changelog', ${minNextSeq})`;
+			}
+		} else if (isMySqlDatabase()) {
+			await db.unsafe(`ALTER TABLE replication_changelog AUTO_INCREMENT = ${Math.trunc(minNextSeq) + 1}`);
+		} else {
+			await db`SELECT setval(pg_get_serial_sequence('replication_changelog','seq'), (SELECT GREATEST(${minNextSeq}, COALESCE(MAX(seq),0)) FROM replication_changelog), true)`;
+		}
+		const current = await this.latestChangelogSeq();
+		if (current < minNextSeq) await db`UPDATE replication_changelog_state SET high_watermark=${minNextSeq} WHERE id=1`;
+	},
+	async deleteReplicationChangelogBeforeBatch(cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(await db`DELETE FROM replication_changelog WHERE created_at < ${cutoff} ORDER BY seq ASC LIMIT ${limit}`);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM replication_changelog WHERE rowid IN (SELECT rowid FROM replication_changelog WHERE created_at < ${cutoff} ORDER BY seq ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM replication_changelog WHERE ctid IN (SELECT ctid FROM replication_changelog WHERE created_at < ${cutoff} ORDER BY seq ASC LIMIT ${limit})`,
+		);
+	},
+
+	async deleteDeadLetteredRelaysBeforeBatch(cutoff: number, limit: number): Promise<number> {
+		if (isMySqlDatabase()) {
+			return deletedRowCount(await db`DELETE FROM dead_lettered_relays WHERE occurred_at < ${cutoff} LIMIT ${limit}`);
+		}
+		if (isSqliteDatabase()) {
+			return deletedRowCount(
+				await db`DELETE FROM dead_lettered_relays WHERE rowid IN (SELECT rowid FROM dead_lettered_relays WHERE occurred_at < ${cutoff} ORDER BY occurred_at ASC LIMIT ${limit})`,
+			);
+		}
+		return deletedRowCount(
+			await db`DELETE FROM dead_lettered_relays WHERE ctid IN (SELECT ctid FROM dead_lettered_relays WHERE occurred_at < ${cutoff} ORDER BY occurred_at ASC LIMIT ${limit})`,
+		);
+	},
+	async replicationCursor(): Promise<number> {
+		const rows = (await db`SELECT last_applied_seq FROM replication_cursor WHERE id=1`) as Array<{ last_applied_seq: number }>;
+		return rows[0]?.last_applied_seq ?? 0;
+	},
+	async updateReplicationCursor(seq: number): Promise<void> {
+		const rows = (await db`SELECT id FROM replication_cursor WHERE id=1`) as Array<{ id: number }>;
+		if (rows.length > 0) {
+			await db`UPDATE replication_cursor SET last_applied_seq=${seq} WHERE id=1`;
+		} else {
+			await db`INSERT INTO replication_cursor (id,last_applied_seq) VALUES (1,${seq})`;
+		}
+	},
+
+	async haClusterConfigRow(): Promise<HaClusterConfigRow | null> {
+		const rows = (await db`SELECT * FROM ha_cluster_config WHERE id=1`) as HaClusterConfigRow[];
+		return rows[0] ?? null;
+	},
+	async insertHaClusterConfig(row: HaClusterConfigInsert): Promise<void> {
+		await db`INSERT INTO ha_cluster_config (id,enabled,role,node_name,primary_url,primary_admin_url,shared_token_encrypted,self_admin_url,cluster_epoch,updated_at) VALUES (1,${row.enabled ? 1 : 0},${row.role},${row.nodeName},${row.primaryUrl},${row.primaryAdminUrl},${row.sharedTokenEncrypted},${row.selfAdminUrl},${row.clusterEpoch},${Date.now()})`;
+	},
+	async updateHaClusterConfig(patch: Partial<HaClusterConfigInsert>): Promise<void> {
+		await db.begin(async (transaction) => {
+			const rows = (await transaction`SELECT id FROM ha_cluster_config WHERE id=1`) as Array<{ id: number }>;
+			if (rows.length === 0) throw new Error("ha_cluster_config has not been seeded yet");
+
+			if (patch.enabled !== undefined) await transaction`UPDATE ha_cluster_config SET enabled=${patch.enabled ? 1 : 0} WHERE id=1`;
+			if (patch.role !== undefined) await transaction`UPDATE ha_cluster_config SET role=${patch.role} WHERE id=1`;
+			if (patch.nodeName !== undefined) await transaction`UPDATE ha_cluster_config SET node_name=${patch.nodeName} WHERE id=1`;
+			if (patch.primaryUrl !== undefined) await transaction`UPDATE ha_cluster_config SET primary_url=${patch.primaryUrl} WHERE id=1`;
+			if (patch.primaryAdminUrl !== undefined) await transaction`UPDATE ha_cluster_config SET primary_admin_url=${patch.primaryAdminUrl} WHERE id=1`;
+			if (patch.sharedTokenEncrypted !== undefined)
+				await transaction`UPDATE ha_cluster_config SET shared_token_encrypted=${patch.sharedTokenEncrypted} WHERE id=1`;
+			if (patch.selfAdminUrl !== undefined) await transaction`UPDATE ha_cluster_config SET self_admin_url=${patch.selfAdminUrl} WHERE id=1`;
+			if (patch.clusterEpoch !== undefined) await transaction`UPDATE ha_cluster_config SET cluster_epoch=${patch.clusterEpoch} WHERE id=1`;
+			await transaction`UPDATE ha_cluster_config SET updated_at=${Date.now()} WHERE id=1`;
+		});
+	},
+
+	async adoptHaDiscoveredPrimary(patch: {
+		primaryUrl: string;
+		primaryAdminUrl: string;
+		clusterEpoch: number;
+	}): Promise<{ adopted: boolean; forcedFreshBootstrap: boolean }> {
+		if (!Number.isSafeInteger(patch.clusterEpoch) || patch.clusterEpoch < 0) throw new Error("Invalid discovered HA epoch");
+		return await db.begin(async (transaction) => {
+			const current = (await transaction`SELECT role FROM ha_cluster_config WHERE id=1`) as Array<{ role: string | null }>;
+			const wasPrimary = current[0]?.role === "primary";
+			const result =
+				await transaction`UPDATE ha_cluster_config SET role='replica',primary_url=${patch.primaryUrl},primary_admin_url=${patch.primaryAdminUrl},cluster_epoch=${patch.clusterEpoch},authority_fenced=0,authority_fence_epoch=NULL,authority_fence_node_id=NULL,authority_fenced_at=NULL,quorum_fenced=0,quorum_fenced_at=NULL,updated_at=${Date.now()} WHERE id=1 AND cluster_epoch <= ${patch.clusterEpoch}`;
+			if (deletedRowCount(result) === 0) return { adopted: false, forcedFreshBootstrap: false };
+			await transaction`DELETE FROM ha_promotion_intent WHERE id=1`;
+			if (wasPrimary) {
+				await transaction`UPDATE replication_cursor SET bootstrapped=0 WHERE id=1`;
+
+				await transaction`DELETE FROM session_relay_outbox`;
+				await transaction`DELETE FROM replication_changelog`;
+				await transaction`UPDATE replication_changelog_state SET high_watermark=0 WHERE id=1`;
+			}
+			return { adopted: true, forcedFreshBootstrap: wasPrimary };
+		});
+	},
+	async fenceHaPrimaryAuthority(observedEpoch: number, sourceNodeId: string, observedAt: number): Promise<void> {
+		if (!Number.isSafeInteger(observedEpoch) || observedEpoch < 0) throw new Error("Invalid observed HA epoch");
+		if (!sourceNodeId || sourceNodeId.length > 64) throw new Error("Invalid HA authority-fence source node id");
+		await db`UPDATE ha_cluster_config SET authority_fenced=1,authority_fence_epoch=${observedEpoch},authority_fence_node_id=${sourceNodeId},authority_fenced_at=${observedAt},cluster_epoch=CASE WHEN cluster_epoch < ${observedEpoch} THEN ${observedEpoch} ELSE cluster_epoch END,updated_at=${Date.now()} WHERE id=1 AND (authority_fence_epoch IS NULL OR authority_fence_epoch < ${observedEpoch})`;
+	},
+
+	async fenceHaPrimaryForElectionTerm(term: number, fencedAt: number): Promise<number | null> {
+		if (!Number.isSafeInteger(term) || term < 0) throw new Error("Invalid HA election term");
+		return await db.begin(async (transaction) => {
+			await transaction`UPDATE ha_cluster_config SET quorum_fenced_at=CASE WHEN quorum_fenced=1 AND cluster_epoch >= ${term} THEN quorum_fenced_at ELSE ${fencedAt} END,cluster_epoch=CASE WHEN cluster_epoch < ${term} THEN ${term} ELSE cluster_epoch END,quorum_fenced=1,updated_at=${Date.now()} WHERE id=1 AND role='primary'`;
+			const rows = (await transaction`SELECT cluster_epoch FROM ha_cluster_config WHERE id=1 AND role='primary'`) as Array<{ cluster_epoch: number }>;
+			return rows[0] ? toNumber(rows[0].cluster_epoch) : null;
+		});
+	},
+
+	async adoptHaReplicaElectionTerm(term: number): Promise<number | null> {
+		if (!Number.isSafeInteger(term) || term < 0) throw new Error("Invalid HA election term");
+		return await db.begin(async (transaction) => {
+			await transaction`UPDATE ha_cluster_config SET cluster_epoch=CASE WHEN cluster_epoch < ${term} THEN ${term} ELSE cluster_epoch END,updated_at=${Date.now()} WHERE id=1 AND role='replica'`;
+			const rows = (await transaction`SELECT cluster_epoch FROM ha_cluster_config WHERE id=1 AND role='replica'`) as Array<{ cluster_epoch: number }>;
+			return rows[0] ? toNumber(rows[0].cluster_epoch) : null;
+		});
+	},
+
+	async tryPersistVoteGrant(term: number, candidateNodeId: string): Promise<boolean> {
+		if (!Number.isSafeInteger(term) || term < 0) throw new Error("Invalid election term");
+		if (!candidateNodeId || candidateNodeId.length > 64) throw new Error("Invalid election candidate node id");
+		const result =
+			await db`UPDATE ha_cluster_config SET cluster_epoch=CASE WHEN cluster_epoch < ${term} THEN ${term} ELSE cluster_epoch END,voted_for_term=${term},voted_for_node_id=${candidateNodeId},updated_at=${Date.now()} WHERE id=1 AND role='replica' AND cluster_epoch <= ${term} AND (voted_for_term IS NULL OR voted_for_term < ${term} OR (voted_for_term=${term} AND voted_for_node_id=${candidateNodeId}))`;
+		return deletedRowCount(result) > 0;
+	},
+
+	async activateHaElectionWinner(
+		term: number,
+		candidateNodeId: string,
+		expectedPrimaryUrl: string | null,
+		expectedPrimaryAdminUrl: string | null,
+	): Promise<boolean> {
+		if (!Number.isSafeInteger(term) || term < 0) throw new Error("Invalid HA election winner term");
+		if (!candidateNodeId || candidateNodeId.length > 64) throw new Error("Invalid HA election winner node id");
+		return await db.begin(async (transaction) => {
+			const result =
+				await transaction`UPDATE ha_cluster_config SET role='primary',primary_url=NULL,primary_admin_url=NULL,cluster_epoch=${term},authority_fenced=0,authority_fence_epoch=NULL,authority_fence_node_id=NULL,authority_fenced_at=NULL,quorum_fenced=0,quorum_fenced_at=NULL,updated_at=${Date.now()} WHERE id=1 AND role='replica' AND cluster_epoch=${term} AND voted_for_term=${term} AND voted_for_node_id=${candidateNodeId} AND COALESCE(primary_url,'')=${expectedPrimaryUrl ?? ""} AND COALESCE(primary_admin_url,'')=${expectedPrimaryAdminUrl ?? ""}`;
+			if (deletedRowCount(result) === 0) return false;
+			await transaction`DELETE FROM ha_promotion_intent WHERE id=1`;
+			return true;
+		});
+	},
+
+	async setQuorumFence(at: number): Promise<void> {
+		await db`UPDATE ha_cluster_config SET quorum_fenced=1,quorum_fenced_at=${at},updated_at=${Date.now()} WHERE id=1`;
+	},
+	async clearQuorumFence(): Promise<void> {
+		await db`UPDATE ha_cluster_config SET quorum_fenced=0,quorum_fenced_at=NULL,updated_at=${Date.now()} WHERE id=1`;
+	},
+	async haClusterMembers(): Promise<HaClusterMemberRecord[]> {
+		return (await db`SELECT * FROM ha_cluster_members WHERE revoked_at IS NULL AND activated_at IS NOT NULL ORDER BY first_seen_at ASC,node_id ASC`) as HaClusterMemberRecord[];
+	},
+	async haMemberByCredentialHash(credentialHash: string): Promise<HaAuthenticatedMember | null> {
+		if (!credentialHash || credentialHash.length !== 64) return null;
+		const rows =
+			(await db`SELECT node_id,activated_at FROM ha_cluster_members WHERE credential_hash=${credentialHash} AND revoked_at IS NULL LIMIT 1`) as Array<{
+				node_id: string;
+				activated_at: number | null;
+			}>;
+		return rows[0] ? { node_id: rows[0].node_id, active: rows[0].activated_at != null } : null;
+	},
+	async haRevokedClusterNodeIds(): Promise<string[]> {
+		const rows = (await db`SELECT node_id FROM ha_cluster_members WHERE revoked_at IS NOT NULL ORDER BY node_id ASC`) as Array<{ node_id: string }>;
+		return rows.map((row) => row.node_id);
+	},
+	async upsertHaClusterMember(member: HaClusterMemberRecord): Promise<void> {
+		await db.begin(async (transaction) => {
+			const current =
+				(await transaction`SELECT first_seen_at,credential_hash,activated_at,revoked_at FROM ha_cluster_members WHERE node_id=${member.node_id} LIMIT 1`) as Array<{
+					first_seen_at: number;
+					credential_hash: string | null;
+					activated_at: number | null;
+					revoked_at: number | null;
+				}>;
+			if (current[0]?.revoked_at != null) throw new Error("This HA node has been revoked and must use a fresh join code before reconnecting");
+			const row: HaClusterMemberRecord = {
+				...member,
+				first_seen_at: current[0]?.first_seen_at ?? member.first_seen_at,
+				credential_hash: member.credential_hash ?? current[0]?.credential_hash ?? null,
+				activated_at: member.activated_at ?? current[0]?.activated_at ?? Date.now(),
+				revoked_at: null,
+			};
+			if (!row.credential_hash) throw new Error("This HA member has no enrolled node credential");
+			if (current.length > 0) {
+				await transaction`UPDATE ha_cluster_members SET name=${row.name},version=${row.version},admin_url=${row.admin_url},last_seen_at=${row.last_seen_at},credential_hash=${row.credential_hash},activated_at=${row.activated_at} WHERE node_id=${row.node_id} AND revoked_at IS NULL`;
+			} else {
+				await transaction`INSERT INTO ha_cluster_members (node_id,name,version,admin_url,first_seen_at,last_seen_at,credential_hash,activated_at,revoked_at) VALUES (${row.node_id},${row.name},${row.version},${row.admin_url},${row.first_seen_at},${row.last_seen_at},${row.credential_hash},${row.activated_at},NULL)`;
+			}
+			await appendChangelogEntry(transaction, "ha_cluster_member", row.node_id, current.length > 0 ? "update" : "insert", row);
+		});
+	},
+
+	async deleteHaClusterMember(nodeId: string, preForgetMemberCount: number): Promise<boolean> {
+		if (!Number.isSafeInteger(preForgetMemberCount) || preForgetMemberCount < 0) throw new Error("Invalid member count");
+		return await db.begin(async (transaction) => {
+			const current = (await transaction`SELECT * FROM ha_cluster_members WHERE node_id=${nodeId} AND revoked_at IS NULL LIMIT 1`) as HaClusterMemberRecord[];
+			if (current.length === 0) return false;
+			const row = { ...current[0]!, credential_hash: null, revoked_at: Date.now() };
+			const result =
+				await transaction`UPDATE ha_cluster_members SET credential_hash=NULL,revoked_at=${row.revoked_at} WHERE node_id=${nodeId} AND revoked_at IS NULL`;
+			if (deletedRowCount(result) === 0) return false;
+			await appendChangelogEntry(transaction, "ha_cluster_member", nodeId, "update", row);
+			await applyRecentMaxMemberCount(transaction, preForgetMemberCount);
+			return true;
+		});
+	},
+
+	async revertHaClusterMemberActivation(nodeId: string): Promise<void> {
+		await db.begin(async (transaction) => {
+			const current =
+				(await transaction`SELECT * FROM ha_cluster_members WHERE node_id=${nodeId} AND revoked_at IS NULL AND activated_at IS NOT NULL LIMIT 1`) as HaClusterMemberRecord[];
+			if (current.length === 0) return;
+			const row = { ...current[0]!, activated_at: null };
+			await transaction`UPDATE ha_cluster_members SET activated_at=NULL WHERE node_id=${nodeId} AND revoked_at IS NULL`;
+			await appendChangelogEntry(transaction, "ha_cluster_member", nodeId, "update", row);
+		});
+	},
+
+	async updateHaClusterConfigAndResetMembership(patch: HaClusterConfigInsert): Promise<void> {
+		await db.begin(async (transaction) => {
+			const currentRows = (await transaction`SELECT id FROM ha_cluster_config WHERE id=1`) as Array<{ id: number }>;
+			if (currentRows.length === 0) throw new Error("ha_cluster_config has not been seeded yet");
+			await transaction`UPDATE ha_cluster_config SET enabled=${patch.enabled ? 1 : 0},role=${patch.role},node_name=${patch.nodeName},primary_url=${patch.primaryUrl},primary_admin_url=${patch.primaryAdminUrl},shared_token_encrypted=${patch.sharedTokenEncrypted},self_admin_url=${patch.selfAdminUrl},cluster_epoch=${patch.clusterEpoch},authority_fenced=0,authority_fence_epoch=NULL,authority_fence_node_id=NULL,authority_fenced_at=NULL,updated_at=${Date.now()} WHERE id=1`;
+			await transaction`DELETE FROM ha_cluster_members`;
+		});
+	},
+	async haPromotionIntent(): Promise<HaPromotionIntentRecord | null> {
+		const rows = (await db`SELECT * FROM ha_promotion_intent WHERE id=1`) as HaPromotionIntentRecord[];
+		return rows[0] ?? null;
+	},
+	async saveHaPromotionIntent(intent: Omit<HaPromotionIntentRecord, "id">): Promise<void> {
+		await db.begin(async (transaction) => {
+			await transaction`DELETE FROM ha_promotion_intent WHERE id=1`;
+			await transaction`INSERT INTO ha_promotion_intent (id,promotion_id,target_node_id,target_url,target_admin_url,new_epoch,created_at) VALUES (1,${intent.promotion_id},${intent.target_node_id},${intent.target_url},${intent.target_admin_url},${intent.new_epoch},${intent.created_at})`;
+		});
+	},
+	async clearHaPromotionIntent(promotionId: string): Promise<boolean> {
+		const result = await db`DELETE FROM ha_promotion_intent WHERE id=1 AND promotion_id=${promotionId}`;
+		return deletedRowCount(result) > 0;
+	},
+
+	async completeHaPromotionIntent(promotionId: string, patch: { primaryUrl: string; primaryAdminUrl: string; clusterEpoch: number }): Promise<boolean> {
+		return await db.begin(async (transaction) => {
+			const intents = (await transaction`SELECT promotion_id FROM ha_promotion_intent WHERE id=1`) as Array<{ promotion_id: string }>;
+			if (intents[0]?.promotion_id !== promotionId) return false;
+			const currentRows = (await transaction`SELECT id FROM ha_cluster_config WHERE id=1`) as Array<{ id: number }>;
+			if (currentRows.length === 0) throw new Error("ha_cluster_config has not been seeded yet");
+			const result =
+				await transaction`UPDATE ha_cluster_config SET role='replica',primary_url=${patch.primaryUrl},primary_admin_url=${patch.primaryAdminUrl},cluster_epoch=${patch.clusterEpoch},updated_at=${Date.now()} WHERE id=1 AND authority_fenced=0`;
+			if (deletedRowCount(result) === 0) return false;
+			await transaction`DELETE FROM ha_promotion_intent WHERE id=1 AND promotion_id=${promotionId}`;
+			return true;
+		});
+	},
+
+	async createHaEnrollmentCode(codeHash: string, expiresAt: number): Promise<void> {
+		const now = Date.now();
+		await db`DELETE FROM ha_enrollment_codes WHERE expires_at < ${now}`;
+		await db`INSERT INTO ha_enrollment_codes (code_hash,created_at,expires_at,used_at) VALUES (${codeHash},${now},${expiresAt},NULL)`;
+	},
+
+	async redeemHaEnrollmentCode(codeHash: string, now: number, member: HaClusterMemberRecord, credentialHash: string): Promise<boolean> {
+		if (!member.node_id || member.node_id.length > 64 || !credentialHash || credentialHash.length !== 64) return false;
+		return await db.begin(async (transaction) => {
+			const result = await transaction`UPDATE ha_enrollment_codes SET used_at=${now} WHERE code_hash=${codeHash} AND used_at IS NULL AND expires_at > ${now}`;
+			if (deletedRowCount(result) === 0) return false;
+			const existing = (await transaction`SELECT * FROM ha_cluster_members WHERE node_id=${member.node_id} LIMIT 1`) as HaClusterMemberRecord[];
+			const row: HaClusterMemberRecord = {
+				...member,
+				first_seen_at: existing[0]?.first_seen_at ?? member.first_seen_at,
+				credential_hash: credentialHash,
+				activated_at: null,
+				revoked_at: null,
+			};
+			if (existing[0]) {
+				await transaction`UPDATE ha_cluster_members SET name=${row.name},version=${row.version},admin_url=${row.admin_url},last_seen_at=${row.last_seen_at},credential_hash=${credentialHash},activated_at=NULL,revoked_at=NULL WHERE node_id=${row.node_id}`;
+			} else {
+				await transaction`INSERT INTO ha_cluster_members (node_id,name,version,admin_url,first_seen_at,last_seen_at,credential_hash,activated_at,revoked_at) VALUES (${row.node_id},${row.name},${row.version},${row.admin_url},${row.first_seen_at},${row.last_seen_at},${credentialHash},NULL,NULL)`;
+			}
+			await appendChangelogEntry(transaction, "ha_cluster_member", row.node_id, existing[0] ? "update" : "insert", row);
+			return true;
+		});
+	},
+
+	async needsBootstrap(): Promise<boolean> {
+		const rows = (await db`SELECT bootstrapped FROM replication_cursor WHERE id=1`) as Array<{ bootstrapped: number }>;
+		return (rows[0]?.bootstrapped ?? 0) === 0;
+	},
+
+	async forceRebootstrap(): Promise<void> {
+		await db`UPDATE replication_cursor SET bootstrapped=0 WHERE id=1`;
+	},
+
+	async updateHaClusterConfigAndResetReplicationState(patch: HaClusterConfigInsert): Promise<void> {
+		await db.begin(async (transaction) => {
+			const currentRows = (await transaction`SELECT id FROM ha_cluster_config WHERE id=1`) as Array<{ id: number }>;
+			if (currentRows.length === 0) throw new Error("ha_cluster_config has not been seeded yet");
+			await transaction`UPDATE ha_cluster_config SET enabled=${patch.enabled ? 1 : 0}, role=${patch.role}, node_name=${patch.nodeName}, primary_url=${patch.primaryUrl}, primary_admin_url=${patch.primaryAdminUrl}, shared_token_encrypted=${patch.sharedTokenEncrypted}, self_admin_url=${patch.selfAdminUrl}, cluster_epoch=${patch.clusterEpoch}, authority_fenced=0, authority_fence_epoch=NULL, authority_fence_node_id=NULL, authority_fenced_at=NULL, updated_at=${Date.now()} WHERE id=1`;
+			await transaction`UPDATE replication_cursor SET last_applied_seq=0, bootstrapped=0 WHERE id=1`;
+			await transaction`DELETE FROM session_relay_outbox`;
+			await transaction`DELETE FROM replication_changelog`;
+			await transaction`UPDATE replication_changelog_state SET high_watermark=0 WHERE id=1`;
+			await transaction`DELETE FROM ha_cluster_members`;
+		});
+	},
+	async markBootstrapped(seq: number): Promise<void> {
+		const rows = (await db`SELECT id FROM replication_cursor WHERE id=1`) as Array<{ id: number }>;
+		if (rows.length > 0) {
+			await db`UPDATE replication_cursor SET last_applied_seq=${seq}, bootstrapped=1 WHERE id=1`;
+		} else {
+			await db`INSERT INTO replication_cursor (id,last_applied_seq,bootstrapped) VALUES (1,${seq},1)`;
+		}
+	},
+
+	async fullSnapshot(): Promise<{ seq: number; rows: ReplicationSnapshotRow[] }> {
+		return await withConsistentSnapshot(async (transaction) => {
+			const seqRows = (await transaction`SELECT high_watermark FROM replication_changelog_state WHERE id=1`) as Array<{ high_watermark: number }>;
+			const seq = Number(seqRows[0]?.high_watermark ?? 0);
+			const rows: ReplicationSnapshotRow[] = [];
+			await scanSnapshotRows(transaction, config.ha.changelogPageSize, async (row) => void rows.push(row));
+			return { seq, rows };
+		});
+	},
+
+	async streamFullSnapshot(onStart: (seq: number) => Promise<void>, onRow: (row: ReplicationSnapshotRow) => Promise<void>): Promise<void> {
+		await withConsistentSnapshot(async (transaction) => {
+			const seqRows = (await transaction`SELECT high_watermark FROM replication_changelog_state WHERE id=1`) as Array<{ high_watermark: number }>;
+			await onStart(Number(seqRows[0]?.high_watermark ?? 0));
+			await scanSnapshotRows(transaction, config.ha.changelogPageSize, onRow);
+		});
+	},
+
+	async reconcileToSnapshot(rows: ReplicationSnapshotRow[]): Promise<void> {
+		await db.begin(async (transaction) => {
+			for (const table of SNAPSHOT_TABLES) await transaction.unsafe(`DELETE FROM ${table.table}`);
+			for (const row of rows) {
+				const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+				await applyChangelogRow(transaction, row.entity_type, row.entity_id, payload);
+			}
+			await reapplyPendingSessionRelays(transaction);
+		});
+	},
+	async clearSnapshotStaging(snapshotId?: string): Promise<void> {
+		if (snapshotId) await db`DELETE FROM replication_snapshot_staging WHERE snapshot_id=${snapshotId}`;
+		else await db`DELETE FROM replication_snapshot_staging`;
+	},
+	async stageSnapshotRows(snapshotId: string, startRow: number, rows: ReplicationSnapshotRow[]): Promise<void> {
+		if (rows.length === 0) return;
+		await db.begin(async (transaction) => {
+			for (let index = 0; index < rows.length; index += 1) {
+				const row = rows[index]!;
+				await transaction`INSERT INTO replication_snapshot_staging (snapshot_id,row_num,entity_type,entity_id,payload_json) VALUES (${snapshotId},${startRow + index},${row.entity_type},${row.entity_id},${row.payload_json})`;
+			}
+		});
+	},
+	async reconcileStagedSnapshot(snapshotId: string): Promise<void> {
+		await db.begin(async (transaction) => {
+			for (const table of SNAPSHOT_TABLES) await transaction.unsafe(`DELETE FROM ${table.table}`);
+			let offset = 0;
+			const pageSize = Math.max(1, Math.trunc(config.ha.changelogPageSize));
+			for (;;) {
+				const rows =
+					(await transaction`SELECT entity_type,entity_id,payload_json FROM replication_snapshot_staging WHERE snapshot_id=${snapshotId} ORDER BY row_num ASC LIMIT ${pageSize} OFFSET ${offset}`) as ReplicationSnapshotRow[];
+				for (const row of rows) await applyChangelogRow(transaction, row.entity_type, row.entity_id, JSON.parse(row.payload_json) as Record<string, unknown>);
+				if (rows.length < pageSize) break;
+				offset += rows.length;
+			}
+			await reapplyPendingSessionRelays(transaction);
+			await transaction`DELETE FROM replication_snapshot_staging WHERE snapshot_id=${snapshotId}`;
+		});
+	},
+	async haNodeId(): Promise<string> {
+		const rows = (await db`SELECT node_uuid FROM ha_node_identity WHERE id=1`) as Array<{ node_uuid: string }>;
+		if (!rows[0]?.node_uuid) throw new Error("HA node identity is missing; run database migrations before starting the mesh");
+		return rows[0].node_uuid;
+	},
+
+	async applyReplicatedSessionRelay(
+		nodeId: string,
+		relayId: number,
+		entityType: MultiWriterEntityType,
+		entityId: string,
+		op: "insert" | "update" | "delete",
+		payload: object | null,
+	): Promise<void> {
+		if (!nodeId || nodeId.length > 64) throw new Error("Invalid HA relay node id");
+		if (!Number.isSafeInteger(relayId) || relayId <= 0) throw new Error("Invalid HA relay id");
+		await db.begin(async (transaction) => {
+			let watermarks = (
+				isSqliteDatabase()
+					? await transaction`SELECT last_relay_id FROM replication_relay_watermarks WHERE node_id=${nodeId}`
+					: await transaction`SELECT last_relay_id FROM replication_relay_watermarks WHERE node_id=${nodeId} FOR UPDATE`
+			) as Array<{ last_relay_id: number }>;
+			if (watermarks.length === 0) {
+				await transaction`INSERT INTO replication_relay_watermarks (node_id,last_relay_id,updated_at) VALUES (${nodeId},0,${Date.now()})`;
+				watermarks = [{ last_relay_id: 0 }];
+			}
+			const lastRelayId = Number(watermarks[0]!.last_relay_id);
+			if (relayId <= lastRelayId) return;
+			const appliedPayload = await applyMultiWriterMutation(transaction, entityType, entityId, op, payload);
+			const watermark = { node_id: nodeId, last_relay_id: relayId, updated_at: Date.now() };
+			await transaction`UPDATE replication_relay_watermarks SET last_relay_id=${relayId},updated_at=${watermark.updated_at} WHERE node_id=${nodeId}`;
+			await appendChangelogEntry(transaction, entityType, entityId, op, {
+				__haRelayEvent: RELAY_EVENT_MARKER,
+				nodeId,
+				relayId,
+				op,
+				payload: op === "delete" ? null : appliedPayload,
+				watermark,
+			});
+		});
+	},
+	async pendingSessionRelayRows(limit: number): Promise<SessionRelayRow[]> {
+		return (await db`SELECT * FROM session_relay_outbox ORDER BY id ASC LIMIT ${limit}`) as SessionRelayRow[];
+	},
+	async hasPendingSessionRelay(entityType: MultiWriterEntityType, entityId: string): Promise<boolean> {
+		const rows = (await db`SELECT id FROM session_relay_outbox WHERE entity_type=${entityType} AND entity_id=${entityId} LIMIT 1`) as Array<{ id: number }>;
+		return rows.length > 0;
+	},
+	async deleteSessionRelayRows(ids: number[]): Promise<void> {
+		if (ids.length === 0) return;
+		await db`DELETE FROM session_relay_outbox WHERE id IN ${db(ids)}`;
+	},
+
+	async adoptPendingSessionRelaysAsPrimary(nodeId: string): Promise<number> {
+		let adopted = 0;
+		for (;;) {
+			const rows = await this.pendingSessionRelayRows(1);
+			const row = rows[0];
+			if (!row) return adopted;
+			const payload = row.payload_json ? (JSON.parse(row.payload_json) as object) : null;
+			await this.applyReplicatedSessionRelay(nodeId, row.id, row.entity_type, row.entity_id, row.op, payload);
+			await this.deleteSessionRelayRows([row.id]);
+			adopted += 1;
+		}
+	},
+
+	async deadLetterRelay(
+		nodeId: string,
+		relayId: number,
+		entityType: string,
+		entityId: string,
+		op: string,
+		payload: object | null,
+		reason: string,
+	): Promise<void> {
+		await db`INSERT INTO dead_lettered_relays (id,node_id,relay_id,entity_type,entity_id,op,payload_json,reason,occurred_at) VALUES (${crypto.randomUUID()},${nodeId},${relayId},${entityType},${entityId},${op},${payload === null ? null : JSON.stringify(payload)},${reason},${Date.now()})`;
+	},
+	async recentDeadLetteredRelays(limit: number): Promise<DeadLetteredRelayRecord[]> {
+		return (await db`SELECT * FROM dead_lettered_relays ORDER BY occurred_at DESC LIMIT ${limit}`) as DeadLetteredRelayRecord[];
 	},
 };
+
+const PRIMARY_WRITE_METHOD_NAMES = [
+	"insertSession",
+	"authenticateSession",
+	"revokeAccessSessionsBySsoSid",
+	"revokeSessionsForAccessUser",
+	"insertAccessUser",
+	"updateAccessUser",
+	"deleteAccessUser",
+	"assignAccessUser",
+	"unassignAccessUser",
+	"insertAccessWebauthnCredential",
+	"renameAccessWebauthnCredential",
+	"deleteAccessWebauthnCredential",
+	"deleteAccessWebauthnCredentialsForUserAndSite",
+	"deleteAllAccessWebauthnCredentialsForUser",
+	"revokeSession",
+	"revokeSessionForSite",
+	"insertRule",
+	"deleteRule",
+	"deleteRuleForSite",
+	"deleteRulesForSite",
+	"insertCountryRule",
+	"deleteCountryRuleForSite",
+	"insertAsnRule",
+	"deleteAsnRuleForSite",
+	"insertAdmin",
+	"revokeAdminSessionsBySsoSid",
+	"deleteAdmin",
+	"revokeAdminSessionsForUser",
+	"insertAdminUser",
+	"updateAdminUser",
+	"deleteAdminUserCascade",
+	"replaceAdminRecoveryCodes",
+	"consumeAdminRecoveryCodeByHash",
+	"insertAdminWebauthnCredential",
+	"renameAdminWebauthnCredential",
+	"deleteAdminWebauthnCredential",
+	"deleteAllAdminWebauthnCredentialsForUser",
+	"replaceAdminSitePermissions",
+	"replaceAdminStreamPermissions",
+	"applyReplicatedSessionRelay",
+	"upsertHaClusterMember",
+	"deleteHaClusterMember",
+	"revertHaClusterMemberActivation",
+	"redeemHaEnrollmentCode",
+	"insertSite",
+	"updateSite",
+	"deleteSiteCascade",
+	"insertOrigin",
+	"updateOrigin",
+	"deleteOrigin",
+	"insertPendingChange",
+	"deleteFailedPendingChangesFor",
+	"updatePendingChangeStatus",
+	"deletePendingChange",
+	"insertRoutePolicy",
+	"updateRoutePolicy",
+	"deleteRoutePolicy",
+	"updateAccessSettings",
+	"insertRouteIpRule",
+	"deleteRouteIpRuleForRoute",
+	"insertRouteCountryRule",
+	"deleteRouteCountryRuleForRoute",
+	"insertRouteAsnRule",
+	"deleteRouteAsnRuleForRoute",
+	"updateSiteNetworkDefaults",
+	"insertStreamRule",
+	"deleteStreamRuleForStream",
+	"deleteStreamRulesForStream",
+	"insertStreamCountryRule",
+	"deleteStreamCountryRuleForStream",
+	"insertStreamAsnRule",
+	"deleteStreamAsnRuleForStream",
+	"updateStreamNetworkDefaults",
+	"updateStreamProtectionPolicy",
+	"updateStreamBandwidthPolicy",
+	"updateStreamNotificationPolicy",
+	"saveTlsSettings",
+	"saveCertificate",
+	"updateCertificateAttempt",
+	"deleteCertificate",
+	"saveAcmeAccount",
+	"saveAcmeChallenge",
+	"deleteAcmeChallenge",
+	"deleteAcmeChallengesForSite",
+	"saveStream",
+	"deleteStream",
+	"saveAdminSsoSettings",
+	"saveSiteSsoSettings",
+	"insertDnsProvider",
+	"updateDnsProviderConfig",
+	"deleteDnsProvider",
+	"insertFirewallSyncProvider",
+	"updateFirewallSyncProviderConfig",
+	"deleteFirewallSyncProvider",
+	"insertFirewallSyncWhitelistCidr",
+	"deleteFirewallSyncWhitelistCidr",
+] as const satisfies ReadonlyArray<keyof typeof repository>;
+
+type AsyncRepositoryMethod = (...args: unknown[]) => Promise<unknown>;
+const writableRepository = repository as unknown as Record<string, AsyncRepositoryMethod>;
+for (const methodName of PRIMARY_WRITE_METHOD_NAMES) {
+	const implementation = writableRepository[methodName]!;
+	writableRepository[methodName] = async (...args: unknown[]) =>
+		await haPrimaryWriteBarrier.runPrimaryWrite(async () => await implementation.apply(repository, args));
+}

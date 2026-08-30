@@ -19,9 +19,10 @@ import { runMaintenance, startMaintenance } from "./services/maintenance-service
 import { geoIpStatus, initializeAsnGeoIp, initializeGeoIp, startGeoIpRetry } from "./services/geoip-service.ts";
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
+import { loadHaClusterConfigAtBoot } from "./services/ha-config-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { serveStaticOrigin } from "./services/static-origin-service.ts";
-import { findAccessSession, userAgentHash } from "./services/session-service.ts";
+import { findAccessSession, HaSessionPublicationError, userAgentHash } from "./services/session-service.ts";
 import { applyPendingSiteChange, resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
 import { resolveRoutePolicy } from "./services/route-policy-service.ts";
 import { appendRateLimitHeaders, applyRouteRateLimit } from "./services/rate-limit-service.ts";
@@ -46,7 +47,16 @@ import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { registerNotificationAdminRoutes } from "./routes/notification-admin-routes.ts";
 import { registerFirewallSyncAdminRoutes } from "./routes/firewall-sync-admin-routes.ts";
 import { registerDnsAdminRoutes } from "./routes/dns-admin-routes.ts";
+import { registerHaClusterAdminRoutes } from "./routes/ha-cluster-admin-routes.ts";
 import { registerHostAdminRoutes } from "./routes/host-admin-routes.ts";
+import { haVersionWriteGuard } from "./routes/ha-version-write-guard.ts";
+import {
+	HaPrimaryAuthorityFenceError,
+	HaPromotionWriteFenceError,
+	HaQuorumLossFenceError,
+	haPrimaryWriteBarrier,
+	isPrimaryAdminWriteRequest,
+} from "./services/ha-write-barrier.ts";
 import { firewallSyncService } from "./services/firewall-sync-service.ts";
 import { OPENMETRICS_PATH, openMetricsResponse } from "./services/openmetrics-service.ts";
 import { originHealthManager } from "./services/origin-health-service.ts";
@@ -78,41 +88,30 @@ import { loadStreamRuleSets } from "./services/stream-ruleset-loader.ts";
 import { registerPendingChangeApplier, startPendingChangeScheduler } from "./services/pending-change-service.ts";
 import { applyPendingStreamChange } from "./services/stream-service.ts";
 import { updateCheckManager } from "./services/update-check-service.ts";
-import { flushStreamMonitoring } from "./services/stream-monitoring-service.ts";
-import { flushBandwidthMetrics } from "./services/bandwidth-service.ts";
+import { haMeshService } from "./services/ha-mesh-service.ts";
+import { haElectionService } from "./services/ha-election-service.ts";
+import { processLifecycle } from "./services/process-lifecycle-service.ts";
 import packageMetadata from "../package.json" with { type: "json" };
 
-let shuttingDown = false;
-
-async function flushPendingMonitoringData(timeoutMs = 3_000): Promise<void> {
-	await Promise.race([Promise.allSettled([flushStreamMonitoring(), flushBandwidthMetrics()]), new Promise((resolve) => setTimeout(resolve, timeoutMs))]);
-}
-
-async function shutdown(reason: string, exitCode: number): Promise<void> {
-	if (shuttingDown) return;
-	shuttingDown = true;
-	Logger.warn(`[BurrowGate] Shutting down (${reason}); flushing pending monitoring data before exit`);
-	await flushPendingMonitoringData();
-	process.exit(exitCode);
-}
-
-process.on("SIGTERM", () => void shutdown("SIGTERM", 0));
-process.on("SIGINT", () => void shutdown("SIGINT", 0));
+process.on("SIGTERM", () => void processLifecycle.gracefulRestart("SIGTERM", 0));
+process.on("SIGINT", () => void processLifecycle.gracefulRestart("SIGINT", 0));
 
 process.on("uncaughtException", (error) => {
 	Logger.error("[BurrowGate] FATAL uncaught exception; process will exit", { error: error instanceof Error ? error.stack : String(error) });
-	void shutdown("uncaughtException", 1);
+	void processLifecycle.gracefulRestart("uncaughtException", 1);
 });
 
 process.on("unhandledRejection", (reason) => {
 	Logger.error("[BurrowGate] FATAL unhandled rejection; process will exit", {
 		error: reason instanceof Error ? reason.stack : String(reason),
 	});
-	void shutdown("unhandledRejection", 1);
+	void processLifecycle.gracefulRestart("unhandledRejection", 1);
 });
 
 await initializeRuntimeSecrets();
 await migrate();
+await loadHaClusterConfigAtBoot();
+await haMeshService.prepareForRuntimeAtBoot();
 await ensureBootstrapAdministrator();
 await initializeGeoIp();
 await initializeAsnGeoIp();
@@ -132,6 +131,8 @@ systemMonitor.start();
 notificationService.start();
 firewallSyncService.start();
 updateCheckManager.start();
+await haMeshService.start();
+haElectionService.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
 startStreamMonitoring();
@@ -188,7 +189,32 @@ app.use(
 );
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
 app.use("/_burrowgate/api/access/session/introspect", rateLimit({ windowMs: 60_000, max: 600, headers: true }));
+app.use(async (ctx, next) => {
+	const blocked = haVersionWriteGuard(ctx.req);
+	if (blocked) return blocked;
+	if (config.ha.enabled && config.ha.role === "primary" && isPrimaryAdminWriteRequest(ctx.req)) {
+		try {
+			await haPrimaryWriteBarrier.runPrimaryWrite(async () => await next());
+		} catch (error) {
+			if (error instanceof HaPrimaryAuthorityFenceError) {
+				return jsonResponse({ error: error.message, code: "ha_primary_authority_fenced" }, 503);
+			}
+			if (error instanceof HaPromotionWriteFenceError) {
+				return jsonResponse({ error: error.message, code: "ha_promotion_in_progress" }, 503);
+			}
+			if (error instanceof HaQuorumLossFenceError) {
+				return jsonResponse({ error: error.message, code: "ha_quorum_lost" }, 503);
+			}
+			throw error;
+		}
+		return;
+	}
+	await next();
+});
 app.onError((error) => {
+	if (error instanceof HaSessionPublicationError) return jsonResponse({ error: error.message, code: "ha_session_publication_failed" }, 503);
+	if (error instanceof HaPrimaryAuthorityFenceError) return jsonResponse({ error: error.message, code: "ha_primary_authority_fenced" }, 503);
+	if (error instanceof HaQuorumLossFenceError) return jsonResponse({ error: error.message, code: "ha_quorum_lost" }, 503);
 	Logger.error("Error", error);
 	return jsonResponse({ error: "BurrowGate internal error" }, 500);
 });
@@ -201,15 +227,20 @@ registerStreamAdminRoutes(app);
 registerNotificationAdminRoutes(app);
 registerFirewallSyncAdminRoutes(app);
 registerDnsAdminRoutes(app);
+registerHaClusterAdminRoutes(app);
 registerHostAdminRoutes(app);
 if (config.openMetrics.enabled) app.get(OPENMETRICS_PATH, (ctx) => openMetricsResponse(ctx.req));
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
-	return jsonResponse({
-		status: "ok",
-		challengeProviders: challengeRegistry.names(),
-		geoip: { enabled: geoip.enabled, available: geoip.available, asn: { enabled: geoip.asn.enabled, available: geoip.asn.available } },
-	});
+	const ready = haMeshService.ready();
+	return jsonResponse(
+		{
+			status: ready ? "ok" : "starting",
+			challengeProviders: challengeRegistry.names(),
+			geoip: { enabled: geoip.enabled, available: geoip.available, asn: { enabled: geoip.asn.enabled, available: geoip.asn.available } },
+		},
+		ready ? 200 : 503,
+	);
 });
 
 async function gateway(ctx: any): Promise<Response> {

@@ -709,6 +709,91 @@ CREATE TABLE IF NOT EXISTS dns_providers (
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS replication_cursor (
+  id INTEGER PRIMARY KEY,
+  last_applied_seq BIGINT NOT NULL,
+  bootstrapped INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS replication_changelog_state (
+  id INTEGER PRIMARY KEY,
+  high_watermark BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS replication_relay_watermarks (
+  node_id VARCHAR(64) PRIMARY KEY,
+  last_relay_id BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ha_node_identity (
+  id INTEGER PRIMARY KEY,
+  node_uuid VARCHAR(64) NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS replication_snapshot_staging (
+  snapshot_id VARCHAR(64) NOT NULL,
+  row_num BIGINT NOT NULL,
+  entity_type VARCHAR(32) NOT NULL,
+  entity_id VARCHAR(255) NOT NULL,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (snapshot_id, row_num)
+);
+CREATE TABLE IF NOT EXISTS dead_lettered_relays (
+  id VARCHAR(64) PRIMARY KEY,
+  node_id VARCHAR(64) NOT NULL,
+  relay_id BIGINT NOT NULL,
+  entity_type VARCHAR(32) NOT NULL,
+  entity_id VARCHAR(255) NOT NULL,
+  op VARCHAR(16) NOT NULL,
+  payload_json TEXT NULL,
+  reason TEXT NOT NULL,
+  occurred_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ha_cluster_config (
+  id INTEGER PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  role VARCHAR(16) NULL,
+  node_name VARCHAR(255) NOT NULL,
+  primary_url TEXT NULL,
+  primary_admin_url TEXT NULL,
+  shared_token_encrypted TEXT NULL,
+  self_admin_url TEXT NULL,
+  cluster_epoch INTEGER NOT NULL DEFAULT 0,
+  authority_fenced INTEGER NOT NULL DEFAULT 0,
+  authority_fence_epoch INTEGER NULL,
+  authority_fence_node_id VARCHAR(64) NULL,
+  authority_fenced_at BIGINT NULL,
+  voted_for_term INTEGER NULL,
+  voted_for_node_id VARCHAR(64) NULL,
+  quorum_fenced INTEGER NOT NULL DEFAULT 0,
+  quorum_fenced_at BIGINT NULL,
+  recent_max_member_count INTEGER NULL,
+  recent_max_member_count_at BIGINT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ha_enrollment_codes (
+  code_hash VARCHAR(64) PRIMARY KEY,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  used_at BIGINT NULL
+);
+CREATE TABLE IF NOT EXISTS ha_promotion_intent (
+  id INTEGER PRIMARY KEY,
+  promotion_id VARCHAR(64) NOT NULL UNIQUE,
+  target_node_id VARCHAR(64) NOT NULL,
+  target_url TEXT NOT NULL,
+  target_admin_url TEXT NOT NULL,
+  new_epoch INTEGER NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ha_cluster_members (
+  node_id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  version VARCHAR(64) NOT NULL,
+  admin_url TEXT NULL,
+  first_seen_at BIGINT NOT NULL,
+  last_seen_at BIGINT NOT NULL,
+  credential_hash VARCHAR(64) NULL,
+  activated_at BIGINT NULL,
+  revoked_at BIGINT NULL
+);
 `;
 
 const indexes = [
@@ -819,6 +904,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_stream_origin_latency_stream_bucket ON stream_origin_latency_minutes (stream_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_origin_latency_site_bucket ON origin_latency_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_firewall_sync_providers_enabled ON firewall_sync_providers (enabled)",
+	"CREATE INDEX IF NOT EXISTS idx_replication_changelog_entity ON replication_changelog (entity_type, entity_id)",
 ];
 
 function isMySql(): boolean {
@@ -1217,6 +1303,135 @@ async function ensureStreamNames(): Promise<void> {
 	}
 }
 
+function isSqlite(): boolean {
+	return config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:";
+}
+
+async function ensureReplicationChangelogTable(): Promise<void> {
+	const largeTextType = isMySql() ? "LONGTEXT" : "TEXT";
+	const seqColumn = isMySql() ? "seq BIGINT PRIMARY KEY AUTO_INCREMENT" : isSqlite() ? "seq INTEGER PRIMARY KEY AUTOINCREMENT" : "seq BIGSERIAL PRIMARY KEY";
+	await db.unsafe(`CREATE TABLE IF NOT EXISTS replication_changelog (
+  ${seqColumn},
+  entity_type VARCHAR(32) NOT NULL,
+  entity_id VARCHAR(255) NOT NULL,
+  op VARCHAR(16) NOT NULL,
+  payload_json ${largeTextType} NULL,
+  created_at BIGINT NOT NULL
+)`);
+}
+
+async function ensureSessionRelayOutboxTable(): Promise<void> {
+	const largeTextType = isMySql() ? "LONGTEXT" : "TEXT";
+	const idColumn = isMySql() ? "id BIGINT PRIMARY KEY AUTO_INCREMENT" : isSqlite() ? "id INTEGER PRIMARY KEY AUTOINCREMENT" : "id BIGSERIAL PRIMARY KEY";
+	await db.unsafe(`CREATE TABLE IF NOT EXISTS session_relay_outbox (
+  ${idColumn},
+  entity_type VARCHAR(32) NOT NULL,
+  entity_id VARCHAR(255) NOT NULL,
+  op VARCHAR(16) NOT NULL,
+  payload_json ${largeTextType} NULL,
+  created_at BIGINT NOT NULL
+)`);
+}
+
+async function ensureReplicationEntityIdWidth(): Promise<void> {
+	if (isSqlite()) return;
+	for (const table of ["replication_changelog", "session_relay_outbox"] as const) {
+		const columns = (
+			isMySql()
+				? await db`SELECT character_maximum_length FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=${table} AND column_name='entity_id' LIMIT 1`
+				: await db`SELECT character_maximum_length FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=${table} AND column_name='entity_id' LIMIT 1`
+		) as Array<{
+			character_maximum_length: number | null;
+		}>;
+		if (Number(columns[0]?.character_maximum_length ?? 0) >= 255) continue;
+		if (isMySql()) await db.unsafe(`ALTER TABLE ${table} MODIFY entity_id VARCHAR(255) NOT NULL`);
+		else await db.unsafe(`ALTER TABLE ${table} ALTER COLUMN entity_id TYPE VARCHAR(255)`);
+	}
+}
+
+async function ensureSnapshotStagingPayloadWidth(): Promise<void> {
+	if (!isMySql()) return;
+	const columns =
+		(await db`SELECT data_type FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='replication_snapshot_staging' AND column_name='payload_json' LIMIT 1`) as Array<{
+			data_type: string;
+		}>;
+	if (columns[0]?.data_type?.toLowerCase() !== "longtext") {
+		await db.unsafe("ALTER TABLE replication_snapshot_staging MODIFY payload_json LONGTEXT NOT NULL");
+	}
+}
+
+async function ensureReplicationCursorColumns(): Promise<void> {
+	try {
+		await db.unsafe("ALTER TABLE replication_cursor ADD COLUMN bootstrapped INTEGER NOT NULL DEFAULT 0");
+	} catch (error) {
+		if (!duplicateColumnError(error)) throw error;
+	}
+}
+
+async function ensureHaClusterConfigColumns(): Promise<void> {
+	for (const statement of [
+		"ALTER TABLE ha_cluster_config ADD COLUMN cluster_epoch INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE ha_cluster_config ADD COLUMN authority_fenced INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE ha_cluster_config ADD COLUMN authority_fence_epoch INTEGER NULL",
+		"ALTER TABLE ha_cluster_config ADD COLUMN authority_fence_node_id VARCHAR(64) NULL",
+		"ALTER TABLE ha_cluster_config ADD COLUMN authority_fenced_at BIGINT NULL",
+
+		"ALTER TABLE ha_cluster_config ADD COLUMN voted_for_term INTEGER NULL",
+		"ALTER TABLE ha_cluster_config ADD COLUMN voted_for_node_id VARCHAR(64) NULL",
+		"ALTER TABLE ha_cluster_config ADD COLUMN quorum_fenced INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE ha_cluster_config ADD COLUMN quorum_fenced_at BIGINT NULL",
+
+		"ALTER TABLE ha_cluster_config ADD COLUMN recent_max_member_count INTEGER NULL",
+		"ALTER TABLE ha_cluster_config ADD COLUMN recent_max_member_count_at BIGINT NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
+async function ensureHaClusterMemberColumns(): Promise<void> {
+	for (const statement of [
+		"ALTER TABLE ha_cluster_members ADD COLUMN revoked_at BIGINT NULL",
+		"ALTER TABLE ha_cluster_members ADD COLUMN credential_hash VARCHAR(64) NULL",
+		"ALTER TABLE ha_cluster_members ADD COLUMN activated_at BIGINT NULL",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+
+	await db.unsafe("UPDATE ha_cluster_members SET activated_at=first_seen_at WHERE activated_at IS NULL AND credential_hash IS NULL AND revoked_at IS NULL");
+}
+
+async function ensureReplicationChangelogLockTable(): Promise<void> {
+	await db.unsafe("CREATE TABLE IF NOT EXISTS replication_changelog_lock (id INTEGER PRIMARY KEY)");
+	if (isSqlite()) return;
+	await db.unsafe(
+		isMySql()
+			? "INSERT IGNORE INTO replication_changelog_lock (id) VALUES (1)"
+			: "INSERT INTO replication_changelog_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+	);
+}
+
+async function ensureReplicationChangelogState(): Promise<void> {
+	const existing = (await db`SELECT high_watermark FROM replication_changelog_state WHERE id=1`) as Array<{ high_watermark: number }>;
+	const changelog = (await db`SELECT MAX(seq) AS max_seq FROM replication_changelog`) as Array<{ max_seq: number | null }>;
+	const highWatermark = Math.max(Number(existing[0]?.high_watermark ?? 0), Number(changelog[0]?.max_seq ?? 0));
+	if (existing.length > 0) await db`UPDATE replication_changelog_state SET high_watermark=${highWatermark} WHERE id=1`;
+	else await db`INSERT INTO replication_changelog_state (id,high_watermark) VALUES (1,${highWatermark})`;
+}
+
+async function ensureHaNodeIdentity(): Promise<void> {
+	const existing = (await db`SELECT node_uuid FROM ha_node_identity WHERE id=1`) as Array<{ node_uuid: string }>;
+	if (existing.length > 0) return;
+	await db`INSERT INTO ha_node_identity (id,node_uuid) VALUES (1,${crypto.randomUUID()})`;
+}
+
 function duplicateIndexError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 	return message.includes("already exists") || message.includes("duplicate key name") || message.includes("duplicate index");
@@ -1255,6 +1470,16 @@ export async function migrate(): Promise<void> {
 	await ensureOriginColumns();
 	await ensurePrimaryOrigins();
 	await ensureStreamNames();
+	await ensureReplicationChangelogTable();
+	await ensureSessionRelayOutboxTable();
+	await ensureReplicationEntityIdWidth();
+	await ensureSnapshotStagingPayloadWidth();
+	await ensureReplicationCursorColumns();
+	await ensureReplicationChangelogLockTable();
+	await ensureReplicationChangelogState();
+	await ensureHaNodeIdentity();
+	await ensureHaClusterConfigColumns();
+	await ensureHaClusterMemberColumns();
 	if (config.databaseUrl.startsWith("sqlite") || config.databaseUrl.startsWith("file") || config.databaseUrl === ":memory:") {
 		await db.unsafe("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 	}

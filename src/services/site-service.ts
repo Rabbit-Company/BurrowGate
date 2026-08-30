@@ -1,7 +1,6 @@
 import { challengeRegistry } from "../challenges/index.ts";
 import { config, parseIpExtractionPreset } from "../config.ts";
 import { repository } from "../db/repository.ts";
-import { Logger } from "../logger.ts";
 import type {
 	ChallengePolicyStep,
 	DefaultNetworkAction,
@@ -769,6 +768,7 @@ export async function resolveSiteForHost(host: string): Promise<SiteRecord | nul
 }
 
 export async function seedDefaultSite(): Promise<void> {
+	if (config.ha.enabled && config.ha.role === "replica") return;
 	if (!config.seedDefaultSite || (await repository.allSites()).length) return;
 	await createSite({
 		name: config.defaultSite.name,

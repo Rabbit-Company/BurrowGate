@@ -1,11 +1,11 @@
-import { APP_VERSION, escapeHtml, page, tablerIcon } from "./layout.ts";
+import { APP_VERSION, dashboardSwitchNav, escapeHtml, page, tablerIcon } from "./layout.ts";
 
 export function hostPage(): string {
 	return page(
 		"Host",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a class="active" href="/_burrowgate/admin/host">Host</a><a href="/_burrowgate/admin/notifications">Notifications</a><a href="/_burrowgate/admin/firewall-sync">Firewall Sync</a><a href="/_burrowgate/admin/dns-providers">DNS Providers</a></nav><p class="muted header-subtitle">Resource usage and internet connectivity for this host, independent of any single site or stream</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div>${dashboardSwitchNav("host")}<p class="muted header-subtitle">Resource usage and internet connectivity for this host, independent of any single site or stream</p></div>
   <div class="dashboard-controls">
     <label class="site-picker"><span>Live refresh</span><select id="liveRefreshInterval" class="select"><option value="1000">Every 1s</option><option value="3000" selected>Every 3s</option><option value="5000">Every 5s</option><option value="10000">Every 10s</option><option value="30000">Every 30s</option></select></label>
     <label class="site-picker"><span>Date format</span><select id="dateTimeFormat" class="select"><option value="iso-24" selected>YYYY-MM-DD HH:mm:ss</option><option value="dmy-24">DD/MM/YYYY HH:mm:ss</option><option value="mdy-12">MM/DD/YYYY hh:mm:ss AM/PM</option><option value="browser">Browser default</option></select></label>

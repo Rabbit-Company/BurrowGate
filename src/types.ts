@@ -207,7 +207,9 @@ export type NotificationEventType =
 	| "stream_origin_recovered"
 	| "stream_ip_banned"
 	| "system_resource_high"
-	| "system_resource_normal";
+	| "system_resource_normal"
+	| "ha_node_down"
+	| "ha_node_up";
 export type NotificationSeverity = "info" | "warning" | "critical";
 
 export interface NotificationEventRecord {

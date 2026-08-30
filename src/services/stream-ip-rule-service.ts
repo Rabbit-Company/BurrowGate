@@ -45,6 +45,10 @@ export function invalidateStreamNetworkPolicy(streamId: string): void {
 	ruleCache.delete(streamId);
 }
 
+export function invalidateAllStreamNetworkPolicy(): void {
+	ruleCache.clear();
+}
+
 export type StreamNetworkDecisionSource = "ip-rule" | "asn-rule" | "country-rule" | "country-default" | "ip-default" | "route";
 
 export interface StreamNetworkDecision {

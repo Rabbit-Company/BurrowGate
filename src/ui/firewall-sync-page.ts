@@ -1,11 +1,11 @@
-import { APP_VERSION, escapeHtml, page, tablerIcon } from "./layout.ts";
+import { APP_VERSION, dashboardSwitchNav, escapeHtml, page, tablerIcon } from "./layout.ts";
 
 export function firewallSyncPage(): string {
 	return page(
 		"Firewall Sync",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a href="/_burrowgate/admin/host">Host</a><a href="/_burrowgate/admin/notifications">Notifications</a><a class="active" href="/_burrowgate/admin/firewall-sync">Firewall Sync</a><a href="/_burrowgate/admin/dns-providers">DNS Providers</a></nav><p class="muted header-subtitle">Push banned IPs to an external firewall so blocked traffic never reaches this host</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div>${dashboardSwitchNav("firewall-sync")}<p class="muted header-subtitle">Push banned IPs to an external firewall so blocked traffic never reaches this host</p></div>
   <div class="dashboard-controls"><div class="row dashboard-actions"><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh" title="Refresh">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div></div>
 </header>
 

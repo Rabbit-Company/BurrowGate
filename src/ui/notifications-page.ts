@@ -1,4 +1,4 @@
-import { APP_VERSION, escapeHtml, page, tablerIcon } from "./layout.ts";
+import { APP_VERSION, dashboardSwitchNav, escapeHtml, page, tablerIcon } from "./layout.ts";
 
 interface NotificationEventTypeOption {
 	value: string;
@@ -24,6 +24,8 @@ const SITE_EVENT_TYPES: NotificationEventTypeOption[] = [
 		description: "Host/container CPU, memory, disk, or network usage crossed its configured alert threshold.",
 	},
 	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
+	{ value: "ha_node_down", label: "HA node down", description: "This node lost contact with a replica (primary) or with the primary (replica)." },
+	{ value: "ha_node_up", label: "HA node up", description: "A previously lost HA connection was restored." },
 ];
 
 const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
@@ -42,6 +44,8 @@ const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
 		description: "Host/container CPU, memory, disk, or network usage crossed its configured alert threshold.",
 	},
 	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
+	{ value: "ha_node_down", label: "HA node down", description: "This node lost contact with a replica (primary) or with the primary (replica)." },
+	{ value: "ha_node_up", label: "HA node up", description: "A previously lost HA connection was restored." },
 ];
 
 function sortButton(label: string, key: string): string {
@@ -104,7 +108,7 @@ export function notificationsPage(): string {
 		"Notifications",
 		`<main class="shell dashboard-shell">
 <header class="row between responsive dashboard-header">
-  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div><nav class="dashboard-switch" aria-label="Dashboard"><a href="/_burrowgate/admin">Web Proxy</a><a href="/_burrowgate/admin/streams">Streams</a><a href="/_burrowgate/admin/host">Host</a><a class="active" href="/_burrowgate/admin/notifications">Notifications</a><a href="/_burrowgate/admin/firewall-sync">Firewall Sync</a><a href="/_burrowgate/admin/dns-providers">DNS Providers</a></nav><p class="muted header-subtitle">Webhook alerts for origin health, internet connectivity, and auto-bans</p></div>
+  <div><div class="brand"><span class="mark"></span> BurrowGate<span class="version-tag">v${escapeHtml(APP_VERSION)}</span></div>${dashboardSwitchNav("notifications")}<p class="muted header-subtitle">Webhook alerts for origin health, internet connectivity, and auto-bans</p></div>
   <div class="dashboard-controls"><div class="row dashboard-actions"><button id="refreshDashboard" class="button secondary icon-button" type="button" aria-label="Refresh" title="Refresh">${tablerIcon("refresh")}</button><button id="logout" class="button secondary icon-button" type="button" aria-label="Log out" title="Log out">${tablerIcon("logout")}</button></div></div>
 </header>
 <div class="grid notification-sections">

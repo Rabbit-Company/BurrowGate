@@ -487,6 +487,12 @@ pre {
 	font-size: 16.5px;
 	margin-bottom: 8px;
 }
+.feature-card .row {
+	margin-bottom: 8px;
+}
+.feature-card .row h3 {
+	margin-bottom: 0;
+}
 .feature-card p {
 	color: var(--muted);
 	font-size: 14.5px;
@@ -1031,6 +1037,10 @@ pre {
 .doc-card .row {
 	justify-content: space-between;
 	margin-bottom: 8px;
+}
+.doc-card .row .row {
+	justify-content: flex-start;
+	margin-bottom: 0;
 }
 .doc-card h3 {
 	font-size: 15.5px;

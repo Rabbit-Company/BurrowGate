@@ -10,8 +10,12 @@ import {
 	secureCookieForRequest,
 } from "../config.ts";
 import { repository, type SortDirection, type TabMetricsScope } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 import { addAsnRule, addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
 import { addRouteAsnRule, addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } from "../services/route-ip-rule-service.ts";
+import { isAuthorized as isHaAuthorized, withDurability } from "../services/ha-mesh-service.ts";
+import { haTlsCertificate } from "../services/ha-tls-service.ts";
+import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 import {
 	authenticateAdminPassword,
 	beginPendingLogin,
@@ -146,6 +150,28 @@ async function guard(request: Request): Promise<Response | { user: Authenticated
 	const session = await getAdminSession(request);
 	const user = session ? await resolveAdminUser(session) : null;
 	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
+}
+
+async function consumeAdminRecoveryCode(userId: string, codeHash: string): Promise<boolean> {
+	if (!config.ha.enabled || config.ha.role === "primary") {
+		return await repository.consumeAdminRecoveryCodeByHash(userId, codeHash, Date.now());
+	}
+	try {
+		const url = new URL("/_burrowgate/api/admin/ha/consume-recovery-code", config.ha.primaryAdminUrl!);
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { authorization: `Bearer ${config.ha.sharedToken}`, "content-type": "application/json" },
+			body: JSON.stringify({ userId, codeHash }),
+		});
+		if (!response.ok) return false;
+		const body = (await response.json()) as { consumed?: boolean };
+		return body.consumed === true;
+	} catch (error) {
+		Logger.error("[BurrowGate] HA: failed to reach the primary to consume a recovery code - failing the login attempt rather than risking double-consumption", {
+			error,
+		});
+		return false;
+	}
 }
 
 function mutationGuard(request: Request): Response | null {
@@ -506,7 +532,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		let valid = false;
 		if (recoveryCodeInput) {
 			const hash = await sha256Hex(normalizeRecoveryCode(recoveryCodeInput));
-			valid = await repository.consumeAdminRecoveryCodeByHash(user.id, hash, Date.now());
+			valid = await consumeAdminRecoveryCode(user.id, hash);
 		} else if (code && user.totp_secret_encrypted) {
 			valid = await verifyTotpCode(await decryptSecret(user.totp_secret_encrypted), code);
 		}
@@ -693,6 +719,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const created = await createSite(await parseSiteInput(ctx.req));
 			await loadBalancer.refreshSite(created.site.id);
@@ -706,10 +734,10 @@ export function registerAdminRoutes(app: Web<any>): void {
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			return jsonResponse(
-				{
+				await withDurability({
 					site: siteView(created.site, await repository.primaryOrigin(created.site.id)),
 					generatedSigningSecret: created.generatedSigningSecret,
-				},
+				}),
 				201,
 			);
 		} catch (error) {
@@ -725,6 +753,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const { site, pendingChange } = await updateSite(ctx.params.id, await parseSiteInput(ctx.req), user.username);
 			await loadBalancer.refreshSite(site.id);
@@ -738,10 +768,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: pendingChange ? `Updated site ${site.name} (${pendingChange.summary}, scheduled)` : `Updated site ${site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({
-				site: siteView(site, await repository.primaryOrigin(site.id)),
-				pendingChange: pendingChange ? pendingChangeView(pendingChange) : null,
-			});
+			return jsonResponse(
+				await withDurability({
+					site: siteView(site, await repository.primaryOrigin(site.id)),
+					pendingChange: pendingChange ? pendingChangeView(pendingChange) : null,
+				}),
+			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update site";
 			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
@@ -756,6 +788,9 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const pending = await pendingOrFailedChangeFor("site", ctx.params.id);
 			if (!pending) return jsonResponse({ error: "No pending change for this site" }, 404);
@@ -783,6 +818,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const pending = await pendingOrFailedChangeFor("site", ctx.params.id);
 			if (!pending) return jsonResponse({ error: "No pending change for this site" }, 404);
@@ -818,6 +855,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await siteAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = await ctx.req.json();
 			const policy = await updateSiteNotificationPolicy(ctx.params.id, body);
@@ -844,6 +883,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const site = await repository.siteById(ctx.params.id);
 		if (!site) return jsonResponse({ error: "Site not found" }, 404);
 		if (siteCertificateIssuanceActive(site.id))
@@ -893,7 +934,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted site ${site.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true, warning });
+		return jsonResponse(await withDurability({ deleted: true, warning }));
 	});
 
 	app.get("/_burrowgate/api/admin/sites/:id/health", async (ctx: any) => {
@@ -980,6 +1021,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const originsAccess = await requireSiteAccess(ctx.params.id, user, "manage");
 		if ("error" in originsAccess) return originsAccess.error;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const origin = await createOrigin(ctx.params.id, await parseOriginInput(ctx.req));
 			staticAssetCache.purge({ siteId: ctx.params.id });
@@ -993,7 +1036,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added origin ${origin.name} to site`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ origin: originView(origin) }, 201);
+			return jsonResponse(await withDurability({ origin: originView(origin) }), 201);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to create origin";
 			return jsonResponse({ error: message }, message === "Site not found" ? 404 : 400);
@@ -1011,6 +1054,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
 			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
 			if (denied) return denied;
+			const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+			if (forwarded) return forwarded;
 			const origin = await updateOrigin(existing.site_id, ctx.params.id, await parseOriginInput(ctx.req));
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
@@ -1023,7 +1068,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Updated origin ${origin.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ origin: originView(origin) });
+			return jsonResponse(await withDurability({ origin: originView(origin) }));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update origin";
 			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
@@ -1041,6 +1086,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
 			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
 			if (denied) return denied;
+			const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+			if (forwarded) return forwarded;
 			const origin = await generateOriginMtlsCertificate(existing.site_id, ctx.params.id);
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
@@ -1088,6 +1135,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 			if (denied) return denied;
 			const site = await repository.siteById(existing.site_id);
 			if (!site) return jsonResponse({ error: "Site not found" }, 404);
+			const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+			if (forwarded) return forwarded;
 			const { origin, privateKeyPem } = await generateOriginServerCertificate(site, existing.site_id, ctx.params.id);
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
@@ -1133,6 +1182,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 			if (!existing) return jsonResponse({ error: "Origin not found" }, 404);
 			const denied = requireLevel(await siteAccessLevel(user, existing.site_id), "manage");
 			if (denied) return denied;
+			const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+			if (forwarded) return forwarded;
 			await deleteOrigin(existing.site_id, ctx.params.id);
 			staticAssetCache.purge({ siteId: existing.site_id });
 			await loadBalancer.refreshSite(existing.site_id);
@@ -1145,7 +1196,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Deleted origin ${existing.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ deleted: true });
+			return jsonResponse(await withDurability({ deleted: true }));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to delete origin";
 			return jsonResponse({ error: message }, message === "Origin not found" ? 404 : 400);
@@ -1209,6 +1260,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Create a site before adding route policies" }, 400);
 		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routePolicyDenied) return routePolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const policy = await createRoutePolicy(selection.site.id, await parseRoutePolicyInput(ctx.req));
 			await recordAdminAudit({
@@ -1219,7 +1272,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Created route policy ${policy.name} on ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ policy: routePolicyView(policy) }, 201);
+			return jsonResponse(await withDurability({ policy: routePolicyView(policy) }), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create route policy" }, 400);
 		}
@@ -1236,6 +1289,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routePolicyDenied) return routePolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const policy = await updateRoutePolicy(selection.site.id, ctx.params.id, await parseRoutePolicyInput(ctx.req));
 			invalidateRouteRateLimiter(policy.id);
@@ -1247,7 +1302,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Updated route policy ${policy.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ policy: routePolicyView(policy) });
+			return jsonResponse(await withDurability({ policy: routePolicyView(policy) }));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to update route policy";
 			return jsonResponse({ error: message }, message === "Route policy not found" ? 404 : 400);
@@ -1265,6 +1320,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const routePolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routePolicyDenied) return routePolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			await deleteRoutePolicy(selection.site.id, ctx.params.id);
 			invalidateRouteRateLimiter(ctx.params.id);
@@ -1276,7 +1333,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Deleted a route policy on ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ ok: true });
+			return jsonResponse(await withDurability({ ok: true }));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unable to delete route policy";
 			return jsonResponse({ error: message }, message === "Route policy not found" ? 404 : 400);
@@ -1313,6 +1370,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { networkCidr?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.networkCidr || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid rule" }, 400);
@@ -1331,7 +1390,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on route policy ${routePolicy.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
 		}
@@ -1350,6 +1409,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteRouteIpRuleForRoute(ctx.params.ruleId, routePolicy.id);
 		invalidateRouteNetworkPolicy(routePolicy.id);
 		await recordAdminAudit({
@@ -1360,7 +1421,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted an IP rule on route policy ${routePolicy.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.post("/_burrowgate/api/admin/route-policies/:id/country-rules", async (ctx: any) => {
@@ -1376,6 +1437,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { countryCode?: string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.countryCode || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid country rule" }, 400);
@@ -1394,7 +1457,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added country rule (${rule.action}) for ${rule.country_code} on route policy ${routePolicy.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
 		}
@@ -1413,6 +1476,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteRouteCountryRuleForRoute(ctx.params.ruleId, routePolicy.id);
 		invalidateRouteNetworkPolicy(routePolicy.id);
 		await recordAdminAudit({
@@ -1423,7 +1488,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted a country rule on route policy ${routePolicy.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.post("/_burrowgate/api/admin/route-policies/:id/asn-rules", async (ctx: any) => {
@@ -1439,6 +1504,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { asn?: number | string; action?: IpRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.asn || !["allow", "pass", "block", "challenge"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid ASN rule" }, 400);
@@ -1457,7 +1524,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on route policy ${routePolicy.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
 		}
@@ -1476,6 +1543,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!routePolicy) return jsonResponse({ error: "Route policy not found" }, 404);
 		const routeRuleDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (routeRuleDenied) return routeRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteRouteAsnRuleForRoute(ctx.params.ruleId, routePolicy.id);
 		invalidateRouteNetworkPolicy(routePolicy.id);
 		await recordAdminAudit({
@@ -1486,7 +1555,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted an ASN rule on route policy ${routePolicy.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.get("/_burrowgate/api/admin/cache", async (ctx) => {
@@ -1559,6 +1628,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Create a site before configuring access authentication" }, 400);
 		const accessSettingsDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessSettingsDenied) return accessSettingsDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as any;
 			await updateAccessSettings(selection.site.id, body ?? {});
@@ -1570,7 +1641,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Updated access-list settings for ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(await accessListView(selection.site.id));
+			return jsonResponse(await withDurability(await accessListView(selection.site.id)));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update access-list settings" }, 400);
 		}
@@ -1587,6 +1658,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Create a site before generating a verification token" }, 400);
 		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const result = await generateSessionVerificationToken(selection.site.id);
 		await recordAdminAudit({
 			actor: user,
@@ -1610,6 +1683,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await revokeSessionVerificationToken(selection.site.id);
 		await recordAdminAudit({
 			actor: user,
@@ -1645,6 +1720,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Create a site before configuring single sign-on" }, 400);
 		const denied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const settings = await updateSiteSsoSettings(selection.site.id, (await ctx.req.json()) as any);
 			await recordAdminAudit({
@@ -1672,6 +1749,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Create a site before adding users" }, 400);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const actor = user;
 		try {
 			const user = await createAccessUser(selection.site.id, (await ctx.req.json()) as any);
@@ -1700,6 +1779,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const actor = user;
 		try {
 			const user = await updateAccessUser(selection.site.id, ctx.params.id, (await ctx.req.json()) as any);
@@ -1729,6 +1810,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const target = await repository.accessUserById(ctx.params.id);
 			await removeAccessUser(selection.site.id, ctx.params.id);
@@ -1758,6 +1841,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { required?: unknown };
 			const updated = await setAccessUserTotpRequired(selection.site.id, ctx.params.id, body.required === true);
@@ -1787,6 +1872,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const updated = await resetAccessUserTwoFactor(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
@@ -1815,6 +1902,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const { view, token } = await generateAccessUserApiToken(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
@@ -1843,6 +1932,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const updated = await revokeAccessUserApiToken(selection.site.id, ctx.params.id);
 			await recordAdminAudit({
@@ -1871,6 +1962,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "Selected site was not found" }, 404);
 		const accessUserDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (accessUserDenied) return accessUserDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { userIds?: unknown };
 			const imported = await importAccessUsers(selection.site.id, body?.userIds);
@@ -2873,6 +2966,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (!selection.site) return jsonResponse({ error: "No site configured" }, 400);
 		const networkPolicyDenied = requireLevel(await siteAccessLevel(user, selection.site.id), "manage");
 		if (networkPolicyDenied) return networkPolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { defaultIpAction?: DefaultNetworkAction; defaultCountryAction?: DefaultNetworkAction };
 			const defaultIpAction = parseDefaultNetworkAction(body.defaultIpAction, selection.site.default_ip_action ?? "inherit");
@@ -2887,7 +2982,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Updated default network policy for ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ defaultIpAction, defaultCountryAction });
+			return jsonResponse(await withDurability({ defaultIpAction, defaultCountryAction }));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
 		}
@@ -2922,7 +3017,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added country rule (${rule.action}) for ${rule.country_code} on ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
 		}
@@ -2949,7 +3044,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted a country rule on ${selection.site.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.post("/_burrowgate/api/admin/asn-rules", async (ctx) => {
@@ -2981,7 +3076,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on ${selection.site.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
 		}
@@ -3008,7 +3103,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			summary: `Deleted an ASN rule on ${selection.site.name}`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.get("/_burrowgate/api/admin/rules", async (ctx) => {
@@ -3163,6 +3258,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const access = await requireSiteAccess(ctx.params.id, user, "manage");
 		if ("error" in access) return access.error;
 		const { site } = access;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as Record<string, unknown>;
 			if ((body.acmeChallengeType === "dns-01" || body.acmeDnsProviderId) && !isAdministrator(user)) {
@@ -3203,6 +3300,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const access = await requireSiteAccess(ctx.params.id, user, "manage");
 		if ("error" in access) return access.error;
 		const { site } = access;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { certificatePem?: string; privateKeyPem?: string; forceHttps?: boolean };
 			if (!body.certificatePem || !body.privateKeyPem) throw new Error("Certificate and private-key PEM are required");
@@ -3233,6 +3332,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const access = await requireSiteAccess(ctx.params.id, user, "manage");
 		if ("error" in access) return access.error;
 		const { site } = access;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as {
 				email?: string;
@@ -3279,6 +3380,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const certificate = await repository.certificateBySite(site.id);
 		if (!certificate || certificate.source !== "letsencrypt") return jsonResponse({ error: "This site does not have a Let's Encrypt certificate" }, 400);
 		const settings = await repository.ensureTlsSettings(site.id);
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			await issueLetsEncryptCertificate(site, {
 				email: settings.acme_email,
@@ -3322,6 +3425,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 				);
 			}
 		}
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteCertificate(site.id);
 		await updateTlsSettings(site, { mode: "disabled", forceHttps: false });
 		await recordCertificateEvent(site.id, certificate?.id ?? null, "warning", "Certificate removed");
@@ -3350,6 +3455,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { currentPassword?: unknown; newPassword?: unknown };
 			await changeOwnPassword(user.id, body.currentPassword, body.newPassword);
@@ -3365,6 +3472,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { code?: unknown };
 			const codes = await regenerateOwnRecoveryCodes(user.id, body.code);
@@ -3458,6 +3567,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { nickname?: unknown };
 			await renameOwnWebauthnCredential(user.id, ctx.params.id, body.nickname);
@@ -3473,6 +3584,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			await removeOwnWebauthnCredential(user.id, ctx.params.id);
 			return jsonResponse({ ok: true });
@@ -3497,6 +3610,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const settings = await updateAdminSsoSettings((await ctx.req.json()) as any);
 			await recordAdminAudit({
@@ -3539,6 +3654,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const created = await createAdminUser((await ctx.req.json()) as any, user.id);
 			await recordAdminAudit({
@@ -3563,6 +3680,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const updated = await updateAdminUser(ctx.params.id, (await ctx.req.json()) as any);
 			await recordAdminAudit({
@@ -3589,6 +3708,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
 		if (ctx.params.id === user.id) return jsonResponse({ error: "You cannot delete your own account" }, 400);
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const target = await repository.adminUserById(ctx.params.id);
 			await deleteAdminUser(ctx.params.id);
@@ -3615,6 +3736,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { password?: unknown };
 			await resetAdminUserPassword(ctx.params.id, body.password);
@@ -3642,6 +3765,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			await resetAdminUserTwoFactor(ctx.params.id);
 			const target = await repository.adminUserById(ctx.params.id);
@@ -3726,5 +3851,35 @@ export function registerAdminRoutes(app: Web<any>): void {
 			);
 		}
 		return response;
+	});
+
+	app.get("/_burrowgate/api/admin/ha/certificate", async (ctx) => {
+		if (!config.ha.enabled) return jsonResponse({ error: "Not found" }, 404);
+		if (!(await isHaAuthorized(ctx.req))) return jsonResponse({ error: "Unauthorized" }, 401);
+		const { cert } = await haTlsCertificate();
+		return jsonResponse({ cert });
+	});
+
+	app.post("/_burrowgate/api/admin/ha/resolve-admin-session", async (ctx) => {
+		if (!config.ha.enabled) return jsonResponse({ error: "Not found" }, 404);
+		if (!(await isHaAuthorized(ctx.req))) return jsonResponse({ error: "Unauthorized" }, 401);
+		if (config.ha.role !== "primary") return jsonResponse({ error: "This node is not the HA primary" }, 400);
+		const body = (await ctx.req.json()) as { tokenHash?: unknown };
+		if (typeof body.tokenHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.tokenHash)) return jsonResponse({ error: "Invalid token hash" }, 400);
+		const session = await repository.adminByHash(body.tokenHash);
+		if (!session || session.expires_at <= Date.now()) return jsonResponse({ session: null });
+		await repository.touchAdmin(session.id, Date.now());
+		return jsonResponse({ session });
+	});
+
+	app.post("/_burrowgate/api/admin/ha/consume-recovery-code", async (ctx) => {
+		if (!config.ha.enabled) return jsonResponse({ error: "Not found" }, 404);
+		if (!(await isHaAuthorized(ctx.req))) return jsonResponse({ error: "Unauthorized" }, 401);
+
+		if (config.ha.role !== "primary") return jsonResponse({ error: "This node is not the HA primary" }, 400);
+		const body = (await ctx.req.json()) as { userId?: string; codeHash?: string };
+		if (!body.userId || !body.codeHash) return jsonResponse({ error: "userId and codeHash are required" }, 400);
+		const consumed = await repository.consumeAdminRecoveryCodeByHash(body.userId, body.codeHash, Date.now());
+		return jsonResponse({ consumed });
 	});
 }

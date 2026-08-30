@@ -2,6 +2,7 @@ import type { Web } from "@rabbit-company/web";
 import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { repository } from "../db/repository.ts";
 import { config } from "../config.ts";
+import { withDurability } from "../services/ha-mesh-service.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { buildStream, pickStreamRestartFields, streamRestartDiffers, streamView, type StreamInput } from "../services/stream-service.ts";
 import {
@@ -40,6 +41,7 @@ import type {
 	StreamRuleAction,
 } from "../types.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 import { streamsAdminPage } from "../ui/streams-admin-page.ts";
 import {
 	isAdministrator,
@@ -312,6 +314,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const stream = await buildStream(await body(ctx.req));
 			await saveAndActivate(stream);
@@ -323,7 +327,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Created stream ${stream.name} (port ${stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ stream: streamView(stream), statuses: streamProxyManager.statusesView() }, 201);
+			return jsonResponse(await withDurability({ stream: streamView(stream), statuses: streamProxyManager.statusesView() }), 201);
 		} catch (error) {
 			return mutationError(error, "Unable to create stream");
 		}
@@ -339,6 +343,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!previous) return jsonResponse({ error: "Stream not found" }, 404);
 		const denied = requireLevel(await streamAccessLevel(user, previous.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const payload = await body(ctx.req);
 			const candidate = await buildStream(payload, previous);
@@ -368,11 +374,13 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 					summary: `Updated stream ${immediate.name} (${pendingChange.summary}, scheduled)`,
 					ip: getClientIp(ctx) ?? "unknown",
 				});
-				return jsonResponse({
-					stream: streamView(immediate),
-					pendingChange: pendingChangeView(pendingChange),
-					statuses: streamProxyManager.statusesView(),
-				});
+				return jsonResponse(
+					await withDurability({
+						stream: streamView(immediate),
+						pendingChange: pendingChangeView(pendingChange),
+						statuses: streamProxyManager.statusesView(),
+					}),
+				);
 			}
 			await saveAndActivate(candidate, previous);
 			invalidateStreamRateLimiter(candidate.id);
@@ -384,7 +392,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Updated stream ${candidate.name} (port ${candidate.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ stream: streamView(candidate), pendingChange: null, statuses: streamProxyManager.statusesView() });
+			return jsonResponse(await withDurability({ stream: streamView(candidate), pendingChange: null, statuses: streamProxyManager.statusesView() }));
 		} catch (error) {
 			return mutationError(error, "Unable to update stream");
 		}
@@ -398,6 +406,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await streamAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const pending = await pendingOrFailedChangeFor("stream", ctx.params.id);
 			if (!pending) return jsonResponse({ error: "No pending change for this stream" }, 404);
@@ -425,6 +435,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const denied = requireLevel(await streamAccessLevel(user, ctx.params.id), "manage");
 		if (denied) return denied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const pending = await pendingOrFailedChangeFor("stream", ctx.params.id);
 			if (!pending) return jsonResponse({ error: "No pending change for this stream" }, 404);
@@ -451,6 +463,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const stream = await repository.streamById(ctx.params.id);
 		if (!stream) return jsonResponse({ error: "Stream not found" }, 404);
 		await streamProxyManager.remove(stream.id);
@@ -466,7 +480,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			summary: `Deleted stream ${stream.name} (port ${stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.get("/_burrowgate/api/admin/streams/active", async (ctx) => {
@@ -696,6 +710,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const networkPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (networkPolicyDenied) return networkPolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { defaultIpAction?: StreamDefaultNetworkAction; defaultCountryAction?: StreamDefaultNetworkAction };
 			const defaultIpAction = parseStreamDefaultNetworkAction(body.defaultIpAction, selection.stream.default_ip_action ?? "inherit");
@@ -711,7 +727,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Updated default network policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ defaultIpAction, defaultCountryAction });
+			return jsonResponse(await withDurability({ defaultIpAction, defaultCountryAction }));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
 		}
@@ -728,6 +744,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const countryRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (countryRuleDenied) return countryRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { countryCode?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.countryCode || !["allow", "block"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid country rule" }, 400);
@@ -747,7 +765,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Added country rule (${rule.action}) for ${rule.country_code} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid country rule" }, 400);
 		}
@@ -764,6 +782,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const countryRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (countryRuleDenied) return countryRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteStreamCountryRuleForStream(ctx.params.id!, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
 		await recordAdminAudit({
@@ -774,7 +794,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			summary: `Deleted a country rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.post("/_burrowgate/api/admin/streams/asn-rules", async (ctx) => {
@@ -788,6 +808,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const asnRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (asnRuleDenied) return asnRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { asn?: number | string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.asn || !["allow", "block"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid ASN rule" }, 400);
@@ -807,7 +829,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Added ASN rule (${rule.action}) for AS${rule.asn} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid ASN rule" }, 400);
 		}
@@ -824,6 +846,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const asnRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (asnRuleDenied) return asnRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteStreamAsnRuleForStream(ctx.params.id!, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
 		await recordAdminAudit({
@@ -834,7 +858,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			summary: `Deleted an ASN rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.get("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
@@ -870,6 +894,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (ipRuleDenied) return ipRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { networkCidr?: string; action?: StreamRuleAction; reason?: string; expiresAt?: number | string | null };
 		if (!body.networkCidr || !["allow", "block"].includes(body.action ?? "")) {
 			return jsonResponse({ error: "Invalid rule" }, 400);
@@ -889,7 +915,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Added IP rule (${rule.action}) for ${rule.network_cidr} on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(rule, 201);
+			return jsonResponse(await withDurability(rule), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Invalid rule" }, 400);
 		}
@@ -906,6 +932,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (ipRuleDenied) return ipRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await repository.deleteStreamRuleForStream(ctx.params.id!, selection.stream.id);
 		invalidateStreamNetworkPolicy(selection.stream.id);
 		await recordAdminAudit({
@@ -916,7 +944,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			summary: `Deleted an IP rule on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted: true });
+		return jsonResponse(await withDurability({ deleted: true }));
 	});
 
 	app.post("/_burrowgate/api/admin/streams/ip-rules/bulk-delete", async (ctx) => {
@@ -930,6 +958,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const ipRuleDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (ipRuleDenied) return ipRuleDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const body = (await ctx.req.json()) as { ids?: unknown };
 		const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
 		if (ids.length === 0 || ids.length > 200) return jsonResponse({ error: "Provide 1 to 200 rule IDs" }, 400);
@@ -943,7 +973,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			summary: `Deleted ${deleted} IP rule(s) on stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ deleted });
+		return jsonResponse(await withDurability({ deleted }));
 	});
 
 	app.get("/_burrowgate/api/admin/streams/protection-catalog", async (ctx) => {
@@ -974,6 +1004,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const protectionPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (protectionPolicyDenied) return protectionPolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = await ctx.req.json();
 			const protectionPolicyJson = serializeStreamProtectionPolicy(body, selection.stream.protection_policy_json);
@@ -987,7 +1019,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Updated protection policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson }));
+			return jsonResponse(await withDurability(resolveStreamProtectionPolicy({ ...selection.stream, protection_policy_json: protectionPolicyJson })));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update protection policy" }, 400);
 		}
@@ -1014,6 +1046,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const bandwidthPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (bandwidthPolicyDenied) return bandwidthPolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = await ctx.req.json();
 			const bandwidthPolicyJson = serializeStreamBandwidthPolicy(body, selection.stream.bandwidth_policy_json);
@@ -1027,7 +1061,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Updated bandwidth limit policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(resolveStreamBandwidthPolicy({ ...selection.stream, bandwidth_policy_json: bandwidthPolicyJson }));
+			return jsonResponse(await withDurability(resolveStreamBandwidthPolicy({ ...selection.stream, bandwidth_policy_json: bandwidthPolicyJson })));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update bandwidth limit policy" }, 400);
 		}
@@ -1055,6 +1089,8 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
 		const notificationPolicyDenied = requireLevel(await streamAccessLevel(user, selection.stream.id), "manage");
 		if (notificationPolicyDenied) return notificationPolicyDenied;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = await ctx.req.json();
 			const parsed = parseStreamNotificationPolicyInput(body, selection.stream.notification_policy_json);

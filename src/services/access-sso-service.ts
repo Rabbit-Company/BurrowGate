@@ -1,6 +1,6 @@
 import { repository } from "../db/repository.ts";
 import type { AccessUserRecord, SiteSsoSettingsRecord } from "../types.ts";
-import { randomId, randomToken } from "../utils/crypto.ts";
+import { randomToken, sha256Hex } from "../utils/crypto.ts";
 import { normalizeAccessUsername } from "./access-list-service.ts";
 import {
 	buildAuthorizationUrl,
@@ -168,7 +168,7 @@ async function resolveOrProvisionAccessUser(siteId: string, identity: VerifiedOi
 		} else {
 			const now = Date.now();
 			user = {
-				id: randomId("user"),
+				id: `user_sso_${(await sha256Hex(identity.subject)).slice(0, 32)}`,
 				username,
 				password_hash: await Bun.password.hash(randomToken(32), { algorithm: "argon2id" }),
 				enabled: 1,

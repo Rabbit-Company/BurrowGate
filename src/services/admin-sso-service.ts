@@ -1,6 +1,6 @@
 import { repository } from "../db/repository.ts";
 import type { AdminSsoSettingsRecord, AdminUserRecord } from "../types.ts";
-import { randomId, randomToken } from "../utils/crypto.ts";
+import { randomToken, sha256Hex } from "../utils/crypto.ts";
 import { normalizeAdminUsername } from "./admin-user-service.ts";
 import {
 	buildAuthorizationUrl,
@@ -162,7 +162,7 @@ async function resolveOrProvisionAdminUser(identity: VerifiedOidcIdentity): Prom
 	}
 	const now = Date.now();
 	const user: AdminUserRecord = {
-		id: randomId("admin"),
+		id: `admin_sso_${(await sha256Hex(identity.subject)).slice(0, 32)}`,
 		username,
 		password_hash: await Bun.password.hash(randomToken(32), { algorithm: "argon2id" }),
 		role: "member",

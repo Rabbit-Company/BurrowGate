@@ -51,6 +51,10 @@ export function invalidateRouteNetworkPolicy(routePolicyId: string): void {
 	ruleCache.delete(routePolicyId);
 }
 
+export function invalidateAllRouteNetworkPolicy(): void {
+	ruleCache.clear();
+}
+
 function active<T extends { expires_at: number | null }>(record: T, now: number): boolean {
 	return record.expires_at === null || record.expires_at > now;
 }

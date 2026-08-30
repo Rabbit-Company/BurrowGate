@@ -860,6 +860,11 @@ form.grid label {
 	background: #4c0519;
 	border-color: #be123c;
 }
+.toast.warn {
+	color: #fef3c7;
+	background: #451a03;
+	border-color: #b45309;
+}
 
 .challenge {
 	max-width: 620px;
@@ -1387,6 +1392,40 @@ form.grid label {
 	max-width: 100%;
 	overflow-wrap: anywhere;
 	color: #99f6e4;
+}
+.setup-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 18px;
+}
+.setup-card {
+	padding: 16px;
+	border: 1px solid #263247;
+	border-radius: 12px;
+	background: rgba(15, 23, 42, 0.4);
+}
+.setup-card h3 {
+	margin: 0 0 4px;
+}
+.restart-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 50;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	background: rgba(4, 7, 12, 0.85);
+}
+.restart-overlay-card {
+	width: 100%;
+	max-width: 420px;
+	padding: 24px;
+	text-align: center;
+	background: #0b1220;
+	border: 1px solid #263247;
+	border-radius: 18px;
+	box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 .pending-change-banner {
 	display: flex;
@@ -2171,4 +2210,9 @@ form.grid label {
 
 #providerTestResult {
 	margin-top: 12px;
+}
+
+#joinCodePanel {
+	margin-top: 12px;
+	margin-bottom: 12px;
 }

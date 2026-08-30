@@ -15,10 +15,12 @@ import {
 import { awsListNacls } from "../services/firewall-sync/aws-nacl-adapter.ts";
 import { ovhListIps, ovhRequestCredential } from "../services/firewall-sync/ovh-adapter.ts";
 import { unifiListSites } from "../services/firewall-sync/unifi-adapter.ts";
+import { withDurability } from "../services/ha-mesh-service.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { firewallSyncPage } from "../ui/firewall-sync-page.ts";
 import { repository } from "../db/repository.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
 	const session = await getAdminSession(request);
@@ -183,6 +185,8 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const record = await createFirewallSyncProvider((await ctx.req.json()) as never);
 			await recordAdminAudit({
@@ -193,7 +197,7 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 				summary: `Added firewall sync provider "${record.name}" (${record.type})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(firewallSyncProviderView(record), 201);
+			return jsonResponse(await withDurability(firewallSyncProviderView(record)), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create provider" }, 400);
 		}
@@ -207,6 +211,8 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const record = await updateFirewallSyncProvider(ctx.params.id, (await ctx.req.json()) as never);
 			await recordAdminAudit({
@@ -217,7 +223,7 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 				summary: `Updated firewall sync provider "${record.name}"`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(firewallSyncProviderView(record));
+			return jsonResponse(await withDurability(firewallSyncProviderView(record)));
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update provider" }, 400);
 		}
@@ -231,6 +237,8 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		const { teardownError } = await firewallSyncService.deleteProvider(ctx.params.id);
 		await recordAdminAudit({
 			actor: user,
@@ -240,7 +248,7 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 			summary: teardownError ? `Deleted firewall sync provider (remote cleanup failed: ${teardownError})` : "Deleted firewall sync provider",
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ ok: true, teardownError });
+		return jsonResponse(await withDurability({ ok: true, teardownError }));
 	});
 
 	app.post("/_burrowgate/api/admin/firewall-sync/providers/:id/test", async (ctx: any) => {
@@ -288,6 +296,8 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const body = (await ctx.req.json()) as { networkCidr?: string; note?: string };
 			const entry = await addFirewallSyncWhitelistCidr(String(body.networkCidr ?? ""), body.note ?? null);
@@ -299,7 +309,7 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 				summary: `Added firewall sync whitelist entry ${entry.networkCidr}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(entry, 201);
+			return jsonResponse(await withDurability(entry), 201);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to add whitelist entry" }, 400);
 		}
@@ -313,6 +323,8 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		await removeFirewallSyncWhitelistCidr(ctx.params.id);
 		await recordAdminAudit({
 			actor: user,
@@ -322,6 +334,6 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 			summary: "Removed firewall sync whitelist entry",
 			ip: getClientIp(ctx) ?? "unknown",
 		});
-		return jsonResponse({ ok: true });
+		return jsonResponse(await withDurability({ ok: true }));
 	});
 }

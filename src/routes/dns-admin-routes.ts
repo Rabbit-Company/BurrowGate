@@ -7,6 +7,7 @@ import { getAdminSession } from "../services/session-service.ts";
 import { dnsProvidersPage } from "../ui/dns-providers-page.ts";
 import { repository } from "../db/repository.ts";
 import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
 	const session = await getAdminSession(request);
@@ -51,6 +52,8 @@ export function registerDnsAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const record = await createDnsProvider((await ctx.req.json()) as never);
 			await recordAdminAudit({
@@ -75,6 +78,8 @@ export function registerDnsAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			const record = await updateDnsProvider(ctx.params.id, (await ctx.req.json()) as never);
 			await recordAdminAudit({
@@ -99,6 +104,8 @@ export function registerDnsAdminRoutes(app: Web<any>): void {
 		const { user } = guarded;
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
 		try {
 			await deleteDnsProvider(ctx.params.id);
 			await recordAdminAudit({

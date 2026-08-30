@@ -13,6 +13,24 @@ import type { AccessSessionRecord, AdminSessionRecord, SiteRecord } from "../typ
 import { parseCookies, serializeCookie } from "../utils/cookies.ts";
 import { randomId, randomToken, sha256Hex } from "../utils/crypto.ts";
 import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
+import { pinnedHaTlsOptions } from "./ha-tls-service.ts";
+
+export class HaSessionPublicationError extends Error {
+	constructor(cause: unknown) {
+		super("The session could not be published to the HA primary; please retry once replication is healthy", { cause });
+		this.name = "HaSessionPublicationError";
+	}
+}
+
+async function publishSessionBeforeResponse(entityType: "admin_session" | "access_session", entityId: string, required: boolean): Promise<void> {
+	if (!required || !config.ha.enabled || config.ha.role !== "replica") return;
+	try {
+		const { haMeshService } = await import("./ha-mesh-service.ts");
+		await haMeshService.waitForRelayPublication(entityType, entityId);
+	} catch (error) {
+		throw new HaSessionPublicationError(error);
+	}
+}
 
 function cookieTokens(request: Request, names: readonly string[]): string[] {
 	const cookies = parseCookies(request.headers.get("cookie"));
@@ -48,6 +66,7 @@ export async function createAccessSession(
 	ip: string,
 	userAgentHashValue: string,
 	summary: unknown,
+	requireHaPublication = true,
 ): Promise<{ record: AccessSessionRecord; token: string; cookie: string }> {
 	if (!cookieCanBeIssuedForRequest(request)) {
 		throw new Error(insecureCookieConfigurationMessage());
@@ -77,6 +96,7 @@ export async function createAccessSession(
 		sso_sid: null,
 	};
 	await repository.insertSession(record);
+	await publishSessionBeforeResponse("access_session", record.id, requireHaPublication);
 	return {
 		record,
 		token,
@@ -105,7 +125,8 @@ export async function createAdminSession(
 	username: string,
 	userId: string | null = null,
 	ssoSid: string | null = null,
-): Promise<{ token: string; cookie: string }> {
+	requireHaPublication = true,
+): Promise<{ record: AdminSessionRecord; token: string; cookie: string }> {
 	if (!cookieCanBeIssuedForRequest(request)) {
 		throw new Error(insecureCookieConfigurationMessage());
 	}
@@ -123,7 +144,9 @@ export async function createAdminSession(
 		sso_sid: ssoSid,
 	};
 	await repository.insertAdmin(session);
+	await publishSessionBeforeResponse("admin_session", session.id, requireHaPublication);
 	return {
+		record: session,
 		token,
 		cookie: serializeCookie(adminCookieName(secure), token, {
 			secure,
@@ -136,9 +159,28 @@ export async function createAdminSession(
 
 export async function getAdminSession(request: Request): Promise<AdminSessionRecord | null> {
 	for (const token of cookieTokens(request, adminCookieNames)) {
-		const session = await repository.adminByHash(await sha256Hex(token));
+		const tokenHash = await sha256Hex(token);
+		let session = await repository.adminByHash(tokenHash);
+
+		if (!session && config.ha.enabled && config.ha.role === "replica" && config.ha.primaryAdminUrl) {
+			try {
+				const url = new URL("/_burrowgate/api/admin/ha/resolve-admin-session", config.ha.primaryAdminUrl);
+				const response = await fetch(url, {
+					method: "POST",
+					headers: { authorization: `Bearer ${config.ha.sharedToken}`, "content-type": "application/json" },
+					body: JSON.stringify({ tokenHash }),
+					signal: AbortSignal.timeout(3_000),
+					tls: await pinnedHaTlsOptions(),
+				});
+				if (response.ok) {
+					const body = (await response.json()) as { session?: AdminSessionRecord | null };
+					if (body.session?.token_hash === tokenHash) session = body.session;
+				}
+			} catch {}
+		}
 		if (!session || session.expires_at <= Date.now()) continue;
-		await repository.touchAdmin(session.id, Date.now());
+
+		if (await repository.adminByHash(tokenHash)) await repository.touchAdmin(session.id, Date.now());
 		return session;
 	}
 	return null;

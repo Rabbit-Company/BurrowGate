@@ -844,8 +844,15 @@ function debounce(callback, delay = 300) {
 	};
 }
 
+let pendingDurabilityWarning = false;
+
 function showToast(message, kind = "ok") {
 	const toast = byId("toast");
+	if (kind === "ok" && pendingDurabilityWarning) {
+		message = `${message} Not yet confirmed durable on a majority of cluster members - will retry.`;
+		kind = "warn";
+	}
+	pendingDurabilityWarning = false;
 	toast.textContent = message;
 	toast.className = `toast ${kind}`;
 	clearTimeout(showToast.timer);
@@ -865,6 +872,7 @@ async function api(path, options = {}, siteScoped = true) {
 	}
 	const data = await response.json();
 	if (!response.ok) throw new Error(data.error ?? "Request failed");
+	if (data && typeof data === "object" && "durabilityConfirmed" in data) pendingDurabilityWarning = data.durabilityConfirmed === false;
 	return data;
 }
 

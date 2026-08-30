@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Web } from "@rabbit-company/web";
+import { config } from "../src/config.ts";
 import { repository } from "../src/db/repository.ts";
 import { registerFirewallSyncAdminRoutes } from "../src/routes/firewall-sync-admin-routes.ts";
 import { createAdminUser } from "../src/services/admin-user-service.ts";
@@ -15,13 +16,13 @@ afterEach(async () => {
 
 async function administratorCookie(): Promise<string> {
 	const user = await createAdminUser({ username: `fw-admin-${crypto.randomUUID()}`, password: "password123", role: "administrator" }, "test-suite");
-	const { cookie } = await createAdminSession(new Request("http://admin.test/"), user.username, user.id);
+	const { cookie } = await createAdminSession(new Request("http://admin.test/"), user.username, user.id, null, false);
 	return cookie.split(";")[0]!;
 }
 
 async function memberCookie(): Promise<string> {
 	const user = await createAdminUser({ username: `fw-member-${crypto.randomUUID()}`, password: "password123", role: "member" }, "test-suite");
-	const { cookie } = await createAdminSession(new Request("http://admin.test/"), user.username, user.id);
+	const { cookie } = await createAdminSession(new Request("http://admin.test/"), user.username, user.id, null, false);
 	return cookie.split(";")[0]!;
 }
 
@@ -185,5 +186,119 @@ describe("firewall sync whitelist routes", () => {
 			}),
 		);
 		expect(response.status).toBe(400);
+	});
+});
+
+describe("replica forwarding for firewall sync routes", () => {
+	const originalEnabled = config.ha.enabled;
+	const originalRole = config.ha.role;
+	const originalPrimaryAdminUrl = config.ha.primaryAdminUrl;
+
+	afterEach(() => {
+		config.ha.enabled = originalEnabled;
+		config.ha.role = originalRole;
+		config.ha.primaryAdminUrl = originalPrimaryAdminUrl;
+	});
+
+	function asReplicaWithNoPrimary(): void {
+		config.ha.enabled = true;
+		config.ha.role = "replica";
+		config.ha.primaryAdminUrl = null;
+	}
+
+	test("POST /providers forwards instead of writing locally", async () => {
+		const cookie = await administratorCookie();
+		asReplicaWithNoPrimary();
+		const response = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "x", type: "nftables", acknowledgedNoWhitelist: true, config: { nftBinaryPath: "nft" } }),
+			}),
+		);
+		expect(response.status).toBe(500);
+		expect(((await response.json()) as { error: string }).error).toContain("misconfigured");
+	});
+
+	test("PUT /providers/:id forwards instead of writing locally", async () => {
+		const cookie = await administratorCookie();
+		const response = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "x", type: "nftables", acknowledgedNoWhitelist: true, config: { nftBinaryPath: "nft" } }),
+			}),
+		);
+		const { id } = (await response.json()) as { id: string };
+		asReplicaWithNoPrimary();
+		const updated = await app.handle(
+			req(`/providers/${id}`, cookie, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "y" }) }),
+		);
+		expect(updated.status).toBe(500);
+		expect(((await updated.json()) as { error: string }).error).toContain("misconfigured");
+	});
+
+	test("DELETE /providers/:id forwards instead of writing locally", async () => {
+		const cookie = await administratorCookie();
+		const response = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "x", type: "nftables", acknowledgedNoWhitelist: true, config: { nftBinaryPath: "nft" } }),
+			}),
+		);
+		const { id } = (await response.json()) as { id: string };
+		asReplicaWithNoPrimary();
+		const deleted = await app.handle(req(`/providers/${id}`, cookie, { method: "DELETE" }));
+		expect(deleted.status).toBe(500);
+		expect(((await deleted.json()) as { error: string }).error).toContain("misconfigured");
+	});
+
+	test("POST /providers/:id/sync-now runs locally on a replica instead of forwarding", async () => {
+		const cookie = await administratorCookie();
+		const response = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "x", type: "nftables", acknowledgedNoWhitelist: true, config: { nftBinaryPath: "nft" } }),
+			}),
+		);
+		const { id } = (await response.json()) as { id: string };
+		asReplicaWithNoPrimary();
+		const synced = await app.handle(req(`/providers/${id}/sync-now`, cookie, { method: "POST" }));
+
+		if (synced.status === 500) {
+			expect(((await synced.json()) as { error: string }).error).not.toContain("misconfigured");
+		}
+	});
+
+	test("POST /whitelist forwards instead of writing locally", async () => {
+		const cookie = await administratorCookie();
+		asReplicaWithNoPrimary();
+		const response = await app.handle(
+			req("/whitelist", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ networkCidr: "203.0.113.4/32" }),
+			}),
+		);
+		expect(response.status).toBe(500);
+		expect(((await response.json()) as { error: string }).error).toContain("misconfigured");
+	});
+
+	test("DELETE /whitelist/:id forwards instead of writing locally", async () => {
+		const cookie = await administratorCookie();
+		const response = await app.handle(
+			req("/whitelist", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ networkCidr: "203.0.113.5/32" }),
+			}),
+		);
+		const { id } = (await response.json()) as { id: string };
+		asReplicaWithNoPrimary();
+		const deleted = await app.handle(req(`/whitelist/${id}`, cookie, { method: "DELETE" }));
+		expect(deleted.status).toBe(500);
+		expect(((await deleted.json()) as { error: string }).error).toContain("misconfigured");
 	});
 });

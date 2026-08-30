@@ -2,6 +2,21 @@ import packageMetadata from "../../package.json" with { type: "json" };
 
 export const APP_VERSION = packageMetadata.version;
 
+export type DashboardTabKey = "web-proxy" | "streams" | "host" | "notifications" | "firewall-sync" | "dns-providers" | "cluster";
+
+export function dashboardSwitchNav(active: DashboardTabKey): string {
+	const tabs: Array<{ key: DashboardTabKey; href: string; label: string }> = [
+		{ key: "web-proxy", href: "/_burrowgate/admin", label: "Web Proxy" },
+		{ key: "streams", href: "/_burrowgate/admin/streams", label: "Streams" },
+		{ key: "host", href: "/_burrowgate/admin/host", label: "Host" },
+		{ key: "notifications", href: "/_burrowgate/admin/notifications", label: "Notifications" },
+		{ key: "firewall-sync", href: "/_burrowgate/admin/firewall-sync", label: "Firewall Sync" },
+		{ key: "dns-providers", href: "/_burrowgate/admin/dns-providers", label: "DNS Providers" },
+	];
+	tabs.push({ key: "cluster", href: "/_burrowgate/admin/cluster", label: "Cluster" });
+	return `<nav class="dashboard-switch" aria-label="Dashboard">${tabs.map((tab) => `<a${tab.key === active ? ' class="active"' : ""} href="${tab.href}">${escapeHtml(tab.label)}</a>`).join("")}</nav>`;
+}
+
 export function escapeHtml(value: unknown): string {
 	return String(value ?? "")
 		.replaceAll("&", "&amp;")

@@ -45,6 +45,10 @@ export function invalidateNetworkPolicy(siteId: string): void {
 	ruleCache.delete(siteId);
 }
 
+export function invalidateAllNetworkPolicy(): void {
+	ruleCache.clear();
+}
+
 export type NetworkDecisionSource = "ip-rule" | "asn-rule" | "country-rule" | "country-default" | "ip-default" | "route";
 export type NetworkDecisionScope = "site" | "route";
 

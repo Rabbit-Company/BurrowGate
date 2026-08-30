@@ -347,6 +347,36 @@
 								<li>In-dashboard update notifications, checking GitHub Releases hourly for a newer stable version with release notes shown on click</li>
 							</ul>
 						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<circle cx="12" cy="5" r="2.5" />
+									<circle cx="5" cy="19" r="2.5" />
+									<circle cx="19" cy="19" r="2.5" />
+									<path d="M12 7.5v4M10.3 13.3L6.7 17M13.7 13.3l3.6 3.7" />
+								</svg>
+							</div>
+							<div class="row">
+								<h3>High Availability</h3>
+								<span class="badge warn">Experimental</span>
+							</div>
+							<p>Run a cluster instead of a single instance, with no shared database.</p>
+							<ul>
+								<li>Primary/replica replication over an encrypted, certificate-pinned link - config changes reach every replica within about a second</li>
+								<li>
+									Every node keeps and serves from its own local database, so there's no network hop in the request hot path and no shared database to
+									bottleneck or fail
+								</li>
+								<li>Automatic majority-quorum election and failover once a cluster has 3 or more nodes (a 2-node cluster promotes manually instead)</li>
+								<li>Cluster epoch and quorum-loss self-fencing stop a stale or partitioned primary from staying writable once it's no longer authoritative</li>
+								<li>Sessions, logins, and IP bans replicate from whichever node handles them, so the load balancer doesn't need sticky sessions</li>
+								<li>
+									Add a node with a one-time join code from the Cluster dashboard tab - promote, forget, or monitor nodes from the same place, no env vars or
+									restarts
+								</li>
+							</ul>
+						</div>
 					</div>
 				</div>
 			</section>

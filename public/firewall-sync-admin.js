@@ -11,6 +11,8 @@ function formatDate(value) {
 	return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 }
 
+let pendingDurabilityWarning = false;
+
 async function api(path, options = {}) {
 	const response = await fetch(`${ADMIN_API}${path}`, { ...options, headers: { ...mutationHeaders, ...(options.headers ?? {}) } });
 	if (response.status === 401) {
@@ -19,11 +21,17 @@ async function api(path, options = {}) {
 	}
 	const data = await response.json();
 	if (!response.ok) throw new Error(data.error ?? "Request failed");
+	if (data && typeof data === "object" && "durabilityConfirmed" in data) pendingDurabilityWarning = data.durabilityConfirmed === false;
 	return data;
 }
 
 function showToast(message, kind = "ok") {
 	const toast = byId("toast");
+	if (kind === "ok" && pendingDurabilityWarning) {
+		message = `${message} Not yet confirmed durable on a majority of cluster members - will retry.`;
+		kind = "warn";
+	}
+	pendingDurabilityWarning = false;
 	toast.textContent = message;
 	toast.className = `toast ${kind}`;
 	clearTimeout(showToast.timer);

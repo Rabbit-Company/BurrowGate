@@ -141,6 +141,18 @@ async function cleanupTasks(now: number, batchSize: number): Promise<CleanupTask
 		name: "global notification events",
 		run: async () => await repository.deleteGlobalNotificationEventsBeforeBatch(now - config.eventRetentionDays * DAY_MS, batchSize),
 	});
+	if (config.ha.enabled && config.ha.role === "primary") {
+		tasks.push(
+			{
+				name: "HA replication changelog",
+				run: async () => await repository.deleteReplicationChangelogBeforeBatch(now - config.ha.changelogRetentionDays * DAY_MS, batchSize),
+			},
+			{
+				name: "HA dead-lettered relays",
+				run: async () => await repository.deleteDeadLetteredRelaysBeforeBatch(now - config.ha.changelogRetentionDays * DAY_MS, batchSize),
+			},
+		);
+	}
 	for (const stream of await repository.allStreams()) {
 		const cutoff = now - Number(stream.event_retention_days) * DAY_MS;
 		tasks.push(
@@ -195,7 +207,7 @@ export async function runRetentionCleanup(): Promise<void> {
 			pauseMs: config.maintenance.cleanupPauseMs,
 			timeBudgetMs: config.maintenance.cleanupTimeBudgetMs,
 		});
-		if (cleanupResult.deleted > 0) Logger.info(`[BurrowGate] Incremental retention cleanup removed ${cleanupResult.deleted} row(s)`);
+		if (cleanupResult.deleted > 0) Logger.debug(`[BurrowGate] Incremental retention cleanup removed ${cleanupResult.deleted} row(s)`);
 	} catch (error) {
 		cleanupResult.errors += 1;
 		Logger.error("[BurrowGate] Unable to prepare retention cleanup", { error });

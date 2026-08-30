@@ -24,6 +24,7 @@ const DOWN_EVENT_TYPES = new Set<NotificationEventType>([
 	"stream_origin_unhealthy",
 	"stream_ip_banned",
 	"system_resource_high",
+	"ha_node_down",
 ]);
 
 interface DeliveryTarget {
@@ -103,6 +104,10 @@ function deliveryFields(delivery: PendingNotificationDeliveryRecord): DeliveryFi
 			if (typeof payload.value === "string") fields.push({ name: "Value", value: payload.value });
 			if (typeof payload.thresholdValue === "string") fields.push({ name: "Threshold", value: payload.thresholdValue });
 			break;
+		case "ha_node_down":
+		case "ha_node_up":
+			if (typeof payload.role === "string") fields.push({ name: "Role", value: payload.role });
+			break;
 	}
 	return fields;
 }
@@ -155,6 +160,10 @@ function eventTitle(type: NotificationEventType, targetName: string): string {
 			return `System resource alert: ${targetName}`;
 		case "system_resource_normal":
 			return `System resource normal: ${targetName}`;
+		case "ha_node_down":
+			return `HA node down: ${targetName}`;
+		case "ha_node_up":
+			return `HA node up: ${targetName}`;
 	}
 }
 

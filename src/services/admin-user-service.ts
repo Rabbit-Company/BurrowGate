@@ -280,6 +280,7 @@ export async function regenerateOwnRecoveryCodes(userId: string, totpCode: unkno
 }
 
 export async function ensureBootstrapAdministrator(): Promise<void> {
+	if (config.ha.enabled && config.ha.role === "replica") return;
 	if (await repository.anyAdminUserExists()) return;
 	const username = config.admin.username;
 	const path = join(config.dataDirectory, "bootstrap-admin-password.txt");

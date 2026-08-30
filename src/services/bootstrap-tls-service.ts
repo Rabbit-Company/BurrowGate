@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { config } from "../config.ts";
 import { Logger } from "../logger.ts";
+import { haTlsCertificate } from "./ha-tls-service.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,14 @@ async function readablePair(certPath: string, keyPath: string): Promise<TlsCerti
 
 export async function bootstrapTlsOption(): Promise<TlsCertificateOption | null> {
 	if (!config.bootstrapTls) return null;
+	if (config.ha.enabled) {
+		try {
+			return await haTlsCertificate();
+		} catch (error) {
+			Logger.error("[BurrowGate] Unable to prepare this node's HA certificate for the dashboard's bootstrap TLS fallback", { error });
+			return null;
+		}
+	}
 	const directory = join(config.dataDirectory, "tls");
 	const certPath = join(directory, "bootstrap-cert.pem");
 	const keyPath = join(directory, "bootstrap-key.pem");

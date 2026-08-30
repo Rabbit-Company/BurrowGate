@@ -244,6 +244,7 @@ export async function issueLetsEncryptCertificate(
 }
 
 export async function renewDueCertificates(): Promise<void> {
+	if (config.ha.enabled && config.ha.role === "replica") return;
 	const records = await repository.dueAcmeCertificates(Date.now());
 	for (const record of records) {
 		const site = await repository.siteById(record.site_id);
