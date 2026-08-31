@@ -70,7 +70,7 @@ export function registerHaClusterAdminRoutes(app: Web<any>): void {
 			};
 
 			if (primaryStatus.role !== "primary" || !Array.isArray(primaryStatus.nodes)) {
-				Logger.warn("[BurrowGate] HA: this node's configured primary did not answer as a primary - falling back to a local view", {
+				Logger.warn("HA: this node's configured primary did not answer as a primary - falling back to a local view", {
 					primaryAdminUrl: config.ha.primaryAdminUrl,
 				});
 			} else {

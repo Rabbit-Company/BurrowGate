@@ -7,6 +7,7 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 function isVersionFenceExempt(pathname: string): boolean {
 	return (
 		pathname === "/_burrowgate/api/admin/logout" ||
+		pathname.startsWith("/_burrowgate/api/admin/logs") ||
 		pathname === "/_burrowgate/api/admin/ha/consume-recovery-code" ||
 		pathname === "/_burrowgate/api/admin/ha/resolve-admin-session" ||
 		pathname === "/_burrowgate/api/admin/ha/identity" ||

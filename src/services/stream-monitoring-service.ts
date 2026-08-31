@@ -166,13 +166,13 @@ export async function flushStreamMonitoring(): Promise<void> {
 		await accumulator.flush();
 	} catch (error) {
 		openMetrics.recordMonitoringPersistenceFailure("stream_monitoring");
-		Logger.error("[BurrowGate] Failed to persist stream monitoring data", { error });
+		Logger.error("Failed to persist stream monitoring data", { error });
 	} finally {
 		const dropped = accumulator.takeDroppedEventCount();
 		openMetrics.recordDroppedMonitoringEvents("stream_events", dropped);
 		openMetrics.setMonitoringQueue("stream_events", accumulator.pendingEventCount());
 		openMetrics.setMonitoringQueue("stream_bandwidth", accumulator.pendingBandwidthRecordCount());
-		if (dropped > 0) Logger.warn(`[BurrowGate] Dropped ${dropped} stream monitoring event(s) after reaching the pending-event memory limit`);
+		if (dropped > 0) Logger.warn(`Dropped ${dropped} stream monitoring event(s) after reaching the pending-event memory limit`);
 	}
 }
 

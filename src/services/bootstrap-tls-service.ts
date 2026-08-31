@@ -33,7 +33,7 @@ export async function bootstrapTlsOption(): Promise<TlsCertificateOption | null>
 		try {
 			return await haTlsCertificate();
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to prepare this node's HA certificate for the dashboard's bootstrap TLS fallback", { error });
+			Logger.error("Unable to prepare this node's HA certificate for the dashboard's bootstrap TLS fallback", { error });
 			return null;
 		}
 	}
@@ -68,10 +68,10 @@ export async function bootstrapTlsOption(): Promise<TlsCertificateOption | null>
 		await chmod(keyPath, 0o600);
 		const generated = await readablePair(certPath, keyPath);
 		if (!generated) throw new Error("Generated bootstrap certificate could not be read");
-		Logger.warn("[BurrowGate] Using a self-signed bootstrap certificate until a site certificate is uploaded or issued.");
+		Logger.warn("Using a self-signed bootstrap certificate until a site certificate is uploaded or issued.");
 		return generated;
 	} catch (error) {
-		Logger.error("[BurrowGate] Unable to generate the bootstrap TLS certificate. Install OpenSSL or set BG_BOOTSTRAP_TLS_ENABLED=false.", { error });
+		Logger.error("Unable to generate the bootstrap TLS certificate. Install OpenSSL or set BG_BOOTSTRAP_TLS_ENABLED=false.", { error });
 		return null;
 	}
 }

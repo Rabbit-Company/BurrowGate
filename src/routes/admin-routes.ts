@@ -167,7 +167,7 @@ async function consumeAdminRecoveryCode(userId: string, codeHash: string): Promi
 		const body = (await response.json()) as { consumed?: boolean };
 		return body.consumed === true;
 	} catch (error) {
-		Logger.error("[BurrowGate] HA: failed to reach the primary to consume a recovery code - failing the login attempt rather than risking double-consumption", {
+		Logger.error("HA: failed to reach the primary to consume a recovery code - failing the login attempt rather than risking double-consumption", {
 			error,
 		});
 		return false;
@@ -318,6 +318,13 @@ async function parseOriginInput(request: Request): Promise<OriginInput> {
 	return body as OriginInput;
 }
 
+function boundedAdminUsername(value: unknown): string {
+	return String(value ?? "")
+		.trim()
+		.toLowerCase()
+		.slice(0, 128);
+}
+
 export function registerAdminRoutes(app: Web<any>): void {
 	app.get("/_burrowgate/admin/login", async (ctx) =>
 		(await getAdminSession(ctx.req))
@@ -331,13 +338,20 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const password = String(form.get("password") ?? "");
 		const ip = getClientIp(ctx) ?? "unknown";
 		const { user, retryAfterSeconds } = await authenticateAdminPassword(ip, username, password);
-		if (retryAfterSeconds > 0) return htmlResponse(loginPage("Too many failed attempts. Try again later.", await adminSsoLoginInfo()), 429);
-		if (!user) return htmlResponse(loginPage("Invalid username or password", await adminSsoLoginInfo()), 401);
+		if (retryAfterSeconds > 0) {
+			Logger.warn("Administrator password login was rate limited", { ip, username: boundedAdminUsername(username), retryAfterSeconds });
+			return htmlResponse(loginPage("Too many failed attempts. Try again later.", await adminSsoLoginInfo()), 429);
+		}
+		if (!user) {
+			Logger.debug("Administrator password login failed", { ip, username: boundedAdminUsername(username) });
+			return htmlResponse(loginPage("Invalid username or password", await adminSsoLoginInfo()), 401);
+		}
 		if (!cookieCanBeIssuedForRequest(ctx.req)) {
 			return htmlResponse(loginPage(insecureCookieConfigurationMessage(), await adminSsoLoginInfo()), 409);
 		}
 		const hasWebauthn = (await repository.adminWebauthnCredentialsForUser(user.id)).length > 0;
 		const mode: PendingLoginMode = user.totp_secret_encrypted !== null || hasWebauthn ? "verify" : "enroll";
+		Logger.debug("Administrator password verified; awaiting second-factor completion", { ip, userId: user.id, username: user.username, nextStep: mode });
 		const token = beginPendingLogin(mode, user.id);
 		const location = mode === "enroll" ? "/_burrowgate/admin/login/enroll" : "/_burrowgate/admin/login/verify";
 		return new Response(null, { status: 302, headers: { location, "set-cookie": pendingLoginCookie(ctx.req, token) } });
@@ -376,8 +390,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 				summary: provisioned ? `Provisioned user ${user.username} via single sign-on` : `Signed in via single sign-on as ${user.username}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
+			Logger.audit(provisioned ? "Administrator provisioned and signed in via SSO" : "Administrator signed in via SSO", {
+				ip: getClientIp(ctx) ?? "unknown",
+				userId: user.id,
+				username: user.username,
+				provisioned,
+			});
 			return appendSetCookies(new Response(null, { status: 302, headers: { location: "/_burrowgate/admin" } }), [session.cookie]);
 		} catch (error) {
+			Logger.warn("Administrator SSO callback failed", { error, ip: getClientIp(ctx) ?? "unknown" });
 			return htmlResponse(loginPage(error instanceof Error ? error.message : "Single sign-on failed.", await adminSsoLoginInfo()), 400);
 		}
 	});
@@ -425,6 +446,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		);
 		consumePendingLogin(pending.token);
 		const session = await createAdminSession(ctx.req, user.username, user.id);
+		Logger.audit("Administrator enrolled TOTP and signed in", { ip: getClientIp(ctx) ?? "unknown", userId: user.id, username: user.username });
 		return appendSetCookies(htmlResponse(totpRecoveryCodesPage(recoveryCodes.map((recoveryCode) => recoveryCode.plaintext))), [
 			session.cookie,
 			clearPendingLoginCookie(ctx.req),
@@ -501,6 +523,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		);
 		consumePendingLogin(pending.token);
 		const session = await createAdminSession(ctx.req, user.username, user.id);
+		Logger.audit("Administrator enrolled a security key and signed in", { ip: getClientIp(ctx) ?? "unknown", userId: user.id, username: user.username });
 		return appendSetCookies(jsonResponse({ recoveryCodes: recoveryCodes.map((recoveryCode) => recoveryCode.plaintext) }), [
 			session.cookie,
 			clearPendingLoginCookie(ctx.req),
@@ -525,7 +548,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const hasWebauthn = (await repository.adminWebauthnCredentialsForUser(user.id)).length > 0;
 		const methods = { hasWebauthn, hasTotp: user.totp_secret_encrypted !== null };
 		const retryAfterSeconds = twoFactorAttemptRetryAfterSeconds(pending.token);
-		if (retryAfterSeconds > 0) return htmlResponse(twoFactorVerifyPage(methods, "Too many failed attempts. Try again later."), 429);
+		if (retryAfterSeconds > 0) {
+			Logger.warn("Administrator second-factor verification was rate limited", {
+				ip: getClientIp(ctx) ?? "unknown",
+				userId: user.id,
+				username: user.username,
+				retryAfterSeconds,
+			});
+			return htmlResponse(twoFactorVerifyPage(methods, "Too many failed attempts. Try again later."), 429);
+		}
 		const form = await ctx.req.formData();
 		const code = String(form.get("code") ?? "").trim();
 		const recoveryCodeInput = form.get("recoveryCode");
@@ -538,11 +569,18 @@ export function registerAdminRoutes(app: Web<any>): void {
 		}
 		if (!valid) {
 			recordTwoFactorFailure(pending.token);
+			Logger.debug("Administrator TOTP or recovery-code verification failed", { ip: getClientIp(ctx) ?? "unknown", userId: user.id, username: user.username });
 			return htmlResponse(twoFactorVerifyPage(methods, "Invalid code"), 401);
 		}
 		clearTwoFactorFailures(pending.token);
 		consumePendingLogin(pending.token);
 		const session = await createAdminSession(ctx.req, user.username, user.id);
+		Logger.audit("Administrator signed in", {
+			ip: getClientIp(ctx) ?? "unknown",
+			userId: user.id,
+			username: user.username,
+			secondFactor: recoveryCodeInput ? "recovery-code" : "totp",
+		});
 		return appendSetCookies(new Response(null, { status: 302, headers: { location: "/_burrowgate/admin" } }), [
 			session.cookie,
 			clearPendingLoginCookie(ctx.req),
@@ -575,7 +613,15 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const user = await repository.adminUserById(pending.entry.userId);
 		if (!user) return jsonResponse({ error: "No pending verification" }, 428);
 		const retryAfterSeconds = twoFactorAttemptRetryAfterSeconds(pending.token);
-		if (retryAfterSeconds > 0) return jsonResponse({ error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
+		if (retryAfterSeconds > 0) {
+			Logger.warn("Administrator security-key verification was rate limited", {
+				ip: getClientIp(ctx) ?? "unknown",
+				userId: user.id,
+				username: user.username,
+				retryAfterSeconds,
+			});
+			return jsonResponse({ error: "Too many failed attempts" }, 429, { "retry-after": String(retryAfterSeconds) });
+		}
 		let body: { response?: { id?: unknown } };
 		try {
 			body = (await ctx.req.json()) as any;
@@ -586,6 +632,11 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const credential = await repository.adminWebauthnCredentialByHash(credentialIdHash);
 		if (!credential || credential.user_id !== user.id) {
 			recordTwoFactorFailure(pending.token);
+			Logger.debug("Administrator security-key verification used an unknown credential", {
+				ip: getClientIp(ctx) ?? "unknown",
+				userId: user.id,
+				username: user.username,
+			});
 			return jsonResponse({ error: "Unknown security key" }, 401);
 		}
 		const { rpID, origin } = webauthnRelyingParty(ctx.req);
@@ -605,11 +656,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 			await repository.touchAdminWebauthnCredential(credential.id, result.newCounter, Date.now());
 		} catch (error) {
 			recordTwoFactorFailure(pending.token);
+			Logger.debug("Administrator security-key verification failed", { error, ip: getClientIp(ctx) ?? "unknown", userId: user.id, username: user.username });
 			return jsonResponse({ error: error instanceof Error ? error.message : "Security key verification failed" }, 401);
 		}
 		clearTwoFactorFailures(pending.token);
 		consumePendingLogin(pending.token);
 		const session = await createAdminSession(ctx.req, user.username, user.id);
+		Logger.audit("Administrator signed in", { ip: getClientIp(ctx) ?? "unknown", userId: user.id, username: user.username, secondFactor: "webauthn" });
 		return appendSetCookies(jsonResponse({ ok: true }), [session.cookie, clearPendingLoginCookie(ctx.req)]);
 	});
 

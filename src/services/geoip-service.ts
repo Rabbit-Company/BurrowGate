@@ -39,7 +39,7 @@ export async function initializeGeoIp(): Promise<void> {
 	loading = (async () => {
 		if (!existsSync(config.geoip.databasePath)) {
 			const message = `GeoIP database not found at ${config.geoip.databasePath}`;
-			if (loadError !== message) Logger.warn(`[BurrowGate] ${message}`);
+			if (loadError !== message) Logger.warn(`${message}`);
 			loadError = message;
 			return;
 		}
@@ -48,14 +48,14 @@ export async function initializeGeoIp(): Promise<void> {
 				cache: { max: config.geoip.cacheEntries },
 				watchForUpdates: true,
 				watchForUpdatesNonPersistent: true,
-				watchForUpdatesHook: () => Logger.info("[BurrowGate] Reloaded GeoIP database"),
+				watchForUpdatesHook: () => Logger.info("Reloaded GeoIP database"),
 			});
 			loadError = null;
-			Logger.info(`[BurrowGate] GeoIP database loaded from ${config.geoip.databasePath}`);
+			Logger.info(`GeoIP database loaded from ${config.geoip.databasePath}`);
 		} catch (error) {
 			reader = null;
 			const message = error instanceof Error ? error.message : String(error);
-			if (loadError !== message) Logger.error("[BurrowGate] Unable to load GeoIP database", { error });
+			if (loadError !== message) Logger.error("Unable to load GeoIP database", { error });
 			loadError = message;
 		}
 	})();
@@ -72,7 +72,7 @@ export async function initializeAsnGeoIp(): Promise<void> {
 	asnLoading = (async () => {
 		if (!existsSync(config.geoip.asnDatabasePath)) {
 			const message = `GeoIP ASN database not found at ${config.geoip.asnDatabasePath}`;
-			if (asnLoadError !== message) Logger.warn(`[BurrowGate] ${message}`);
+			if (asnLoadError !== message) Logger.warn(`${message}`);
 			asnLoadError = message;
 			return;
 		}
@@ -81,14 +81,14 @@ export async function initializeAsnGeoIp(): Promise<void> {
 				cache: { max: config.geoip.cacheEntries },
 				watchForUpdates: true,
 				watchForUpdatesNonPersistent: true,
-				watchForUpdatesHook: () => Logger.info("[BurrowGate] Reloaded GeoIP ASN database"),
+				watchForUpdatesHook: () => Logger.info("Reloaded GeoIP ASN database"),
 			});
 			asnLoadError = null;
-			Logger.info(`[BurrowGate] GeoIP ASN database loaded from ${config.geoip.asnDatabasePath}`);
+			Logger.info(`GeoIP ASN database loaded from ${config.geoip.asnDatabasePath}`);
 		} catch (error) {
 			asnReader = null;
 			const message = error instanceof Error ? error.message : String(error);
-			if (asnLoadError !== message) Logger.error("[BurrowGate] Unable to load GeoIP ASN database", { error });
+			if (asnLoadError !== message) Logger.error("Unable to load GeoIP ASN database", { error });
 			asnLoadError = message;
 		}
 	})();

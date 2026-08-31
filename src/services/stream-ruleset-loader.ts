@@ -36,9 +36,9 @@ async function seedBundledRuleSets(directory: string): Promise<void> {
 		} catch {}
 		try {
 			await writeFile(path, `${JSON.stringify(bundled.document, null, "\t")}\n`);
-			Logger.info(`[BurrowGate] Seeded default stream-protection ruleset "${bundled.filename}" into "${directory}"`);
+			Logger.info(`Seeded default stream-protection ruleset "${bundled.filename}" into "${directory}"`);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Failed to seed default stream ruleset "${bundled.filename}" into "${directory}"`, { error });
+			Logger.error(`Failed to seed default stream ruleset "${bundled.filename}" into "${directory}"`, { error });
 		}
 	}
 }
@@ -53,7 +53,7 @@ export async function loadStreamRuleSets(options: { directory?: string } = {}): 
 	try {
 		files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
 	} catch (error) {
-		Logger.error(`[BurrowGate] Cannot read stream-protection ruleset directory "${directory}"; stream protection will fail open until rulesets are available`, {
+		Logger.error(`Cannot read stream-protection ruleset directory "${directory}"; stream protection will fail open until rulesets are available`, {
 			error,
 		});
 		return result;
@@ -79,11 +79,11 @@ export async function loadStreamRuleSets(options: { directory?: string } = {}): 
 		} catch (error) {
 			const message = error instanceof StreamRuleSetValidationError ? error.message : (error as Error).message;
 			result.failed.push({ file, error: message });
-			Logger.error(`[BurrowGate] Failed to load stream-protection ruleset "${file}"`, { error: message });
+			Logger.error(`Failed to load stream-protection ruleset "${file}"`, { error: message });
 		}
 	}
 
-	Logger.info(`[BurrowGate] Loaded ${result.loaded.length} stream-protection ruleset(s) from "${directory}"`, {
+	Logger.info(`Loaded ${result.loaded.length} stream-protection ruleset(s) from "${directory}"`, {
 		rulesets: result.loaded.map((item) => `${item.id}@${item.version} (${item.protocol}, ${item.ruleCount} rules)`),
 	});
 	return result;

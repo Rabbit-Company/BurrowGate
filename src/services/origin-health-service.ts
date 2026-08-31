@@ -400,7 +400,7 @@ export class OriginHealthManager {
 				if (eventType && backendEvent) await this.notifyTransition(runtime.site, eventType, runtime.origin, result);
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to persist origin health check", { siteId: runtime.site.id, originId: runtime.origin.id, error });
+			Logger.error("Unable to persist origin health check", { siteId: runtime.site.id, originId: runtime.origin.id, error });
 		} finally {
 			runtime.running = false;
 			this.activeChecks = Math.max(0, this.activeChecks - 1);
@@ -461,6 +461,19 @@ export class OriginHealthManager {
 			latencyMs: Math.round(result.latencyMs),
 			reason: result.error,
 		};
+		const logMetadata = {
+			eventType,
+			siteId: site.id,
+			siteName: site.name,
+			publicHost: site.public_host,
+			originId: origin?.id ?? null,
+			originName: origin?.name ?? null,
+			status: result.status,
+			latencyMs: Math.round(result.latencyMs),
+			reason: result.error,
+		};
+		if (severity === "critical") Logger.warn(summaries[eventType], logMetadata);
+		else Logger.info(summaries[eventType], logMetadata);
 		await notificationService.recordSiteEvent(site, eventType, severity, summaries[eventType], payload, result.checkedAt);
 	}
 }

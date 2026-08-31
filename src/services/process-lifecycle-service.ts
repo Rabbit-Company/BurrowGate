@@ -3,6 +3,7 @@ import { flushBandwidthMetrics } from "./bandwidth-service.ts";
 import { haElectionService } from "./ha-election-service.ts";
 import { haMeshService } from "./ha-mesh-service.ts";
 import { flushStreamMonitoring } from "./stream-monitoring-service.ts";
+import { dailyFileLogs } from "./daily-file-log-service.ts";
 
 let shuttingDown = false;
 
@@ -16,8 +17,10 @@ export const processLifecycle = {
 			await new Promise(() => {});
 		}
 		shuttingDown = true;
-		Logger.warn(`[BurrowGate] Shutting down (${reason}); flushing pending monitoring data before exit`);
+		Logger.warn(`Shutting down (${reason}); flushing pending monitoring data before exit`);
 		await flushPendingMonitoringData();
+		await dailyFileLogs.flush();
+		dailyFileLogs.stop();
 		haElectionService.stop();
 		await haMeshService.stop();
 		process.exit(exitCode);

@@ -143,6 +143,13 @@ export async function issueLetsEncryptCertificate(
 			input.renewal ? "Starting certificate renewal" : "Starting certificate issuance",
 			{ hostname, directoryUrl, challengeType },
 		);
+		Logger.info(input.renewal ? "ACME certificate renewal started" : "ACME certificate issuance started", {
+			siteId: site.id,
+			siteName: site.name,
+			publicHost: site.public_host,
+			challengeType,
+			dnsProviderId,
+		});
 
 		const acme = await acmeModule();
 		const { client } = await clientFor(directoryUrl, email);
@@ -218,6 +225,16 @@ export async function issueLetsEncryptCertificate(
 		});
 		try {
 			await requestTlsReload();
+			Logger.info(input.renewal ? "ACME certificate renewal completed" : "ACME certificate issuance completed", {
+				siteId: site.id,
+				siteName: site.name,
+				publicHost: site.public_host,
+				certificateId: certificate.id,
+				expiresAt: certificate.expires_at,
+				issuer: certificate.issuer,
+				challengeType,
+				durationMs: Date.now() - attemptedAt,
+			});
 		} catch (error) {
 			const message = `Certificate was stored, but TLS listener activation failed: ${errorMessage(error)}`;
 			await repository.updateCertificateAttempt(site.id, Date.now(), message);
@@ -236,6 +253,15 @@ export async function issueLetsEncryptCertificate(
 				{ error: message },
 			);
 		}
+		Logger.error(input.renewal ? "ACME certificate renewal failed" : "ACME certificate issuance failed", {
+			error,
+			siteId: site.id,
+			siteName: site.name,
+			publicHost: site.public_host,
+			challengeType,
+			dnsProviderId,
+			durationMs: Date.now() - attemptedAt,
+		});
 		throw error;
 	} finally {
 		await repository.deleteAcmeChallengesForSite(site.id).catch(() => undefined);
@@ -260,8 +286,6 @@ export async function renewDueCertificates(): Promise<void> {
 				challengeType: settings.acme_challenge_type,
 				dnsProviderId: settings.acme_dns_provider_id,
 			});
-		} catch (error) {
-			Logger.error(`[BurrowGate] ACME renewal failed for ${site.public_host}`, { error });
-		}
+		} catch {}
 	}
 }

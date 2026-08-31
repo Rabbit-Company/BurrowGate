@@ -291,7 +291,7 @@ export function notifyHaEvent(
 	role: "primary" | "replica",
 ): void {
 	notificationService.recordGlobalEvent(type, severity, summary, { role }, Date.now()).catch((error) => {
-		Logger.error("[BurrowGate] HA: failed to record a cluster notification event", { error, type });
+		Logger.error("HA: failed to record a cluster notification event", { error, type });
 	});
 }
 
@@ -301,7 +301,7 @@ async function persistRoleChangeWithRetry(patch: Partial<HaClusterConfigInsert>,
 			await repository.updateHaClusterConfig(patch);
 			return true;
 		} catch (error) {
-			Logger.error(`[BurrowGate] HA: failed to persist a role change (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, { error, ...logContext });
+			Logger.error(`HA: failed to persist a role change (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, { error, ...logContext });
 			if (attempt < PROMOTE_PERSIST_MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, PROMOTE_PERSIST_RETRY_DELAY_MS));
 		}
 	}
@@ -318,7 +318,7 @@ async function persistElectionWinnerWithRetry(
 		try {
 			const activated = await repository.activateHaElectionWinner(term, candidateNodeId, expectedPrimaryUrl, expectedPrimaryAdminUrl);
 			if (!activated) {
-				Logger.warn("[BurrowGate] HA: abandoned election-winner activation because the durable term, vote, role, or primary topology changed concurrently", {
+				Logger.warn("HA: abandoned election-winner activation because the durable term, vote, role, or primary topology changed concurrently", {
 					term,
 					candidateNodeId,
 				});
@@ -326,7 +326,7 @@ async function persistElectionWinnerWithRetry(
 			}
 			return true;
 		} catch (error) {
-			Logger.error(`[BurrowGate] HA: failed to persist an automatic election winner (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, {
+			Logger.error(`HA: failed to persist an automatic election winner (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, {
 				error,
 				term,
 				candidateNodeId,
@@ -349,7 +349,7 @@ async function completePromotionWithRetry(intent: HaPromotionIntentRecord): Prom
 			)
 				return true;
 		} catch (error) {
-			Logger.error(`[BurrowGate] HA: failed to finalize the old primary's demotion (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, {
+			Logger.error(`HA: failed to finalize the old primary's demotion (attempt ${attempt}/${PROMOTE_PERSIST_MAX_ATTEMPTS})`, {
 				error,
 				promotionId: intent.promotion_id,
 				targetNodeId: intent.target_node_id,
@@ -461,19 +461,16 @@ class HaMeshService {
 		const intent = await repository.haPromotionIntent();
 		if (intent) {
 			config.ha.fencedForPromotion = true;
-			Logger.warn("[BurrowGate] HA: recovering an interrupted promotion; this primary remains write-fenced until the target acknowledges activation", {
+			Logger.warn("HA: recovering an interrupted promotion; this primary remains write-fenced until the target acknowledges activation", {
 				promotionId: intent.promotion_id,
 				targetNodeId: intent.target_node_id,
 			});
 		}
 		if (config.ha.authorityFence) {
-			Logger.error(
-				"[BurrowGate] HA: this primary is durably authority-fenced after observing a newer cluster epoch; it will stay out of service until reconfigured",
-				{
-					...config.ha.authorityFence,
-					localEpoch: config.ha.epoch,
-				},
-			);
+			Logger.error("HA: this primary is durably authority-fenced after observing a newer cluster epoch; it will stay out of service until reconfigured", {
+				...config.ha.authorityFence,
+				localEpoch: config.ha.epoch,
+			});
 		}
 
 		await this.loadRegisteredMembers();
@@ -488,7 +485,7 @@ class HaMeshService {
 		const broadcastFromSeq = await repository.latestChangelogSeq();
 		const adoptedRelays = await repository.adoptPendingSessionRelaysAsPrimary(this.nodeId);
 		if (adoptedRelays > 0) {
-			Logger.warn("[BurrowGate] HA: adopted replica relay events left across promotion before starting runtime services", {
+			Logger.warn("HA: adopted replica relay events left across promotion before starting runtime services", {
 				count: adoptedRelays,
 			});
 		}
@@ -503,13 +500,10 @@ class HaMeshService {
 		if (config.ha.autoFailoverEnabled && effectiveMemberCount >= config.ha.autoFailoverMinMembers) {
 			config.ha.quorumFenced = true;
 			await repository.setQuorumFence(Date.now());
-			Logger.warn(
-				"[BurrowGate] HA: primary booted with election-capable membership and will remain write-fenced until fresh majority connectivity is verified",
-				{
-					memberCount: this.registeredMembers.size,
-					effectiveMemberCount,
-				},
-			);
+			Logger.warn("HA: primary booted with election-capable membership and will remain write-fenced until fresh majority connectivity is verified", {
+				memberCount: this.registeredMembers.size,
+				effectiveMemberCount,
+			});
 		}
 		this.runtimePrepared = true;
 	}
@@ -634,7 +628,7 @@ class HaMeshService {
 		});
 		this.broadcastTimer = setInterval(() => void this.broadcastNewChanges(), BROADCAST_INTERVAL_MS);
 		unref(this.broadcastTimer);
-		Logger.info(`[BurrowGate] HA mesh listening on port ${config.ha.port} (primary, TLS)`, { certificateFingerprintSha256: certificateFingerprint(cert) });
+		Logger.info(`HA mesh listening on port ${config.ha.port} (primary, TLS)`, { certificateFingerprintSha256: certificateFingerprint(cert) });
 	}
 
 	private async handleRequest(request: Request, server: HaServer): Promise<Response | undefined> {
@@ -669,7 +663,7 @@ class HaMeshService {
 				)
 				.then(async () => await writer.close())
 				.catch(async (error) => {
-					Logger.error("[BurrowGate] HA: snapshot stream failed", { error });
+					Logger.error("HA: snapshot stream failed", { error });
 					await writer.abort(error).catch(() => undefined);
 				});
 			return new Response(readable, { headers: { "content-type": "application/x-ndjson" } });
@@ -776,7 +770,7 @@ class HaMeshService {
 	private expireStaleReplicaConnections(now = Date.now()): void {
 		for (const [ws, node] of this.nodes) {
 			if (now - node.lastSeenAt <= HA_REPLICA_LIVENESS_TIMEOUT_MS) continue;
-			Logger.warn("[BurrowGate] HA: replica stopped acknowledging heartbeats; removing its stale connection from quorum", {
+			Logger.warn("HA: replica stopped acknowledging heartbeats; removing its stale connection from quorum", {
 				nodeId: node.nodeId,
 				name: node.name,
 				lastSeenAt: node.lastSeenAt,
@@ -786,7 +780,7 @@ class HaMeshService {
 			try {
 				ws.close(4000, "replica heartbeat acknowledgement timeout");
 			} catch (error) {
-				Logger.warn("[BurrowGate] HA: failed to close a stale replica socket after expiring it", { error, nodeId: node.nodeId });
+				Logger.warn("HA: failed to close a stale replica socket after expiring it", { error, nodeId: node.nodeId });
 			}
 		}
 	}
@@ -809,9 +803,9 @@ class HaMeshService {
 		}
 
 		const minOfflineMs = Math.max(HA_FORGET_MIN_OFFLINE_FLOOR_MS, config.ha.reconnectMaxDelayMs * HA_FORGET_MIN_OFFLINE_RECONNECT_MULTIPLIER);
-		const offlineSince = this.offlineSince.get(nodeId);
+		const offlineSince = this.offlineSince.get(nodeId) ?? this.registeredMembers.get(nodeId)?.last_seen_at;
 
-		const offlineMs = offlineSince === undefined ? 0 : Date.now() - offlineSince;
+		const offlineMs = offlineSince === undefined ? Infinity : Date.now() - offlineSince;
 		if (offlineMs < minOfflineMs) {
 			throw new Error(
 				`That node was only recently seen disconnecting - wait at least ${Math.ceil((minOfflineMs - offlineMs) / 1000)} more second(s) before forgetting it, in case it is only a transient network blip`,
@@ -845,7 +839,7 @@ class HaMeshService {
 				ws.send(JSON.stringify(hello));
 			})
 			.catch((error) => {
-				Logger.error("[BurrowGate] HA: failed to build the hello handshake for a connecting replica", { error });
+				Logger.error("HA: failed to build the hello handshake for a connecting replica", { error });
 				ws.close();
 			});
 	}
@@ -885,15 +879,13 @@ class HaMeshService {
 			config.ha.authorityFence = { observedEpoch: announcedEpoch, sourceNodeId, observedAt: now };
 		}
 		Logger.error(
-			"[BurrowGate] HA: a connected node reports a newer cluster epoch - this primary is now durably authority-fenced and removed from service until explicitly reconfigured",
+			"HA: a connected node reports a newer cluster epoch - this primary is now durably authority-fenced and removed from service until explicitly reconfigured",
 			{ nodeId: sourceNodeId, name: sourceName, replicaEpoch: announcedEpoch, primaryEpoch: config.ha.epoch },
 		);
 		await repository
 			.fenceHaPrimaryAuthority(announcedEpoch, sourceNodeId, now)
-			.catch((error) => Logger.error("[BurrowGate] HA: failed to persist the stale-primary authority fence; keeping the live process fenced", { error }));
-		await this.broadcastHeartbeat().catch((error) =>
-			Logger.warn("[BurrowGate] HA: failed to broadcast the stale-primary authority fence to connected replicas", { error }),
-		);
+			.catch((error) => Logger.error("HA: failed to persist the stale-primary authority fence; keeping the live process fenced", { error }));
+		await this.broadcastHeartbeat().catch((error) => Logger.warn("HA: failed to broadcast the stale-primary authority fence to connected replicas", { error }));
 		return true;
 	}
 
@@ -906,12 +898,12 @@ class HaMeshService {
 		try {
 			await promise;
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: a primary message handler failed unexpectedly; closing the connection", { error });
+			Logger.error("HA: a primary message handler failed unexpectedly; closing the connection", { error });
 			this.handlePrimaryClose(ws);
 			try {
 				ws.close(1011, "an unexpected error occurred processing a previous message; reconnect to retry");
 			} catch (closeError) {
-				Logger.warn("[BurrowGate] HA: failed to close a connection after its own message handler threw", { error: closeError });
+				Logger.warn("HA: failed to close a connection after its own message handler threw", { error: closeError });
 			}
 		}
 	}
@@ -1014,7 +1006,7 @@ class HaMeshService {
 				const response: MasterKeyMessage = { type: "master_key", key: await masterSecretForReplication() };
 				ws.send(JSON.stringify(response));
 			} catch (error) {
-				Logger.error("[BurrowGate] HA: failed to provide this primary's master key to a joining replica", { error });
+				Logger.error("HA: failed to provide this primary's master key to a joining replica", { error });
 			}
 			return;
 		}
@@ -1039,7 +1031,7 @@ class HaMeshService {
 			}
 
 			if (message.nodeId !== ws.data.authenticatedNodeId) {
-				Logger.error("[BurrowGate] HA: rejected an announce claiming a node identity different from the one that authenticated this connection", {
+				Logger.error("HA: rejected an announce claiming a node identity different from the one that authenticated this connection", {
 					claimedNodeId: message.nodeId,
 					authenticatedNodeId: ws.data.authenticatedNodeId,
 				});
@@ -1047,7 +1039,7 @@ class HaMeshService {
 				return;
 			}
 			if (this.revokedNodeIds.has(message.nodeId)) {
-				Logger.warn("[BurrowGate] HA: rejected a forgotten node that attempted to reconnect without fresh enrollment", {
+				Logger.warn("HA: rejected a forgotten node that attempted to reconnect without fresh enrollment", {
 					nodeId: message.nodeId,
 					name: message.name,
 				});
@@ -1066,7 +1058,7 @@ class HaMeshService {
 				for (const [otherWs, other] of this.nodes) {
 					if (otherWs !== ws && other.nodeId === message.nodeId) {
 						Logger.error(
-							"[BurrowGate] HA: rejected a replica connection announcing a node identity that's already connected - this usually means a database was cloned onto a second instance instead of provisioned fresh",
+							"HA: rejected a replica connection announcing a node identity that's already connected - this usually means a database was cloned onto a second instance instead of provisioned fresh",
 							{ nodeId: message.nodeId, name: message.name },
 						);
 						ws.close(1008, "a node with this identity is already connected");
@@ -1099,7 +1091,7 @@ class HaMeshService {
 				const members = await repository.haClusterMembers();
 				const shortfall = this.majorityConnectivityShortfall(members);
 				if (shortfall) {
-					Logger.warn("[BurrowGate] HA: refused to activate a pending cluster member while this primary lacks majority connectivity to the existing cluster", {
+					Logger.warn("HA: refused to activate a pending cluster member while this primary lacks majority connectivity to the existing cluster", {
 						nodeId: message.nodeId,
 						name: message.name,
 						shortfall,
@@ -1129,7 +1121,7 @@ class HaMeshService {
 
 						ws.data.authenticatedActive = true;
 					} catch (error) {
-						Logger.error("[BurrowGate] HA: failed to persist a replica's cluster membership; keeping its live version fence active", {
+						Logger.error("HA: failed to persist a replica's cluster membership; keeping its live version fence active", {
 							error,
 							nodeId: message.nodeId,
 							version: message.version,
@@ -1140,12 +1132,12 @@ class HaMeshService {
 
 					const confirmed = await this.waitForMembershipActivationDurability(oldMembers);
 					if (!confirmed) {
-						Logger.warn(
-							"[BurrowGate] HA: could not confirm a majority of the existing membership durably received this activation in time - reverting it back to pending",
-							{ nodeId: message.nodeId, name: message.name },
-						);
+						Logger.warn("HA: could not confirm a majority of the existing membership durably received this activation in time - reverting it back to pending", {
+							nodeId: message.nodeId,
+							name: message.name,
+						});
 						await repository.revertHaClusterMemberActivation(message.nodeId).catch((error) => {
-							Logger.error("[BurrowGate] HA: failed to revert an unconfirmed activation back to pending; it may remain durably (but unconfirmed) active", {
+							Logger.error("HA: failed to revert an unconfirmed activation back to pending; it may remain durably (but unconfirmed) active", {
 								error,
 								nodeId: message.nodeId,
 							});
@@ -1178,7 +1170,7 @@ class HaMeshService {
 					});
 					ws.data.authenticatedActive = true;
 				} catch (error) {
-					Logger.error("[BurrowGate] HA: failed to persist a replica's cluster membership; keeping its live version fence active", {
+					Logger.error("HA: failed to persist a replica's cluster membership; keeping its live version fence active", {
 						error,
 						nodeId: message.nodeId,
 						version: message.version,
@@ -1217,7 +1209,7 @@ class HaMeshService {
 					error instanceof HaQuorumLossFenceError ||
 					isTransientDatabaseError(error)
 				) {
-					Logger.warn("[BurrowGate] HA: temporarily unable to apply a relayed session event, leaving it for the replica to retry", {
+					Logger.warn("HA: temporarily unable to apply a relayed session event, leaving it for the replica to retry", {
 						error,
 						nodeId: node.nodeId,
 						relayId: message.relayId,
@@ -1227,7 +1219,7 @@ class HaMeshService {
 					return;
 				}
 				const reason = error instanceof Error ? error.message : String(error);
-				Logger.error("[BurrowGate] HA: rejecting a relayed session event that could not be applied - dead-lettering it", {
+				Logger.error("HA: rejecting a relayed session event that could not be applied - dead-lettering it", {
 					error,
 					nodeId: node.nodeId,
 					relayId: message.relayId,
@@ -1236,12 +1228,12 @@ class HaMeshService {
 				});
 				await repository
 					.deadLetterRelay(node.nodeId, message.relayId, message.entityType, message.entityId, message.op, payload, reason)
-					.catch((dlqError) => Logger.error("[BurrowGate] HA: failed to record a dead-lettered relay", { error: dlqError }));
+					.catch((dlqError) => Logger.error("HA: failed to record a dead-lettered relay", { error: dlqError }));
 				const reject: RelayRejectMessage = { type: "relay_reject", relayId: message.relayId, reason };
 				ws.send(JSON.stringify(reject));
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: failed to apply a relayed session event", { error, entityType: message.entityType, entityId: message.entityId });
+			Logger.error("HA: failed to apply a relayed session event", { error, entityType: message.entityType, entityId: message.entityId });
 		}
 	}
 
@@ -1423,7 +1415,7 @@ class HaMeshService {
 			try {
 				socket.send(payload);
 			} catch (error) {
-				Logger.warn("[BurrowGate] HA: failed to notify a bystander replica about the new primary", { error, promotionId: intent.promotion_id });
+				Logger.warn("HA: failed to notify a bystander replica about the new primary", { error, promotionId: intent.promotion_id });
 			}
 		}
 
@@ -1437,7 +1429,7 @@ class HaMeshService {
 		config.ha.primaryAdminUrl = intent.target_admin_url;
 		config.ha.epoch = intent.new_epoch;
 		haPrimaryWriteBarrier.endPromotion();
-		Logger.warn("[BurrowGate] HA: target acknowledged activation; demoting this node and restarting", {
+		Logger.warn("HA: target acknowledged activation; demoting this node and restarting", {
 			targetNodeId: intent.target_node_id,
 			newPrimaryUrl: intent.target_url,
 			newEpoch: intent.new_epoch,
@@ -1457,7 +1449,7 @@ class HaMeshService {
 			await this.waitForPreparePromoteAck(targetWs, barrierSeq, intent.promotion_id);
 			await this.finalizePromotion(targetWs, intent);
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: interrupted promotion recovery did not complete; keeping this node durably write-fenced", {
+			Logger.error("HA: interrupted promotion recovery did not complete; keeping this node durably write-fenced", {
 				error,
 				promotionId: intent.promotion_id,
 				targetNodeId,
@@ -1543,7 +1535,7 @@ class HaMeshService {
 
 				if (config.ha.role === "primary") {
 					await this.broadcastHeartbeat().catch((error) => {
-						Logger.warn("[BurrowGate] HA: failed to broadcast the cleared promotion fence; replicas will recover on the next heartbeat", { error });
+						Logger.warn("HA: failed to broadcast the cleared promotion fence; replicas will recover on the next heartbeat", { error });
 					});
 				}
 			}
@@ -1581,7 +1573,7 @@ class HaMeshService {
 		expectedPrimaryAdminUrl: string | null,
 	): Promise<boolean> {
 		if (candidateNodeId !== this.nodeId) {
-			Logger.error("[BurrowGate] HA: refused to activate an election winner whose node id is not this process", {
+			Logger.error("HA: refused to activate an election winner whose node id is not this process", {
 				candidateNodeId,
 				localNodeId: this.nodeId,
 				term,
@@ -1612,14 +1604,14 @@ class HaMeshService {
 			!Number.isSafeInteger(message.newEpoch) ||
 			message.newEpoch < config.ha.epoch
 		) {
-			Logger.error("[BurrowGate] HA: ignored a malformed or stale promotion message");
+			Logger.error("HA: ignored a malformed or stale promotion message");
 			return;
 		}
 		const becomingPrimary = message.newPrimaryNodeId === this.nodeId;
 		Logger.warn(
 			becomingPrimary
-				? "[BurrowGate] HA: this node has been promoted to primary, restarting to apply"
-				: "[BurrowGate] HA: the primary has changed, restarting to reconnect to the new one",
+				? "HA: this node has been promoted to primary, restarting to apply"
+				: "HA: the primary has changed, restarting to reconnect to the new one",
 			{ newPrimaryNodeId: message.newPrimaryNodeId },
 		);
 		const persisted = await this.applyRoleChange(message.newPrimaryNodeId, message.newPrimaryUrl, message.newPrimaryAdminUrl, message.newEpoch, {
@@ -1631,7 +1623,7 @@ class HaMeshService {
 				try {
 					this.replicaSocket?.send(JSON.stringify(ack));
 				} catch (error) {
-					Logger.warn("[BurrowGate] HA: primary role is durable but its acknowledgement could not be sent; the old primary will retain its recovery fence", {
+					Logger.warn("HA: primary role is durable but its acknowledgement could not be sent; the old primary will retain its recovery fence", {
 						error,
 						promotionId: message.promotionId,
 					});
@@ -1648,13 +1640,13 @@ class HaMeshService {
 				try {
 					this.replicaSocket?.send(JSON.stringify(ack));
 				} catch (error) {
-					Logger.warn("[BurrowGate] HA: failed to report that target activation was rejected", { error, promotionId: message.promotionId });
+					Logger.warn("HA: failed to report that target activation was rejected", { error, promotionId: message.promotionId });
 				}
-				Logger.error("[BurrowGate] HA: refused promotion because this node could not persist its primary role; remaining a replica");
+				Logger.error("HA: refused promotion because this node could not persist its primary role; remaining a replica");
 				return;
 			}
 
-			Logger.error("[BurrowGate] HA: failed to persist the new primary after several attempts - restarting this bystander on its previous configuration");
+			Logger.error("HA: failed to persist the new primary after several attempts - restarting this bystander on its previous configuration");
 			notifyHaEvent(
 				"ha_node_down",
 				"critical",
@@ -1693,7 +1685,7 @@ class HaMeshService {
 				await this.broadcastHeartbeat();
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: failed to broadcast changelog rows to replicas", { error });
+			Logger.error("HA: failed to broadcast changelog rows to replicas", { error });
 		}
 	}
 
@@ -1766,7 +1758,7 @@ class HaMeshService {
 
 		this.hasBootstrapped = !(await repository.needsBootstrap());
 		await this.startReplicaRedirectListener();
-		Logger.info(`[BurrowGate] HA replica starting, connecting to primary at ${config.ha.primaryUrl}`);
+		Logger.info(`HA replica starting, connecting to primary at ${config.ha.primaryUrl}`);
 		void this.connectToPrimary();
 		this.relayDrainTimer = setInterval(() => void this.drainSessionRelayOutbox(), RELAY_DRAIN_INTERVAL_MS);
 		unref(this.relayDrainTimer);
@@ -1781,7 +1773,7 @@ class HaMeshService {
 		if (this.state !== "connected") return;
 		if (Date.now() - this.lastVerifiedSyncAt <= HA_REPLICA_LIVENESS_TIMEOUT_MS) return;
 		Logger.error(
-			"[BurrowGate] HA: no heartbeat acknowledged from the primary within the liveness timeout - actively closing this connection instead of leaving it half-open",
+			"HA: no heartbeat acknowledged from the primary within the liveness timeout - actively closing this connection instead of leaving it half-open",
 			{
 				lastVerifiedSyncAt: this.lastVerifiedSyncAt,
 				timeoutMs: HA_REPLICA_LIVENESS_TIMEOUT_MS,
@@ -1834,7 +1826,7 @@ class HaMeshService {
 	private async resolveCaCertificate(): Promise<string> {
 		const pinned = await readPinnedHaCertificate();
 		if (pinned) {
-			Logger.info("[BurrowGate] HA: using the already-pinned primary certificate", { certificateFingerprintSha256: certificateFingerprint(pinned) });
+			Logger.info("HA: using the already-pinned primary certificate", { certificateFingerprintSha256: certificateFingerprint(pinned) });
 			return pinned;
 		}
 		const url = new URL("/_burrowgate/api/admin/ha/certificate", config.ha.primaryAdminUrl!);
@@ -1847,7 +1839,7 @@ class HaMeshService {
 		const body = (await response.json()) as { cert?: string };
 		if (!body.cert) throw new Error("Primary's HA certificate response was empty");
 		await pinPrimaryHaCertificate(body.cert);
-		Logger.info("[BurrowGate] HA: fetched and pinned the primary's certificate", { certificateFingerprintSha256: certificateFingerprint(body.cert) });
+		Logger.info("HA: fetched and pinned the primary's certificate", { certificateFingerprintSha256: certificateFingerprint(body.cert) });
 		return body.cert;
 	}
 
@@ -1880,11 +1872,11 @@ class HaMeshService {
 				} catch (error) {
 					this.relayInFlightId = null;
 					this.relayInFlightSentAt = 0;
-					Logger.warn("[BurrowGate] HA: failed to relay a session event to the primary", { error });
+					Logger.warn("HA: failed to relay a session event to the primary", { error });
 				}
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: failed to drain the session relay outbox", { error });
+			Logger.error("HA: failed to drain the session relay outbox", { error });
 		}
 	}
 
@@ -1921,7 +1913,7 @@ class HaMeshService {
 			}
 			if (Date.now() >= deadline) {
 				Logger.error(
-					"[BurrowGate] HA: could not confirm this node was fully caught up and drained before a promotion request in time - not acking, the primary will abort the promotion",
+					"HA: could not confirm this node was fully caught up and drained before a promotion request in time - not acking, the primary will abort the promotion",
 					{ cursor: this.cursor, barrierSeq: message.barrierSeq, outboxDrained: pending.length === 0 && this.relayInFlightId === null },
 				);
 				return;
@@ -1937,7 +1929,7 @@ class HaMeshService {
 			try {
 				this.caCertificate = await this.resolveCaCertificate();
 			} catch (error) {
-				Logger.warn("[BurrowGate] HA: failed to obtain the primary's HA certificate, will retry", { error });
+				Logger.warn("HA: failed to obtain the primary's HA certificate, will retry", { error });
 				this.scheduleReconnect();
 				return;
 			}
@@ -1947,7 +1939,7 @@ class HaMeshService {
 		try {
 			const streamUrl = new URL("/_ha/stream", config.ha.primaryUrl!);
 			streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
-			Logger.info("[BurrowGate] HA: attempting to connect to primary", {
+			Logger.info("HA: attempting to connect to primary", {
 				url: streamUrl.href,
 				pinnedCertificateFingerprintSha256: this.caCertificate ? certificateFingerprint(this.caCertificate) : "none (unpinned - plain TLS)",
 			});
@@ -1958,16 +1950,16 @@ class HaMeshService {
 
 			this.connectionGeneration += 1;
 			socket.addEventListener("open", () => {
-				Logger.info("[BurrowGate] HA: connected to primary");
+				Logger.info("HA: connected to primary");
 			});
 
 			socket.addEventListener("message", (event) => this.handleIncomingMessage(event));
 			socket.addEventListener("close", (event) => this.handleReplicaClose(event));
 			socket.addEventListener("error", (event) => {
-				Logger.warn("[BurrowGate] HA: connection to primary errored", { error: event });
+				Logger.warn("HA: connection to primary errored", { error: event });
 			});
 		} catch (error) {
-			Logger.warn("[BurrowGate] HA: failed to open a connection to the primary, will retry", { error });
+			Logger.warn("HA: failed to open a connection to the primary, will retry", { error });
 			this.scheduleReconnect();
 		}
 	}
@@ -1980,14 +1972,14 @@ class HaMeshService {
 		const wasConnected = this.state === "connected";
 		if (event.code === 1008) {
 			this.state = "connection_rejected";
-			Logger.error("[BurrowGate] HA: the primary refused this connection - this will keep failing until fixed, not just resolve on retry", {
+			Logger.error("HA: the primary refused this connection - this will keep failing until fixed, not just resolve on retry", {
 				code: event.code,
 				reason: event.reason,
 			});
 		} else {
 			const standingFailure = ["key_mismatch", "version_mismatch", "epoch_mismatch", "connection_rejected"].includes(this.state);
 			if (!standingFailure) {
-				Logger.warn("[BurrowGate] HA: connection to primary closed", { code: event.code, reason: event.reason });
+				Logger.warn("HA: connection to primary closed", { code: event.code, reason: event.reason });
 				this.reconnectDelayMs = config.ha.reconnectMinDelayMs;
 				if (this.state !== "disconnected") {
 					this.state = "disconnected";
@@ -1998,9 +1990,7 @@ class HaMeshService {
 		}
 
 		if (event.code === 1015 && this.caCertificate) {
-			Logger.warn(
-				"[BurrowGate] HA: TLS handshake with the primary failed while a certificate was pinned - clearing the pin so the next attempt fetches a fresh one",
-			);
+			Logger.warn("HA: TLS handshake with the primary failed while a certificate was pinned - clearing the pin so the next attempt fetches a fresh one");
 			this.caCertificate = null;
 			void deletePinnedHaCa();
 		}
@@ -2070,19 +2060,19 @@ class HaMeshService {
 				}
 			} catch (error) {
 				this.relayInFlightSentAt = 0;
-				Logger.warn("[BurrowGate] HA: failed to clear an acked relay outbox row, will resend harmlessly", { error, relayId: message.relayId });
+				Logger.warn("HA: failed to clear an acked relay outbox row, will resend harmlessly", { error, relayId: message.relayId });
 			}
 			return;
 		}
 		if (message.type === "relay_reject") {
 			Logger.error(
-				"[BurrowGate] HA: a relayed session event was permanently rejected by the primary - this replica's local state has diverged, forcing a full re-bootstrap to reconcile it",
+				"HA: a relayed session event was permanently rejected by the primary - this replica's local state has diverged, forcing a full re-bootstrap to reconcile it",
 				{ relayId: message.relayId, reason: message.reason },
 			);
 			try {
 				await repository.deleteSessionRelayRows([message.relayId]);
 			} catch (error) {
-				Logger.warn("[BurrowGate] HA: failed to clear a rejected relay outbox row, will resend harmlessly", { error, relayId: message.relayId });
+				Logger.warn("HA: failed to clear a rejected relay outbox row, will resend harmlessly", { error, relayId: message.relayId });
 			} finally {
 				if (this.relayInFlightId === message.relayId) {
 					this.relayInFlightId = null;
@@ -2120,7 +2110,7 @@ class HaMeshService {
 
 				this.sendCursorUpdate();
 			} catch (error) {
-				Logger.error("[BurrowGate] HA: failed to catch up to the primary heartbeat, reconnecting", {
+				Logger.error("HA: failed to catch up to the primary heartbeat, reconnecting", {
 					error,
 					latestSeq: message.latestSeq,
 					cursor: this.cursor,
@@ -2142,7 +2132,7 @@ class HaMeshService {
 			}
 			await this.applyRow(message.row);
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: failed to apply a replicated change, reconnecting", { error, seq: message.row.seq });
+			Logger.error("HA: failed to apply a replicated change, reconnecting", { error, seq: message.row.seq });
 
 			this.connectionGeneration += 1;
 			this.replicaSocket?.close();
@@ -2171,7 +2161,7 @@ class HaMeshService {
 		}
 		if (!isSecureHaUrl(meshUrl.href) || !isSecureHaUrl(adminUrl.href)) return;
 		if (message.primaryUrl === config.ha.primaryUrl && message.primaryAdminUrl === config.ha.primaryAdminUrl) {
-			Logger.error("[BurrowGate] HA: a replica redirected this node back to the same non-primary address; refusing a topology loop");
+			Logger.error("HA: a replica redirected this node back to the same non-primary address; refusing a topology loop");
 			this.state = "epoch_mismatch";
 			return;
 		}
@@ -2192,7 +2182,7 @@ class HaMeshService {
 		restartReason = "ha-primary-discovered",
 	): Promise<boolean> {
 		if (!isSecureHaUrl(primaryUrl) || !isSecureHaUrl(primaryAdminUrl)) {
-			Logger.error("[BurrowGate] HA: refused to adopt a primary topology containing a non-HTTPS or credential-bearing URL", {
+			Logger.error("HA: refused to adopt a primary topology containing a non-HTTPS or credential-bearing URL", {
 				primaryUrl,
 				primaryAdminUrl,
 				epoch,
@@ -2203,7 +2193,7 @@ class HaMeshService {
 
 		const { adopted, forcedFreshBootstrap } = await repository.adoptHaDiscoveredPrimary({ primaryUrl, primaryAdminUrl, clusterEpoch: epoch });
 		if (!adopted) {
-			Logger.warn("[BurrowGate] HA: ignored a discovered primary because a newer cluster epoch was persisted concurrently", {
+			Logger.warn("HA: ignored a discovered primary because a newer cluster epoch was persisted concurrently", {
 				primaryUrl,
 				primaryAdminUrl,
 				reportedEpoch: epoch,
@@ -2223,7 +2213,7 @@ class HaMeshService {
 		if (forcedFreshBootstrap) {
 			this.hasBootstrapped = false;
 			Logger.warn(
-				"[BurrowGate] HA: this node was itself primary before adopting a newer one - forcing a full fresh snapshot to reconcile any local writes the new primary never received",
+				"HA: this node was itself primary before adopting a newer one - forcing a full fresh snapshot to reconcile any local writes the new primary never received",
 				{
 					primaryUrl,
 					primaryAdminUrl,
@@ -2231,7 +2221,7 @@ class HaMeshService {
 				},
 			);
 		}
-		Logger.warn(`[BurrowGate] HA: ${reason}, restarting to reconnect`, { primaryUrl, primaryAdminUrl, epoch });
+		Logger.warn(`HA: ${reason}, restarting to reconnect`, { primaryUrl, primaryAdminUrl, epoch });
 		setTimeout(() => void processLifecycle.gracefulRestart(restartReason), 300);
 		return true;
 	}
@@ -2251,7 +2241,7 @@ class HaMeshService {
 			};
 
 			this.replicaSocket?.send(JSON.stringify(announce));
-			Logger.error("[BurrowGate] HA: primary and replica versions differ; refusing replication until every cluster node runs the same version", {
+			Logger.error("HA: primary and replica versions differ; refusing replication until every cluster node runs the same version", {
 				primaryVersion: typeof message.version === "string" ? message.version : "unknown",
 				replicaVersion: APP_VERSION,
 			});
@@ -2271,7 +2261,7 @@ class HaMeshService {
 			};
 
 			this.replicaSocket?.send(JSON.stringify(announce));
-			Logger.error("[BurrowGate] HA: this primary's cluster epoch is older than one already seen - it may not know it was demoted, refusing to trust it", {
+			Logger.error("HA: this primary's cluster epoch is older than one already seen - it may not know it was demoted, refusing to trust it", {
 				primaryEpoch: message.epoch,
 				knownEpoch: config.ha.epoch,
 			});
@@ -2282,7 +2272,7 @@ class HaMeshService {
 			config.ha.epoch = message.epoch;
 			await repository
 				.updateHaClusterConfig({ clusterEpoch: message.epoch })
-				.catch((error) => Logger.warn("[BurrowGate] HA: failed to persist the primary's newer cluster epoch, will retry on the next connection", { error }));
+				.catch((error) => Logger.warn("HA: failed to persist the primary's newer cluster epoch, will retry on the next connection", { error }));
 		}
 
 		if (!hasOperatorConfiguredMasterKey() && (await repository.needsBootstrap())) {
@@ -2295,7 +2285,7 @@ class HaMeshService {
 			if (plaintext !== MASTER_KEY_CHECK_PLAINTEXT) throw new Error("mismatch");
 		} catch {
 			this.state = "key_mismatch";
-			Logger.error("[BurrowGate] HA: BG_MASTER_KEY on this node does not match the primary's - refusing to apply replicated changes until it's fixed");
+			Logger.error("HA: BG_MASTER_KEY on this node does not match the primary's - refusing to apply replicated changes until it's fixed");
 			this.replicaSocket?.close(4000, "master key mismatch");
 			return;
 		}
@@ -2309,9 +2299,9 @@ class HaMeshService {
 					await repository.updateHaClusterConfig({ sharedTokenEncrypted: await encryptWithNewKey(config.ha.sharedToken) });
 				}
 			});
-			Logger.info("[BurrowGate] HA: received and installed the master key from the primary");
+			Logger.info("HA: received and installed the master key from the primary");
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: failed to install the master key received from the primary", { error });
+			Logger.error("HA: failed to install the master key received from the primary", { error });
 			this.state = "key_mismatch";
 			this.replicaSocket?.close(4000, "failed to install provisioned master key");
 			return;
@@ -2348,7 +2338,7 @@ class HaMeshService {
 			void this.drainSessionRelayOutbox();
 			if (wasDisconnected) notifyHaEvent("ha_node_up", "info", "Reconnected to the HA primary", "primary");
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: catch-up from primary failed", { error });
+			Logger.error("HA: catch-up from primary failed", { error });
 			this.connectionGeneration += 1;
 			this.replicaSocket?.close();
 		}
@@ -2373,7 +2363,7 @@ class HaMeshService {
 			const visibleGap = page.rows.length > 0 && page.rows[0]!.seq > this.cursor + 1;
 			const invisibleGap = page.rows.length === 0 && page.latestSeq > this.cursor;
 			if (visibleGap || invisibleGap) {
-				Logger.warn("[BurrowGate] HA: catch-up hit a gap the changelog can no longer fill (likely pruned), re-bootstrapping from a snapshot", {
+				Logger.warn("HA: catch-up hit a gap the changelog can no longer fill (likely pruned), re-bootstrapping from a snapshot", {
 					cursor: this.cursor,
 					oldestSurvivingSeq: page.rows[0]?.seq ?? null,
 					latestSeq: page.latestSeq,
@@ -2427,7 +2417,7 @@ class HaMeshService {
 		this.sendCursorUpdate();
 
 		await this.recordRuntimeConvergenceOutcome(await this.refreshAllRuntimeState());
-		Logger.info(`[BurrowGate] HA: applied a full snapshot (${rowCount} rows), resuming from seq ${seq}`);
+		Logger.info(`HA: applied a full snapshot (${rowCount} rows), resuming from seq ${seq}`);
 	}
 
 	private async consumeSnapshotStream(response: Response): Promise<{ seq: number; rowCount: number }> {
@@ -2513,7 +2503,7 @@ class HaMeshService {
 		}
 		if (this.consecutiveApplyFailureCount < APPLY_FAILURE_REBOOTSTRAP_THRESHOLD) return;
 		Logger.error(
-			`[BurrowGate] HA: seq ${seq} has failed to apply ${this.consecutiveApplyFailureCount} times in a row - forcing a full re-bootstrap on the next connection instead of retrying it again`,
+			`HA: seq ${seq} has failed to apply ${this.consecutiveApplyFailureCount} times in a row - forcing a full re-bootstrap on the next connection instead of retrying it again`,
 			{ seq, attempts: this.consecutiveApplyFailureCount },
 		);
 		this.consecutiveApplyFailureSeq = null;
@@ -2527,7 +2517,7 @@ class HaMeshService {
 			.then(() => {
 				this.hasBootstrapped = false;
 			})
-			.catch((error) => Logger.error("[BurrowGate] HA: failed to force a re-bootstrap", { error }));
+			.catch((error) => Logger.error("HA: failed to force a re-bootstrap", { error }));
 	}
 
 	private sendCursorUpdate(): void {
@@ -2540,7 +2530,7 @@ class HaMeshService {
 		let succeeded = true;
 		const fail = (error: unknown, message: string, extra?: Record<string, unknown>): void => {
 			succeeded = false;
-			Logger.error(`[BurrowGate] HA: ${message}`, { error, ...extra });
+			Logger.error(`HA: ${message}`, { error, ...extra });
 		};
 		if (entityType === "certificate" || entityType === "site_tls_settings" || entityType === "site") {
 			await requestTlsReload().catch((error) => fail(error, "failed to reload the TLS listener after a replicated change"));
@@ -2579,7 +2569,7 @@ class HaMeshService {
 		let succeeded = true;
 		const fail = (error: unknown, message: string): void => {
 			succeeded = false;
-			Logger.error(`[BurrowGate] HA: ${message}`, { error });
+			Logger.error(`HA: ${message}`, { error });
 		};
 		await requestTlsReload().catch((error) => fail(error, "failed to reload the TLS listener after a snapshot"));
 		invalidateAllNetworkPolicy();
@@ -2608,7 +2598,7 @@ class HaMeshService {
 	private async recordRuntimeConvergenceOutcome(succeeded: boolean): Promise<void> {
 		if (succeeded) {
 			if (this.runtimeConvergenceFenced) {
-				Logger.warn("[BurrowGate] HA: live runtime state reconciled with the database again - clearing the convergence fence");
+				Logger.warn("HA: live runtime state reconciled with the database again - clearing the convergence fence");
 				notifyHaEvent("ha_node_up", "info", "This node's runtime state (TLS/routing/streams/health checks) reconciled with its database again", "replica");
 			}
 			this.runtimeConvergenceFenced = false;
@@ -2619,7 +2609,7 @@ class HaMeshService {
 		if (!this.runtimeConvergenceFenced) {
 			this.runtimeConvergenceFenced = true;
 			Logger.error(
-				"[BurrowGate] HA: replicated database state applied but refreshing live runtime state (TLS/routing/streams/health checks) failed - marking this node unhealthy until it reconciles",
+				"HA: replicated database state applied but refreshing live runtime state (TLS/routing/streams/health checks) failed - marking this node unhealthy until it reconciles",
 				{ consecutiveFailures: this.consecutiveRuntimeConvergenceFailures },
 			);
 			notifyHaEvent(
@@ -2630,12 +2620,9 @@ class HaMeshService {
 			);
 		}
 		if (this.consecutiveRuntimeConvergenceFailures < RUNTIME_CONVERGENCE_RESTART_THRESHOLD) return;
-		Logger.error(
-			"[BurrowGate] HA: runtime convergence kept failing after repeated automatic retries - restarting to force every subsystem to re-initialize fresh",
-			{
-				consecutiveFailures: this.consecutiveRuntimeConvergenceFailures,
-			},
-		);
+		Logger.error("HA: runtime convergence kept failing after repeated automatic retries - restarting to force every subsystem to re-initialize fresh", {
+			consecutiveFailures: this.consecutiveRuntimeConvergenceFailures,
+		});
 		this.consecutiveRuntimeConvergenceFailures = 0;
 		setTimeout(() => void processLifecycle.gracefulRestart("ha-runtime-convergence-failure"), 300);
 	}

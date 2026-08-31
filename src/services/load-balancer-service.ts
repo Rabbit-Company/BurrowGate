@@ -72,12 +72,15 @@ export class LoadBalancer {
 		return [...(this.originsBySite.get(siteId) ?? [])];
 	}
 
-	reportPassiveFailure(originId: string): void {
-		this.passiveQuarantine.set(originId, Date.now() + PASSIVE_FAILURE_QUARANTINE_MS);
+	reportPassiveFailure(originId: string): boolean {
+		const now = Date.now();
+		const newlyQuarantined = (this.passiveQuarantine.get(originId) ?? 0) <= now;
+		this.passiveQuarantine.set(originId, now + PASSIVE_FAILURE_QUARANTINE_MS);
+		return newlyQuarantined;
 	}
 
-	clearPassiveFailure(originId: string): void {
-		this.passiveQuarantine.delete(originId);
+	clearPassiveFailure(originId: string): boolean {
+		return this.passiveQuarantine.delete(originId);
 	}
 
 	private originAvailable(origin: SiteOriginRecord, existingAffinity: boolean, excluded: Set<string>, allowUnhealthy = false): boolean {

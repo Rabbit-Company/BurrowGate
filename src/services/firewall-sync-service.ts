@@ -316,11 +316,11 @@ class FirewallSyncService {
 				try {
 					await this.reconcileProvider(provider, desired);
 				} catch (error) {
-					Logger.error("[BurrowGate] Firewall sync provider reconcile failed unexpectedly", { provider: provider.id, error });
+					Logger.error("Firewall sync provider reconcile failed unexpectedly", { provider: provider.id, error });
 				}
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to run firewall sync tick", { error });
+			Logger.error("Unable to run firewall sync tick", { error });
 		} finally {
 			this.running = false;
 		}
@@ -345,6 +345,17 @@ class FirewallSyncService {
 		try {
 			await this.adapters[provider.type].reconcile(provider.config_json, capped);
 			await repository.updateFirewallSyncProviderResult(provider.id, checkedAt, checkedAt, "ok", null, capped.length, hash);
+			const metadata = {
+				providerId: provider.id,
+				providerName: provider.name,
+				type: provider.type,
+				appliedCount: capped.length,
+				durationMs: Date.now() - checkedAt,
+				manual: force,
+			};
+			if (provider.last_sync_status === "error") Logger.info("Firewall sync provider recovered", metadata);
+			else if (force) Logger.info("Manual firewall sync completed", metadata);
+			else Logger.debug("Firewall sync completed", metadata);
 		} catch (error) {
 			const message = error instanceof Error ? error.message.slice(0, 1_000) : String(error).slice(0, 1_000);
 			await repository.updateFirewallSyncProviderResult(
@@ -356,7 +367,17 @@ class FirewallSyncService {
 				provider.last_applied_count,
 				provider.last_applied_hash,
 			);
-			Logger.error("[BurrowGate] Firewall sync push failed", { provider: provider.id, type: provider.type, error: message });
+			const metadata = {
+				providerId: provider.id,
+				providerName: provider.name,
+				type: provider.type,
+				desiredCount: capped.length,
+				durationMs: Date.now() - checkedAt,
+				manual: force,
+				error: message,
+			};
+			if (provider.last_sync_status !== "error" || force) Logger.error("Firewall sync push failed", metadata);
+			else Logger.debug("Firewall sync provider remains unavailable", metadata);
 		}
 	}
 
@@ -370,7 +391,28 @@ class FirewallSyncService {
 	async testConnection(providerId: string): Promise<{ ok: boolean; message: string }> {
 		const provider = await repository.firewallSyncProviderById(providerId);
 		if (!provider) throw new Error("Provider not found");
-		return await this.adapters[provider.type].testConnection(provider.config_json);
+		const startedAt = Date.now();
+		try {
+			const result = await this.adapters[provider.type].testConnection(provider.config_json);
+			const metadata = {
+				providerId: provider.id,
+				providerName: provider.name,
+				type: provider.type,
+				durationMs: Date.now() - startedAt,
+			};
+			if (result.ok) Logger.info("Firewall sync provider connection test succeeded", metadata);
+			else Logger.warn("Firewall sync provider connection test failed", { ...metadata, reason: result.message.slice(0, 1_000) });
+			return result;
+		} catch (error) {
+			Logger.warn("Firewall sync provider connection test failed", {
+				error,
+				providerId: provider.id,
+				providerName: provider.name,
+				type: provider.type,
+				durationMs: Date.now() - startedAt,
+			});
+			throw error;
+		}
 	}
 
 	/**
@@ -385,9 +427,10 @@ class FirewallSyncService {
 		if (provider) {
 			try {
 				await this.adapters[provider.type].teardown(provider.config_json);
+				Logger.info("Firewall sync provider teardown completed", { providerId, providerName: provider.name, type: provider.type });
 			} catch (error) {
 				teardownError = error instanceof Error ? error.message : String(error);
-				Logger.error("[BurrowGate] Firewall sync provider teardown failed", { provider: providerId, type: provider.type, error: teardownError });
+				Logger.error("Firewall sync provider teardown failed", { providerId, providerName: provider.name, type: provider.type, error: teardownError });
 			}
 		}
 		await repository.deleteFirewallSyncProvider(providerId);

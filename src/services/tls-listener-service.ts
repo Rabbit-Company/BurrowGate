@@ -76,7 +76,7 @@ export class TlsListenerManager {
 		}
 		if (config.http.enabled) {
 			this.httpServer = this.serve({ port: config.http.port });
-			Logger.info(`[BurrowGate] HTTP listening on http://${config.host}:${config.http.port}`);
+			Logger.info(`HTTP listening on http://${config.host}:${config.http.port}`);
 		}
 		if (config.https.enabled) await this.reloadHttps();
 	}
@@ -96,7 +96,7 @@ export class TlsListenerManager {
 		const timeout = setTimeout(() => {
 			if (completed) return;
 			void server.stop(true).catch((error) => {
-				Logger.error("[BurrowGate] Unable to force-close the previous HTTPS listener", error);
+				Logger.error("Unable to force-close the previous HTTPS listener", error);
 			});
 		}, config.https.listenerDrainTimeoutMs);
 		(timeout as unknown as { unref?: () => void }).unref?.();
@@ -112,7 +112,7 @@ export class TlsListenerManager {
 				completed = true;
 				clearTimeout(timeout);
 				this.drainingServers.delete(server);
-				Logger.error("[BurrowGate] Unable to drain the previous HTTPS listener", error);
+				Logger.error("Unable to drain the previous HTTPS listener", error);
 			});
 	}
 
@@ -127,7 +127,7 @@ export class TlsListenerManager {
 				this.httpsServer = null;
 				this.drainServer(previous);
 			}
-			Logger.warn("[BurrowGate] HTTPS is enabled, but no certificate is available.");
+			Logger.warn("HTTPS is enabled, but no certificate is available.");
 			return;
 		}
 
@@ -142,7 +142,7 @@ export class TlsListenerManager {
 				reusePort: true,
 			});
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to start the replacement HTTPS listener. The current listener remains active.", { error });
+			Logger.error("Unable to start the replacement HTTPS listener. The current listener remains active.", { error });
 			throw new Error("The certificate was stored, but BurrowGate could not activate the replacement HTTPS listener. The existing listener remains active.", {
 				cause: error,
 			});
@@ -150,7 +150,7 @@ export class TlsListenerManager {
 
 		this.httpsServer = replacement;
 		Logger.info(
-			`[BurrowGate] HTTPS listening on https://${config.host}:${config.https.port} with ${managedCertificates.length} managed certificate(s)${bootstrap ? " plus bootstrap fallback" : ""}${config.https.http3Enabled ? " (HTTP/3 enabled, experimental)" : ""}`,
+			`HTTPS listening on https://${config.host}:${config.https.port} with ${managedCertificates.length} managed certificate(s)${bootstrap ? " plus bootstrap fallback" : ""}${config.https.http3Enabled ? " (HTTP/3 enabled, experimental)" : ""}`,
 		);
 
 		// Do not await this from the certificate-management request. The request may

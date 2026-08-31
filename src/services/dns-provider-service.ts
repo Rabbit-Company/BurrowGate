@@ -1,4 +1,5 @@
 import { repository } from "../db/repository.ts";
+import { Logger } from "../logger.ts";
 import type { DnsProviderRecord, DnsProviderType } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
@@ -104,5 +105,21 @@ export async function deleteDnsProvider(id: string): Promise<void> {
 export async function testDnsProvider(id: string): Promise<{ ok: boolean; message: string }> {
 	const provider = await repository.dnsProviderById(id);
 	if (!provider) throw new Error("DNS provider not found");
-	return await dnsProviderAdapter(provider.type).testConnection(provider.config_json);
+	const startedAt = Date.now();
+	try {
+		const result = await dnsProviderAdapter(provider.type).testConnection(provider.config_json);
+		const metadata = { providerId: provider.id, providerName: provider.name, type: provider.type, durationMs: Date.now() - startedAt };
+		if (result.ok) Logger.info("DNS provider connection test succeeded", metadata);
+		else Logger.warn("DNS provider connection test failed", { ...metadata, reason: result.message.slice(0, 1_000) });
+		return result;
+	} catch (error) {
+		Logger.warn("DNS provider connection test failed", {
+			error,
+			providerId: provider.id,
+			providerName: provider.name,
+			type: provider.type,
+			durationMs: Date.now() - startedAt,
+		});
+		throw error;
+	}
 }

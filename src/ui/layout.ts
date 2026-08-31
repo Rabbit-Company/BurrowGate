@@ -2,7 +2,7 @@ import packageMetadata from "../../package.json" with { type: "json" };
 
 export const APP_VERSION = packageMetadata.version;
 
-export type DashboardTabKey = "web-proxy" | "streams" | "host" | "notifications" | "firewall-sync" | "dns-providers" | "cluster";
+export type DashboardTabKey = "web-proxy" | "streams" | "host" | "notifications" | "firewall-sync" | "dns-providers" | "cluster" | "logs";
 
 export function dashboardSwitchNav(active: DashboardTabKey): string {
 	const tabs: Array<{ key: DashboardTabKey; href: string; label: string }> = [
@@ -14,6 +14,7 @@ export function dashboardSwitchNav(active: DashboardTabKey): string {
 		{ key: "dns-providers", href: "/_burrowgate/admin/dns-providers", label: "DNS Providers" },
 	];
 	tabs.push({ key: "cluster", href: "/_burrowgate/admin/cluster", label: "Cluster" });
+	tabs.push({ key: "logs", href: "/_burrowgate/admin/logs", label: "Logs" });
 	return `<nav class="dashboard-switch" aria-label="Dashboard">${tabs.map((tab) => `<a${tab.key === active ? ' class="active"' : ""} href="${tab.href}">${escapeHtml(tab.label)}</a>`).join("")}</nav>`;
 }
 

@@ -219,7 +219,7 @@ class HaElectionService {
 			try {
 				persistedTerm = await repository.fenceHaPrimaryForElectionTerm(term, Date.now());
 			} catch (error) {
-				Logger.error("[BurrowGate] HA: could not durably fence this primary for an election request; keeping the live process fenced", {
+				Logger.error("HA: could not durably fence this primary for an election request; keeping the live process fenced", {
 					error,
 					term,
 					candidateId,
@@ -230,16 +230,14 @@ class HaElectionService {
 			config.ha.epoch = Math.max(config.ha.epoch, persistedTerm);
 			await haMeshService
 				.broadcastPrimaryFenceState()
-				.catch((error) =>
-					Logger.warn("[BurrowGate] HA: failed to broadcast the temporary election fence; replicas will receive it on the next heartbeat", { error }),
-				);
+				.catch((error) => Logger.warn("HA: failed to broadcast the temporary election fence; replicas will receive it on the next heartbeat", { error }));
 			return this.rejectVote("an active primary does not grant election votes");
 		} else {
 			let persistedTerm: number | null;
 			try {
 				persistedTerm = await repository.adoptHaReplicaElectionTerm(term);
 			} catch (error) {
-				Logger.error("[BurrowGate] HA: could not durably adopt the proposed election term; refusing the vote", { error, term, candidateId });
+				Logger.error("HA: could not durably adopt the proposed election term; refusing the vote", { error, term, candidateId });
 				return this.rejectVote("could not durably adopt the proposed election term");
 			}
 			if (persistedTerm === null) return this.rejectVote("this node is no longer a replica eligible to vote");
@@ -281,7 +279,7 @@ class HaElectionService {
 			if (config.ha.role === "primary") await this.tickPrimaryQuorum();
 			else await this.tickReplicaElection();
 		} catch (error) {
-			Logger.error("[BurrowGate] HA: election service tick failed", { error });
+			Logger.error("HA: election service tick failed", { error });
 		} finally {
 			this.tickRunning = false;
 		}
@@ -332,7 +330,7 @@ class HaElectionService {
 		}
 		config.ha.quorumFenced = true;
 		await repository.setQuorumFence(Date.now());
-		Logger.error("[BurrowGate] HA: lost contact with a majority of registered cluster members - self-fencing until quorum returns", {
+		Logger.error("HA: lost contact with a majority of registered cluster members - self-fencing until quorum returns", {
 			total: members.length,
 			effectiveTotal: effectiveMemberCount,
 			ownCount,
@@ -348,10 +346,8 @@ class HaElectionService {
 		await repository.clearQuorumFence();
 		await haMeshService
 			.broadcastPrimaryFenceState()
-			.catch((error) =>
-				Logger.warn("[BurrowGate] HA: failed to broadcast the cleared quorum/election fence; replicas will recover on the next heartbeat", { error }),
-			);
-		Logger.warn("[BurrowGate] HA: cleared this primary's quorum-loss fence");
+			.catch((error) => Logger.warn("HA: failed to broadcast the cleared quorum/election fence; replicas will recover on the next heartbeat", { error }));
+		Logger.warn("HA: cleared this primary's quorum-loss fence");
 		notifyHaEvent("ha_node_up", "info", "This primary regained majority cluster connectivity and cleared its quorum-loss fence", "primary");
 	}
 
@@ -421,7 +417,7 @@ class HaElectionService {
 		if (!winner) return;
 
 		Logger.warn(
-			`[BurrowGate] HA: a majority of registered members, including the primary itself, confirmed a newer primary while this node was ${reason} - automatically demoting to a replica of the confirmed primary`,
+			`HA: a majority of registered members, including the primary itself, confirmed a newer primary while this node was ${reason} - automatically demoting to a replica of the confirmed primary`,
 			{ ownEpoch: config.ha.epoch, confirmedEpoch: winner.epoch, confirmedPrimaryUrl: winner.primaryUrl, confirmers: winner.confirmers.size, majority },
 		);
 		notifyHaEvent(
@@ -491,7 +487,7 @@ class HaElectionService {
 					if (adopted) return true;
 				}
 			} catch (error) {
-				Logger.warn("[BurrowGate] HA: discovery-fallback query to a peer failed, will retry on the next tick", { error, peerNodeId: peer.node_id });
+				Logger.warn("HA: discovery-fallback query to a peer failed, will retry on the next tick", { error, peerNodeId: peer.node_id });
 			}
 		}
 		return false;
@@ -520,7 +516,7 @@ class HaElectionService {
 			if (this.campaigningTerm !== term || !config.ha.electionInProgress || haMeshService.disconnectedDurationMs() === null) return;
 
 			config.ha.epoch = Math.max(config.ha.epoch, term);
-			Logger.warn("[BurrowGate] HA: lost contact with the primary past this node's election timeout - campaigning for automatic failover", {
+			Logger.warn("HA: lost contact with the primary past this node's election timeout - campaigning for automatic failover", {
 				term,
 				ownCursor,
 				memberCount: members.length,
@@ -563,15 +559,13 @@ class HaElectionService {
 				config.ha.epoch = Math.max(config.ha.epoch, response.voterTerm);
 				await repository
 					.adoptHaReplicaElectionTerm(response.voterTerm)
-					.catch((error) =>
-						Logger.error("[BurrowGate] HA: failed to durably adopt a newer election term reported by a peer", { error, term: response.voterTerm }),
-					);
+					.catch((error) => Logger.error("HA: failed to durably adopt a newer election term reported by a peer", { error, term: response.voterTerm }));
 				return;
 			}
 			if (response.voteGranted) grantedBy.add(peer.node_id);
 		}
 		if (grantedBy.size < majority) {
-			Logger.warn("[BurrowGate] HA: automatic failover election did not reach a majority, will retry with a fresh term if still disconnected", {
+			Logger.warn("HA: automatic failover election did not reach a majority, will retry with a fresh term if still disconnected", {
 				term,
 				grantedBy: grantedBy.size,
 				majority,
@@ -582,10 +576,7 @@ class HaElectionService {
 
 		if (this.campaigningTerm !== term || !config.ha.electionInProgress) return;
 		if (!haMeshService.beginElectionWinnerActivation(connectivityGeneration)) {
-			Logger.warn(
-				"[BurrowGate] HA: election reached a majority but this node reconnected to a verified primary before activation; abandoning the stale result",
-				{ term },
-			);
+			Logger.warn("HA: election reached a majority but this node reconnected to a verified primary before activation; abandoning the stale result", { term });
 			return;
 		}
 		let activated = false;
@@ -603,10 +594,10 @@ class HaElectionService {
 		expectedPrimaryUrl: string | null,
 		expectedPrimaryAdminUrl: string | null,
 	): Promise<boolean> {
-		Logger.warn("[BurrowGate] HA: won an automatic failover election, activating as primary", { term, memberCount: members.length });
+		Logger.warn("HA: won an automatic failover election, activating as primary", { term, memberCount: members.length });
 		const persisted = await haMeshService.activateElectionWinner(nodeId, term, expectedPrimaryUrl, expectedPrimaryAdminUrl);
 		if (!persisted) {
-			Logger.error("[BurrowGate] HA: won an automatic failover election but durable activation was rejected or could not be persisted - remaining a replica");
+			Logger.error("HA: won an automatic failover election but durable activation was rejected or could not be persisted - remaining a replica");
 			return false;
 		}
 		notifyHaEvent("ha_node_up", "critical", `This node won an automatic failover election and is becoming the new primary (term ${term})`, "replica");
@@ -634,7 +625,7 @@ class HaElectionService {
 							primaryAdminUrl: newPrimaryAdminUrl,
 						});
 					} catch (error) {
-						Logger.warn("[BurrowGate] HA: failed to directly notify a peer about the new primary after an election, it will discover it on its own", {
+						Logger.warn("HA: failed to directly notify a peer about the new primary after an election, it will discover it on its own", {
 							error,
 							peerNodeId: peer.node_id,
 						});

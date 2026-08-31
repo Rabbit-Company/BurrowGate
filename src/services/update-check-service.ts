@@ -83,7 +83,7 @@ class UpdateCheckManager {
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Update check failed";
-			Logger.warn("[BurrowGate] Unable to check for updates", { error: message });
+			Logger.warn("Unable to check for updates", { error: message });
 			this.status = { ...this.status, checkedAt: Date.now(), error: message };
 		}
 	}

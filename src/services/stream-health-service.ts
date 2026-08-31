@@ -163,7 +163,7 @@ class StreamHealthManager {
 				);
 			}
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to persist stream origin latency check", { streamId: runtime.stream.id, error });
+			Logger.error("Unable to persist stream origin latency check", { streamId: runtime.stream.id, error });
 		} finally {
 			runtime.running = false;
 			runtime.nextCheckAt = Date.now() + jitter(Number(runtime.stream.origin_health_check_interval_seconds ?? 10) * 1_000);

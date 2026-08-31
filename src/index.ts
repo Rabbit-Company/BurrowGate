@@ -49,6 +49,7 @@ import { registerFirewallSyncAdminRoutes } from "./routes/firewall-sync-admin-ro
 import { registerDnsAdminRoutes } from "./routes/dns-admin-routes.ts";
 import { registerHaClusterAdminRoutes } from "./routes/ha-cluster-admin-routes.ts";
 import { registerHostAdminRoutes } from "./routes/host-admin-routes.ts";
+import { registerLogAdminRoutes } from "./routes/log-admin-routes.ts";
 import { haVersionWriteGuard } from "./routes/ha-version-write-guard.ts";
 import {
 	HaPrimaryAuthorityFenceError,
@@ -91,23 +92,25 @@ import { updateCheckManager } from "./services/update-check-service.ts";
 import { haMeshService } from "./services/ha-mesh-service.ts";
 import { haElectionService } from "./services/ha-election-service.ts";
 import { processLifecycle } from "./services/process-lifecycle-service.ts";
+import { dailyFileLogs } from "./services/daily-file-log-service.ts";
 import packageMetadata from "../package.json" with { type: "json" };
 
 process.on("SIGTERM", () => void processLifecycle.gracefulRestart("SIGTERM", 0));
 process.on("SIGINT", () => void processLifecycle.gracefulRestart("SIGINT", 0));
 
 process.on("uncaughtException", (error) => {
-	Logger.error("[BurrowGate] FATAL uncaught exception; process will exit", { error: error instanceof Error ? error.stack : String(error) });
+	Logger.error("FATAL uncaught exception; process will exit", { error: error instanceof Error ? error.stack : String(error) });
 	void processLifecycle.gracefulRestart("uncaughtException", 1);
 });
 
 process.on("unhandledRejection", (reason) => {
-	Logger.error("[BurrowGate] FATAL unhandled rejection; process will exit", {
+	Logger.error("FATAL unhandled rejection; process will exit", {
 		error: reason instanceof Error ? reason.stack : String(reason),
 	});
 	void processLifecycle.gracefulRestart("unhandledRejection", 1);
 });
 
+await dailyFileLogs.initialize();
 await initializeRuntimeSecrets();
 await migrate();
 await loadHaClusterConfigAtBoot();
@@ -142,11 +145,11 @@ startPendingChangeScheduler();
 
 if (config.http.enabled && config.cookieSecureMode === "always") {
 	Logger.warn(
-		"[BurrowGate] BG_COOKIE_SECURE=true/always disables admin and visitor sessions over HTTP. Use BG_COOKIE_SECURE=auto when any protected site must remain available through HTTP.",
+		"BG_COOKIE_SECURE=true/always disables admin and visitor sessions over HTTP. Use BG_COOKIE_SECURE=auto when any protected site must remain available through HTTP.",
 	);
 }
 if (config.openMetrics.enabled && !config.openMetrics.token) {
-	Logger.warn(`[BurrowGate] ${OPENMETRICS_PATH} is enabled without BG_OPENMETRICS_TOKEN; restrict it with network policy or configure a bearer token.`);
+	Logger.warn(`${OPENMETRICS_PATH} is enabled without BG_OPENMETRICS_TOKEN; restrict it with network policy or configure a bearer token.`);
 }
 
 const app = new Web<GatewayState>();
@@ -161,7 +164,13 @@ function isDashboardRequest(request: Request): boolean {
 		path.startsWith("/_burrowgate/admin/") ||
 		path === "/_burrowgate/api/admin" ||
 		path.startsWith("/_burrowgate/api/admin/") ||
-		["/_burrowgate/static/admin.js", "/_burrowgate/static/streams-admin.js", "/_burrowgate/static/chart.umd.js", "/_burrowgate/static/world.svg"].includes(path)
+		[
+			"/_burrowgate/static/admin.js",
+			"/_burrowgate/static/streams-admin.js",
+			"/_burrowgate/static/log-admin.js",
+			"/_burrowgate/static/chart.umd.js",
+			"/_burrowgate/static/world.svg",
+		].includes(path)
 	);
 }
 
@@ -183,6 +192,7 @@ app.use(
 			"/_burrowgate/static/burrowgate.css",
 			"/_burrowgate/static/pow-worker.js",
 			"/_burrowgate/static/world.svg",
+			/^\/_burrowgate\/api\/admin\/logs(?:\/|$)/,
 			...(config.openMetrics.enabled ? [OPENMETRICS_PATH] : []),
 		],
 	}),
@@ -211,11 +221,18 @@ app.use(async (ctx, next) => {
 	}
 	await next();
 });
-app.onError((error) => {
+app.onError((error, ctx) => {
 	if (error instanceof HaSessionPublicationError) return jsonResponse({ error: error.message, code: "ha_session_publication_failed" }, 503);
 	if (error instanceof HaPrimaryAuthorityFenceError) return jsonResponse({ error: error.message, code: "ha_primary_authority_fenced" }, 503);
 	if (error instanceof HaQuorumLossFenceError) return jsonResponse({ error: error.message, code: "ha_quorum_lost" }, 503);
-	Logger.error("Error", error);
+	const request: Request = ctx.req;
+	Logger.error("Unhandled request error", {
+		error,
+		requestId: resolveRequestId(request),
+		method: request.method,
+		path: new URL(request.url).pathname,
+		ip: getClientIp(ctx) ?? "unknown",
+	});
 	return jsonResponse({ error: "BurrowGate internal error" }, 500);
 });
 
@@ -229,6 +246,7 @@ registerFirewallSyncAdminRoutes(app);
 registerDnsAdminRoutes(app);
 registerHaClusterAdminRoutes(app);
 registerHostAdminRoutes(app);
+registerLogAdminRoutes(app);
 if (config.openMetrics.enabled) app.get(OPENMETRICS_PATH, (ctx) => openMetricsResponse(ctx.req));
 app.get("/_burrowgate/health", () => {
 	const geoip = geoIpStatus();
@@ -656,19 +674,50 @@ async function gateway(ctx: any): Promise<Response> {
 			response = proxied.response;
 			capturedRequestBody = proxied.capturedRequestBody;
 			capturedResponseBody = proxied.capturedResponseBody;
-			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+			if (loadBalancer.clearPassiveFailure(selectedOrigin.id)) {
+				Logger.info("Origin recovered from a passive request failure", {
+					requestId: eventBase.requestId,
+					siteId: site.id,
+					siteName: site.name,
+					originId: selectedOrigin.id,
+					originName: selectedOrigin.name,
+				});
+			}
 		} catch (firstError) {
 			if (firstError instanceof RequestBodyTooLargeError) throw firstError;
-			loadBalancer.reportPassiveFailure(selectedOrigin.id);
+			const failedOrigin = selectedOrigin;
+			const newlyQuarantined = loadBalancer.reportPassiveFailure(failedOrigin.id);
 			if (!["GET", "HEAD"].includes(request.method)) throw firstError;
-			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
+			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([failedOrigin.id]) });
 			if (!replacement) throw firstError;
+			if (newlyQuarantined) {
+				Logger.warn("Origin request failed; retrying another origin", {
+					error: firstError,
+					requestId: eventBase.requestId,
+					siteId: site.id,
+					siteName: site.name,
+					failedOriginId: failedOrigin.id,
+					failedOriginName: failedOrigin.name,
+					replacementOriginId: replacement.id,
+					replacementOriginName: replacement.name,
+					method: request.method,
+				});
+			}
 			selectedOrigin = replacement;
 			const proxied = await proxySelectedOrigin();
 			response = proxied.response;
 			capturedRequestBody = proxied.capturedRequestBody;
 			capturedResponseBody = proxied.capturedResponseBody;
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+			Logger.info("Origin request failover succeeded", {
+				requestId: eventBase.requestId,
+				siteId: site.id,
+				siteName: site.name,
+				failedOriginId: failedOrigin.id,
+				replacementOriginId: selectedOrigin.id,
+				replacementOriginName: selectedOrigin.name,
+				method: request.method,
+			});
 		}
 		response = staticAssetCache.observeResponse(request, response, cacheLookup, site, route.policy, route.http.cache, selectedOrigin.id);
 		if (accessUser && session && accessSettings.send_username_to_upstream === 1) {
@@ -740,7 +789,16 @@ async function gateway(ctx: any): Promise<Response> {
 			requestHeaders: capturedErrorRequestHeaders?.json ?? null,
 			requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
 		});
-		Logger.error("Origin proxy failed", { error });
+		Logger.error("Origin proxy request failed", {
+			error,
+			requestId: eventBase.requestId,
+			siteId: site.id,
+			siteName: site.name,
+			originId: selectedOrigin.id,
+			originName: selectedOrigin.name,
+			method: request.method,
+			latencyMs: Math.round(performance.now() - started),
+		});
 		return siteErrorResponse(
 			site,
 			request,
@@ -778,4 +836,4 @@ const listenerManager = new TlsListenerManager(app);
 await listenerManager.start();
 await streamProxyManager.start();
 
-Logger.info(`[BurrowGate] READY v${packageMetadata.version} (pid ${process.pid}, bun ${Bun.version})`);
+Logger.info(`READY v${packageMetadata.version} (pid ${process.pid}, bun ${Bun.version})`);

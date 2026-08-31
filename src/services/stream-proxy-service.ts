@@ -284,7 +284,7 @@ export class StreamProxyManager {
 		try {
 			await banStreamIpForProtectionMatch(record, ip, match, banDurations);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to auto-ban ${ip} for stream ${record.id}`, { error });
+			Logger.error(`Unable to auto-ban ${ip} for stream ${record.id}`, { error });
 		}
 	}
 
@@ -317,7 +317,7 @@ export class StreamProxyManager {
 			try {
 				await this.applyNow(record);
 			} catch (error) {
-				Logger.error(`[BurrowGate] Unable to activate stream on port ${record.incoming_port}`, { error });
+				Logger.error(`Unable to activate stream on port ${record.incoming_port}`, { error });
 			}
 		}
 	}
@@ -456,7 +456,7 @@ export class StreamProxyManager {
 		try {
 			await banStreamIpForBandwidthLimit(record, connection.clientIp, "tcp", policy.maxBytes, policy.windowSeconds, policy.banSeconds);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to auto-ban ${connection.clientIp} for stream bandwidth limit ${record.id}`, { error });
+			Logger.error(`Unable to auto-ban ${connection.clientIp} for stream bandwidth limit ${record.id}`, { error });
 		}
 		if (connection.closed) return;
 		const reason = "Exceeded configured TCP bandwidth limit";
@@ -594,7 +594,7 @@ export class StreamProxyManager {
 		try {
 			decision = await evaluateStreamIp(record, connection.clientIp);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${record.id}`, { error });
+			Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 		}
 		if (connection.closed) return;
 		let blockedReason: string | null = decision?.action === "block" ? (decision.reason ?? "Blocked by network rule") : null;
@@ -925,7 +925,7 @@ export class StreamProxyManager {
 		});
 		this.tcpRuntimes.set(record.id, { record, fingerprint: tcpFingerprint(record), listener });
 		Logger.info(
-			`[BurrowGate] TCP stream listening on ${config.host}:${record.incoming_port} -> ${record.forward_host}:${record.forward_port}${tls ? " with TLS termination" : ""}`,
+			`TCP stream listening on ${config.host}:${record.incoming_port} -> ${record.forward_host}:${record.forward_port}${tls ? " with TLS termination" : ""}`,
 		);
 	}
 
@@ -989,7 +989,7 @@ export class StreamProxyManager {
 						else if (runtime.pendingReplies.length < config.streams.maxPendingDatagrams) runtime.pendingReplies.push({ peer, data: copyChunk(data) });
 						else this.closeUdpPeer(runtime, peer, "UDP reply queue exceeded", new Error("UDP reply queue limit exceeded"));
 					} catch (error) {
-						Logger.error(`[BurrowGate] Unable to handle upstream UDP datagram for stream ${runtime.record.id}`, { error });
+						Logger.error(`Unable to handle upstream UDP datagram for stream ${runtime.record.id}`, { error });
 					}
 				},
 				drain: () => {
@@ -1074,7 +1074,7 @@ export class StreamProxyManager {
 		try {
 			await banStreamIpForBandwidthLimit(runtime.record, peer.clientIp, "udp", policy.maxBytes, policy.windowSeconds, policy.banSeconds);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to auto-ban ${peer.clientIp} for stream bandwidth limit ${runtime.record.id}`, { error });
+			Logger.error(`Unable to auto-ban ${peer.clientIp} for stream bandwidth limit ${runtime.record.id}`, { error });
 		}
 		if (peer.closed) return;
 		const reason = "Exceeded configured UDP bandwidth limit";
@@ -1120,7 +1120,7 @@ export class StreamProxyManager {
 					const decision = await evaluateStreamIp(runtime.record, clientIp);
 					if (decision.action === "block") blockedReason = decision.reason ?? "Blocked by network rule";
 				} catch (error) {
-					Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${runtime.record.id}`, { error });
+					Logger.error(`Unable to evaluate network policy for stream ${runtime.record.id}`, { error });
 				}
 				if (!blockedReason && runtime.record.max_connections_per_ip > 0) {
 					const activeFromIp = [...runtime.peers.values()].filter((peer) => peer.clientIp === clientIp).length;
@@ -1201,7 +1201,7 @@ export class StreamProxyManager {
 			} else this.closeUdpPeer(runtime, peer, "UDP upstream queue exceeded", new Error("UDP upstream queue limit exceeded"));
 		} catch (error) {
 			recordStreamUpstreamFailure(runtime.record.id, clientIp);
-			Logger.error(`[BurrowGate] Unable to create UDP peer for ${clientIp}:${clientPort}`, { error });
+			Logger.error(`Unable to create UDP peer for ${clientIp}:${clientPort}`, { error });
 		}
 	}
 
@@ -1214,7 +1214,7 @@ export class StreamProxyManager {
 				this.recordUdpBytes(runtime, peer, "upstream", datagram.payloadBytes);
 			}
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to flush UDP upstream datagrams for stream ${runtime.record.id}`, { error });
+			Logger.error(`Unable to flush UDP upstream datagrams for stream ${runtime.record.id}`, { error });
 		}
 	}
 
@@ -1231,7 +1231,7 @@ export class StreamProxyManager {
 				this.recordUdpBytes(runtime, reply.peer, "client", reply.data.byteLength);
 			}
 		} catch (error) {
-			Logger.error(`[BurrowGate] Unable to flush UDP replies for stream ${runtime.record.id}`, { error });
+			Logger.error(`Unable to flush UDP replies for stream ${runtime.record.id}`, { error });
 		}
 	}
 
@@ -1295,7 +1295,7 @@ export class StreamProxyManager {
 				drain: () => this.flushUdpReplies(runtime),
 				error: (_socket, error) => {
 					this.statusFor(record).error = error instanceof Error ? error.message : String(error ?? "Unknown UDP socket error");
-					Logger.error(`[BurrowGate] UDP stream error on port ${record.incoming_port}`, { error });
+					Logger.error(`UDP stream error on port ${record.incoming_port}`, { error });
 				},
 			},
 		});
@@ -1319,7 +1319,7 @@ export class StreamProxyManager {
 			closed: false,
 		};
 		this.udpRuntimes.set(record.id, runtime);
-		Logger.info(`[BurrowGate] UDP stream listening on ${config.host}:${record.incoming_port} -> ${forwardAddress}:${record.forward_port}`);
+		Logger.info(`UDP stream listening on ${config.host}:${record.incoming_port} -> ${forwardAddress}:${record.forward_port}`);
 	}
 
 	private stopUdp(streamId: string, reason: string): void {
@@ -1386,7 +1386,7 @@ export class StreamProxyManager {
 			try {
 				decision = await evaluateStreamIp(record, connection.clientIp);
 			} catch (error) {
-				Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${record.id}`, { error });
+				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
 			if (decision?.action !== "block") continue;
 			this.monitorEvent({
@@ -1415,7 +1415,7 @@ export class StreamProxyManager {
 			try {
 				decision = await evaluateStreamIp(record, peer.clientIp);
 			} catch (error) {
-				Logger.error(`[BurrowGate] Unable to evaluate network policy for stream ${record.id}`, { error });
+				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
 			if (decision?.action !== "block") continue;
 			this.monitorEvent({

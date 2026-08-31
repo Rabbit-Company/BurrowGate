@@ -115,17 +115,17 @@ export async function applyDuePendingChanges(): Promise<void> {
 			try {
 				await applier(row.entity_id, JSON.parse(row.changes_json) as Record<string, unknown>);
 				await repository.updatePendingChangeStatus(row.id, "applied", row.attempts, row.apply_at, null, Date.now());
-				Logger.info(`[BurrowGate] Applied scheduled ${row.entity_type} change for ${row.entity_id}: ${row.summary}`);
+				Logger.info(`Applied scheduled ${row.entity_type} change for ${row.entity_id}: ${row.summary}`);
 			} catch (error) {
 				const attempts = row.attempts + 1;
 				const message = error instanceof Error ? error.message : String(error);
 				if (attempts >= config.pendingChanges.maxAttempts) {
 					await repository.updatePendingChangeStatus(row.id, "failed", attempts, row.apply_at, message, null);
-					Logger.error(`[BurrowGate] Giving up on scheduled ${row.entity_type} change for ${row.entity_id} after ${attempts} attempts`, { error });
+					Logger.error(`Giving up on scheduled ${row.entity_type} change for ${row.entity_id} after ${attempts} attempts`, { error });
 				} else {
 					const nextAttemptAt = Date.now() + config.pendingChanges.retryBackoffSeconds * 1_000;
 					await repository.updatePendingChangeStatus(row.id, "pending", attempts, nextAttemptAt, message, null);
-					Logger.warn(`[BurrowGate] Scheduled ${row.entity_type} change for ${row.entity_id} failed, retrying`, { error });
+					Logger.warn(`Scheduled ${row.entity_type} change for ${row.entity_id} failed, retrying`, { error });
 				}
 			}
 		}

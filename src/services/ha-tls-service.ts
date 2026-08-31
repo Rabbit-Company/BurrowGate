@@ -25,7 +25,7 @@ export async function pinPrimaryHaCertificate(certificate: string): Promise<void
 }
 
 export async function deletePinnedHaCertificate(): Promise<void> {
-	await rm(pinnedHaCaPath(), { force: true }).catch((error) => Logger.warn("[BurrowGate] HA: failed to remove the pinned primary certificate", { error }));
+	await rm(pinnedHaCaPath(), { force: true }).catch((error) => Logger.warn("HA: failed to remove the pinned primary certificate", { error }));
 }
 
 export async function readPinnedHaCertificate(): Promise<string | null> {
@@ -113,7 +113,7 @@ async function resolveHaTlsCertificate(): Promise<HaTlsCertificate> {
 
 	const existing = await readablePair(certPath, keyPath);
 	if (existing && certificateCoversConfiguredAddress(existing.cert)) return existing;
-	if (existing) Logger.info("[BurrowGate] HA: the existing self-signed certificate does not cover this node's current admin URL, regenerating.");
+	if (existing) Logger.info("HA: the existing self-signed certificate does not cover this node's current admin URL, regenerating.");
 
 	await Promise.all([rm(certPath, { force: true }), rm(keyPath, { force: true })]);
 	await execFileAsync("openssl", [
@@ -137,6 +137,6 @@ async function resolveHaTlsCertificate(): Promise<HaTlsCertificate> {
 	await chmod(keyPath, 0o600);
 	const generated = await readablePair(certPath, keyPath);
 	if (!generated) throw new Error("Generated HA certificate could not be read");
-	Logger.info("[BurrowGate] Generated a self-signed certificate for the HA replication link.");
+	Logger.info("Generated a self-signed certificate for the HA replication link.");
 	return generated;
 }

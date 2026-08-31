@@ -28,6 +28,7 @@ describe("HA cluster version admin-write guard", () => {
 		config.ha.role = "primary";
 		config.ha.versionMismatchNodes = [{ nodeId: "old-node", name: "old replica", version: "0.0.1" }];
 		expect(haVersionWriteGuard(new Request("https://primary.test/_burrowgate/api/admin/sites"))).toBeNull();
+		expect(haVersionWriteGuard(new Request("https://primary.test/_burrowgate/api/admin/logs/settings", { method: "PUT" }))).toBeNull();
 		expect(haVersionWriteGuard(new Request("https://primary.test/_burrowgate/api/admin/ha/nodes/old-node", { method: "DELETE" }))).toBeNull();
 		expect(haVersionWriteGuard(new Request("https://primary.test/_burrowgate/api/admin/ha/leave", { method: "POST" }))).toBeNull();
 		config.ha.role = "replica";

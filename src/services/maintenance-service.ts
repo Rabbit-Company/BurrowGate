@@ -54,7 +54,7 @@ export async function runCleanupTasks(tasks: CleanupTask[], options: CleanupRunO
 			if (count > 0 && options.pauseMs > 0 && queue.length > 0) await wait(options.pauseMs);
 		} catch (error) {
 			errors += 1;
-			Logger.error(`[BurrowGate] Incremental cleanup failed for ${task.name}`, { error });
+			Logger.error(`Incremental cleanup failed for ${task.name}`, { error });
 		}
 	}
 	return { deleted, attemptedBatches, errors };
@@ -207,10 +207,10 @@ export async function runRetentionCleanup(): Promise<void> {
 			pauseMs: config.maintenance.cleanupPauseMs,
 			timeBudgetMs: config.maintenance.cleanupTimeBudgetMs,
 		});
-		if (cleanupResult.deleted > 0) Logger.debug(`[BurrowGate] Incremental retention cleanup removed ${cleanupResult.deleted} row(s)`);
+		if (cleanupResult.deleted > 0) Logger.debug(`Incremental retention cleanup removed ${cleanupResult.deleted} row(s)`);
 	} catch (error) {
 		cleanupResult.errors += 1;
-		Logger.error("[BurrowGate] Unable to prepare retention cleanup", { error });
+		Logger.error("Unable to prepare retention cleanup", { error });
 	} finally {
 		openMetrics.recordRetentionCleanup({ ...cleanupResult, durationMs: performance.now() - startedAt });
 		cleanupRunning = false;
@@ -223,12 +223,12 @@ async function runHousekeeping(): Promise<void> {
 	try {
 		await backfillGeoIp();
 	} catch (error) {
-		Logger.error("[BurrowGate] GeoIP backfill maintenance failed", { error });
+		Logger.error("GeoIP backfill maintenance failed", { error });
 	}
 	try {
 		await renewDueCertificates();
 	} catch (error) {
-		Logger.error("[BurrowGate] Certificate renewal maintenance failed", { error });
+		Logger.error("Certificate renewal maintenance failed", { error });
 	} finally {
 		housekeepingRunning = false;
 	}

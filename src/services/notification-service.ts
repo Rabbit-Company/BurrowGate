@@ -279,7 +279,7 @@ class NotificationService {
 		try {
 			for (const delivery of await repository.pendingNotificationOutbox(Date.now(), 5)) await this.deliverOne(delivery);
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to process notification outbox", { error });
+			Logger.error("Unable to process notification outbox", { error });
 		} finally {
 			this.workerRunning = false;
 		}

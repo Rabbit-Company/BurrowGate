@@ -197,7 +197,11 @@ describe("isPrimaryAdminWriteRequest", () => {
 		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/sites/site-1", { method: "DELETE" }))).toBe(true);
 	});
 
-	test("exempts logout, recovery-code consumption, and promote even though they mutate", () => {
+	test("exempts node-local logging, logout, recovery-code consumption, and promote even though they mutate", () => {
+		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/logs/settings", { method: "PUT" }))).toBe(false);
+		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/logs/archives/2026-08-30.txt.gz", { method: "DELETE" }))).toBe(
+			false,
+		);
 		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/logout", { method: "POST" }))).toBe(false);
 		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/ha/consume-recovery-code", { method: "POST" }))).toBe(false);
 		expect(isPrimaryAdminWriteRequest(new Request("https://primary.test/_burrowgate/api/admin/ha/promote/some-node", { method: "POST" }))).toBe(false);

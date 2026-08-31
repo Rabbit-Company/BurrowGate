@@ -151,7 +151,7 @@ class ConnectivityMonitor {
 			this.advanceTargetState(state, result);
 			await this.recomputeAggregate(checkedAt);
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to persist connectivity ping result", { target: state.target, error });
+			Logger.error("Unable to persist connectivity ping result", { target: state.target, error });
 		} finally {
 			state.running = false;
 			state.nextCheckAt = Date.now() + jitter(config.connectivityMonitor.intervalSeconds * 1_000);

@@ -81,7 +81,7 @@ export async function resolveSharedTokenPlaintext(encrypted: string): Promise<st
 		if (!pendingKey?.trim()) throw error;
 		const trimmed = pendingKey.trim();
 		const plaintext = await decryptWithKey(encrypted, await deriveKey(trimmed));
-		Logger.warn("[BurrowGate] HA: recovered from an interrupted master key promotion, finishing it now");
+		Logger.warn("HA: recovered from an interrupted master key promotion, finishing it now");
 		await atomicWriteFile(config.masterKeyFile!, trimmed, 0o600);
 		await rm(pendingPath!, { force: true }).catch(() => undefined);
 		resetMasterKeyCache();

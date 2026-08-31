@@ -110,6 +110,7 @@ export function isPrimaryAdminWriteRequest(request: Request): boolean {
 	if (!pathname.startsWith("/_burrowgate/api/admin/")) return false;
 	return (
 		pathname !== "/_burrowgate/api/admin/logout" &&
+		!pathname.startsWith("/_burrowgate/api/admin/logs") &&
 		pathname !== "/_burrowgate/api/admin/ha/consume-recovery-code" &&
 		pathname !== "/_burrowgate/api/admin/ha/resolve-admin-session" &&
 		!pathname.startsWith("/_burrowgate/api/admin/ha/promote/")

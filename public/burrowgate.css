@@ -2077,7 +2077,150 @@ form.grid label {
 	user-select: none;
 }
 
+.log-settings-card,
+.log-archives-card {
+	margin-bottom: 18px;
+}
+.recent-logs-card {
+	margin-bottom: 18px;
+}
+.log-settings-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 18px;
+}
+.log-settings-grid > label:not(.checkbox-field) {
+	display: grid;
+	align-content: start;
+	gap: 7px;
+	color: #94a3b8;
+	font-size: 12px;
+}
+.log-settings-grid .checkbox-field {
+	display: flex;
+	gap: 10px;
+	align-self: start;
+	margin-top: 24px;
+}
+.log-settings-grid .checkbox-field > input {
+	margin-top: 3px;
+}
+.log-settings-grid .checkbox-field > span {
+	display: grid;
+	gap: 6px;
+}
+.input-with-suffix {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+.input-with-suffix .input {
+	border-radius: 10px 0 0 10px;
+}
+.input-with-suffix > span {
+	display: grid;
+	place-items: center;
+	padding: 0 12px;
+	border: 1px solid var(--border);
+	border-left: 0;
+	border-radius: 0 10px 10px 0;
+	background: var(--surface-2);
+	color: #94a3b8;
+}
+.log-settings-card > .notice {
+	margin: 0 24px 24px;
+}
+.log-settings-grid small {
+	line-height: 1.45;
+}
+.logs-toolbar {
+	grid-template-columns: minmax(280px, 1fr) minmax(150px, 220px) minmax(100px, 120px);
+}
+.logs-table {
+	min-width: 920px;
+}
+.log-time-cell {
+	white-space: nowrap;
+}
+.log-level-badge {
+	min-width: 66px;
+	justify-content: center;
+	text-align: center;
+	text-transform: uppercase;
+}
+.log-level-error {
+	background: #3f1118;
+	border-color: #f43f5e;
+	color: #f43f5e;
+}
+.log-level-warn {
+	background: #3a2508;
+	border-color: #f59e0b;
+	color: #f59e0b;
+}
+.log-level-audit {
+	background: #2e1d4d;
+	border-color: #a78bfa;
+	color: #a78bfa;
+}
+.log-level-info {
+	background: #0c2945;
+	border-color: #22d3ee;
+	color: #22d3ee;
+}
+.log-level-http {
+	background: #052e26;
+	border-color: #22c55e;
+	color: #22c55e;
+}
+.log-level-debug {
+	background: #1e293b;
+	border-color: #64748b;
+	color: #94a3b8;
+}
+.log-level-verbose {
+	background: #273244;
+	border-color: #94a3b8;
+	color: #cbd5e1;
+}
+.log-level-silly {
+	background: #172033;
+	border-color: #475569;
+	color: #94a3b8;
+}
+.log-message-cell {
+	width: 42%;
+	min-width: 280px;
+	max-width: 620px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	cursor: help;
+}
+.log-metadata-cell {
+	min-width: 240px;
+	max-width: 520px;
+}
+.log-metadata-cell pre {
+	max-height: 150px;
+	margin: 0;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 11px;
+	color: #94a3b8;
+}
+.log-level-dot {
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	margin-right: 7px;
+	border-radius: 999px;
+}
+
 @media (max-width: 1180px) {
+	.log-settings-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
 	.date-range-layout {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
@@ -2089,6 +2232,13 @@ form.grid label {
 	}
 }
 @media (max-width: 620px) {
+	.log-settings-grid,
+	.logs-toolbar {
+		grid-template-columns: 1fr;
+	}
+	.log-settings-grid .checkbox-field {
+		margin-top: 0;
+	}
 	.date-range-layout {
 		grid-template-columns: 1fr;
 		padding: 16px;

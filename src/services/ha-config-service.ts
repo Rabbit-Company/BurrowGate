@@ -144,7 +144,7 @@ function applyLive(patch: Partial<HaClusterConfigInsert>, sharedToken: string | 
 
 function applyLiveAndLogPendingRestart(patch: Partial<HaClusterConfigInsert>, sharedToken: string | undefined, summary: string): void {
 	applyLive(patch, sharedToken);
-	Logger.warn(`[BurrowGate] HA: ${summary} - restarting to apply`);
+	Logger.warn(`HA: ${summary} - restarting to apply`);
 }
 
 export async function updateNodeIdentity(input: { nodeName?: string; selfAdminUrl: string }): Promise<void> {

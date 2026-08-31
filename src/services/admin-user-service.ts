@@ -304,8 +304,8 @@ export async function ensureBootstrapAdministrator(): Promise<void> {
 		sso_subject: null,
 		auth_source: "password",
 	});
-	Logger.info("[BurrowGate] Bootstrapped first Administrator account:");
-	Logger.info(`[BurrowGate]   Username: ${username}`);
-	if (generated) Logger.info(`[BurrowGate]   Password: ${password}`);
-	Logger.info(`[BurrowGate] Credentials saved to ${path}. Two-factor authentication enrollment is required on first login.`);
+	Logger.info("Bootstrapped first Administrator account:");
+	Logger.info(`  Username: ${username}`);
+	if (generated) Logger.info(`  Password: ${password}`);
+	Logger.info(`Credentials saved to ${path}. Two-factor authentication enrollment is required on first login.`);
 }

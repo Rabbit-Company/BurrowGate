@@ -271,17 +271,13 @@ async function openUpstreamWebSocket(target: URL, headers: Headers, request: Req
 		const onAbort = (): void => {
 			try {
 				socket.close();
-			} catch {
-				/* no-op */
-			}
+			} catch {}
 			finish(new Error("Downstream WebSocket request was aborted"));
 		};
 		const timer = setTimeout(() => {
 			try {
 				socket.close();
-			} catch {
-				/* no-op */
-			}
+			} catch {}
 			finish(new Error(`WebSocket origin handshake timed out after ${connectTimeoutMs} ms`));
 		}, connectTimeoutMs);
 
@@ -653,31 +649,56 @@ export async function handleWebSocketUpgrade(
 		let upstream: WebSocket;
 		try {
 			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
-			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+			if (loadBalancer.clearPassiveFailure(selectedOrigin.id)) {
+				Logger.info("Origin recovered from a passive WebSocket connection failure", {
+					requestId: eventBase.requestId,
+					siteId: site.id,
+					siteName: site.name,
+					originId: selectedOrigin.id,
+					originName: selectedOrigin.name,
+				});
+			}
 		} catch (firstError) {
-			loadBalancer.reportPassiveFailure(selectedOrigin.id);
-			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([selectedOrigin.id]) });
+			const failedOrigin = selectedOrigin;
+			const newlyQuarantined = loadBalancer.reportPassiveFailure(failedOrigin.id);
+			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([failedOrigin.id]) });
 			if (!replacement || replacement.origin_type === "static") throw firstError;
+			if (newlyQuarantined) {
+				Logger.warn("WebSocket origin connection failed; retrying another origin", {
+					error: firstError,
+					requestId: eventBase.requestId,
+					siteId: site.id,
+					siteName: site.name,
+					failedOriginId: failedOrigin.id,
+					failedOriginName: failedOrigin.name,
+					replacementOriginId: replacement.id,
+					replacementOriginName: replacement.name,
+				});
+			}
 			selectedOrigin = replacement;
 			target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
 			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
+			Logger.info("WebSocket origin failover succeeded", {
+				requestId: eventBase.requestId,
+				siteId: site.id,
+				siteName: site.name,
+				failedOriginId: failedOrigin.id,
+				replacementOriginId: selectedOrigin.id,
+				replacementOriginName: selectedOrigin.name,
+			});
 		}
 		const offeredProtocols = offeredWebSocketProtocols(request);
 		if (offeredProtocols.length > 0 && !upstream.protocol) {
 			try {
 				upstream.close(1000, "Upstream did not select a WebSocket subprotocol");
-			} catch {
-				/* no-op */
-			}
+			} catch {}
 			throw new Error(`WebSocket origin ${target.host} did not select any offered subprotocol`);
 		}
 		if (upstream.protocol && !offeredProtocols.includes(upstream.protocol)) {
 			try {
 				upstream.close(1002, "Invalid upstream WebSocket subprotocol");
-			} catch {
-				/* no-op */
-			}
+			} catch {}
 			throw new Error(`WebSocket origin selected an unoffered subprotocol: ${upstream.protocol}`);
 		}
 
@@ -763,7 +784,16 @@ export async function handleWebSocketUpgrade(
 			originId: selectedOrigin.id,
 			latencyMs: Math.round(performance.now() - started),
 		});
-		Logger.error(`WebSocket proxy failed for ${target}`, { error });
+		Logger.error("WebSocket proxy request failed", {
+			error,
+			requestId: eventBase.requestId,
+			siteId: site.id,
+			siteName: site.name,
+			originId: selectedOrigin.id,
+			originName: selectedOrigin.name,
+			targetUrl: target.toString(),
+			latencyMs: Math.round(performance.now() - started),
+		});
 		return siteErrorResponse(
 			site,
 			request,

@@ -71,10 +71,25 @@ function haRole(value: string | undefined): HaRole {
 const legacyPort = envNumber("BG_PORT", 80, 1, 65535);
 const dataDirectory = process.env.BG_DATA_DIR?.trim() || "./data";
 
+function logLevel(value: string | undefined): "error" | "warn" | "audit" | "info" | "http" | "debug" | "verbose" | "silly" {
+	const normalized = (value ?? "info").trim().toLowerCase();
+	if (["error", "warn", "audit", "info", "http", "debug", "verbose", "silly"].includes(normalized)) {
+		return normalized as "error" | "warn" | "audit" | "info" | "http" | "debug" | "verbose" | "silly";
+	}
+	throw new Error("BG_LOG_LEVEL must be error, warn, audit, info, http, debug, verbose, or silly");
+}
+
 export const config = {
 	environment: process.env.BG_ENV ?? "production",
 	host: process.env.BG_HOST ?? "0.0.0.0",
 	dataDirectory,
+	logging: {
+		directory: process.env.BG_LOG_DIRECTORY?.trim() || `${dataDirectory}/logs`,
+		fileEnabled: envBoolean("BG_FILE_LOGGING_ENABLED", false),
+		level: logLevel(process.env.BG_LOG_LEVEL),
+		compressAfterDays: envNumber("BG_LOG_COMPRESS_AFTER_DAYS", 1, 1, 3_649),
+		retentionDays: envNumber("BG_LOG_RETENTION_DAYS", 30, 2, 3_650),
+	},
 	// BG_PORT remains a backwards-compatible alias for the HTTP listener.
 	port: legacyPort,
 	http: {

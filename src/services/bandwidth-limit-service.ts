@@ -39,7 +39,7 @@ export function recordBandwidthLimitBytes(policy: ResolvedBandwidthLimitPolicy, 
 	if (!entry.banned && entry.bytes > policy.maxBytes) {
 		entry.banned = true;
 		void banIpForBandwidthLimit(site, ip, policy.maxBytes, policy.windowSeconds, policy.banSeconds).catch((error) => {
-			Logger.error(`[BurrowGate] Unable to auto-ban ${ip} for bandwidth limit on site ${site.id}`, { error });
+			Logger.error(`Unable to auto-ban ${ip} for bandwidth limit on site ${site.id}`, { error });
 		});
 	}
 }

@@ -42,7 +42,7 @@ export async function forwardToPrimaryIfReplica(request: Request): Promise<Respo
 	try {
 		return await forwardRequestToPrimary(request);
 	} catch (error) {
-		Logger.error("[BurrowGate] HA: failed to forward admin write to the primary", { error, url: request.url });
+		Logger.error("HA: failed to forward admin write to the primary", { error, url: request.url });
 		return jsonResponse({ error: "The primary BurrowGate instance is unreachable - this replica cannot apply admin writes right now" }, 503);
 	}
 }
@@ -53,7 +53,7 @@ export async function tryForwardToPrimary(request: Request): Promise<Response | 
 	try {
 		return await forwardRequestToPrimary(request);
 	} catch (error) {
-		Logger.warn("[BurrowGate] HA: failed to forward status request to the primary, falling back to a local view", { error, url: request.url });
+		Logger.warn("HA: failed to forward status request to the primary, falling back to a local view", { error, url: request.url });
 		return null;
 	}
 }

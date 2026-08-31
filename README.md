@@ -217,6 +217,11 @@ BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPD
 | `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                         |
 | `BG_COOKIE_SECURE`                        | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
 | `BG_MASTER_KEY`                           | generated                            | Encrypts certificate and ACME private keys                                                 |
+| `BG_FILE_LOGGING_ENABLED`                 | `false`                              | Store structured application logs in node-local daily text files                           |
+| `BG_LOG_LEVEL`                            | `info`                               | Console and file threshold: error, warn, audit, info, http, debug, verbose, or silly       |
+| `BG_LOG_DIRECTORY`                        | `./data/logs`                        | Directory for daily log files, compressed archives, and node-local logging settings        |
+| `BG_LOG_COMPRESS_AFTER_DAYS`              | `1`                                  | Compress plain-text daily logs after this many calendar days                               |
+| `BG_LOG_RETENTION_DAYS`                   | `30`                                 | Delete daily logs and compressed archives after this many calendar days                    |
 | `BG_EVENT_RETENTION_DAYS`                 | `7`                                  | Default monitoring retention assigned to new sites and streams                             |
 | `BG_BANDWIDTH_FLUSH_INTERVAL_MS`          | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
 | `BG_BANDWIDTH_MAX_PENDING_KEYS`           | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |

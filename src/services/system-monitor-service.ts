@@ -304,7 +304,7 @@ class SystemMonitor {
 			openMetrics.setSystemMetrics(sample);
 			await this.evaluateThresholds(sample);
 		} catch (error) {
-			Logger.error("[BurrowGate] Unable to sample system metrics", { error });
+			Logger.error("Unable to sample system metrics", { error });
 		}
 	}
 

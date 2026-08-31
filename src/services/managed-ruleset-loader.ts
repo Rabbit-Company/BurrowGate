@@ -59,9 +59,9 @@ async function seedBundledRuleSets(directory: string): Promise<void> {
 		}
 		try {
 			await writeFile(path, `${JSON.stringify(bundled.document, null, "\t")}\n`);
-			Logger.info(`[BurrowGate] Seeded default managed-protection ruleset "${bundled.filename}" into "${directory}"`);
+			Logger.info(`Seeded default managed-protection ruleset "${bundled.filename}" into "${directory}"`);
 		} catch (error) {
-			Logger.error(`[BurrowGate] Failed to seed default ruleset "${bundled.filename}" into "${directory}"`, { error });
+			Logger.error(`Failed to seed default ruleset "${bundled.filename}" into "${directory}"`, { error });
 		}
 	}
 }
@@ -77,10 +77,7 @@ export async function loadManagedRuleSets(options: LoadManagedRuleSetsOptions = 
 	try {
 		files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
 	} catch (error) {
-		Logger.error(
-			`[BurrowGate] Cannot read managed-protection ruleset directory "${directory}"; managed protection will fail open until rulesets are available`,
-			{ error },
-		);
+		Logger.error(`Cannot read managed-protection ruleset directory "${directory}"; managed protection will fail open until rulesets are available`, { error });
 		return result;
 	}
 
@@ -105,7 +102,7 @@ export async function loadManagedRuleSets(options: LoadManagedRuleSetsOptions = 
 		} catch (error) {
 			const message = error instanceof RuleSetValidationError ? error.message : (error as Error).message;
 			result.failed.push({ file, error: message });
-			Logger.error(`[BurrowGate] Failed to load managed-protection ruleset "${file}"`, { error: message });
+			Logger.error(`Failed to load managed-protection ruleset "${file}"`, { error: message });
 		}
 	}
 
@@ -115,17 +112,15 @@ export async function loadManagedRuleSets(options: LoadManagedRuleSetsOptions = 
 			result.loaded.push({ id: item.id, file: `${item.filename} (bundled fallback)`, title: item.title, version: item.version, ruleCount: item.ruleCount });
 		}
 		if (fallback.some((item) => item.id === wantedDefault)) result.defaultRulesetId = wantedDefault;
-		Logger.error(
-			`[BurrowGate] No managed-protection rulesets loaded from "${directory}"; registered ${fallback.length} bundled default(s) in memory as a fallback`,
-		);
+		Logger.error(`No managed-protection rulesets loaded from "${directory}"; registered ${fallback.length} bundled default(s) in memory as a fallback`);
 	} else {
-		Logger.info(`[BurrowGate] Loaded ${result.loaded.length} managed-protection ruleset(s) from "${directory}"`, {
+		Logger.info(`Loaded ${result.loaded.length} managed-protection ruleset(s) from "${directory}"`, {
 			rulesets: result.loaded.map((item) => `${item.id}@${item.version} (${item.ruleCount} rules)`),
 			default: result.defaultRulesetId ?? "(none - sites using the default ruleset will fail open)",
 		});
 		if (!result.defaultRulesetId) {
 			Logger.warn(
-				`[BurrowGate] Default ruleset "${wantedDefault}" was not found in "${directory}"; sites referencing the default ruleset will fail open until it is present`,
+				`Default ruleset "${wantedDefault}" was not found in "${directory}"; sites referencing the default ruleset will fail open until it is present`,
 			);
 		}
 	}
