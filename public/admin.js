@@ -29,6 +29,7 @@ const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.admin.column-visibility";
 
 const COLUMN_REGISTRY = {
 	traffic: [
+		{ key: "site", label: "Website", defaultVisible: false },
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
 		{ key: "method", label: "Method" },
@@ -84,7 +85,17 @@ function saveColumnVisibility() {
 }
 
 function isColumnVisible(tableKey, columnKey) {
-	return columnVisibility[tableKey]?.[columnKey] !== false;
+	const stored = columnVisibility[tableKey]?.[columnKey];
+	if (stored !== undefined) return stored;
+	return COLUMN_REGISTRY[tableKey]?.find((column) => column.key === columnKey)?.defaultVisible !== false;
+}
+
+function isColumnApplicable(tableKey, columnKey) {
+	return !(tableKey === "traffic" && columnKey === "site" && selectedSiteId);
+}
+
+function isColumnDisplayed(tableKey, columnKey) {
+	return isColumnApplicable(tableKey, columnKey) && isColumnVisible(tableKey, columnKey);
 }
 
 const TABLE_RELOADERS = {
@@ -104,18 +115,25 @@ function setColumnVisible(tableKey, columnKey, visible) {
 
 function applyColumnVisibility(tableKey) {
 	for (const column of COLUMN_REGISTRY[tableKey] ?? []) {
+		const applicable = isColumnApplicable(tableKey, column.key);
+		const toggle = document.querySelector(`[data-column-toggle="${tableKey}:${column.key}"]`);
+		if (toggle instanceof HTMLInputElement) {
+			toggle.disabled = !applicable;
+			toggle.closest("label")?.toggleAttribute("title", !applicable);
+			if (!applicable) toggle.closest("label")?.setAttribute("title", "Available when All websites is selected");
+		}
 		if (column.apply) {
 			column.apply();
 			continue;
 		}
-		const visible = isColumnVisible(tableKey, column.key);
+		const visible = isColumnDisplayed(tableKey, column.key);
 		document.querySelectorAll(`[data-column="${tableKey}:${column.key}"]`).forEach((element) => element.classList.toggle("hidden", !visible));
 	}
 }
 
 function visibleColumnCount(tableKey, fixedCount, eligible = () => true) {
 	const columns = COLUMN_REGISTRY[tableKey] ?? [];
-	return fixedCount + columns.filter((column) => eligible(column.key) && isColumnVisible(tableKey, column.key)).length;
+	return fixedCount + columns.filter((column) => eligible(column.key) && isColumnDisplayed(tableKey, column.key)).length;
 }
 
 function columnsMenuMarkup(tableKey) {
@@ -1036,6 +1054,12 @@ function refererLabel(host) {
 	return escapeHtml(host);
 }
 
+function websiteCell(siteId) {
+	const site = sites.find((item) => item.id === siteId);
+	if (!site) return siteId ? `<code title="${escapeHtml(siteId)}">${escapeHtml(truncate(siteId, 18))}</code>` : '<span class="muted">-</span>';
+	return `${escapeHtml(site.name)}<span class="cell-subtext">${escapeHtml(site.publicHost)}</span>`;
+}
+
 function setTrafficOriginVisibility(origins = []) {
 	trafficOrigins = origins;
 	trafficHasMultipleOrigins = origins.length > 1;
@@ -1051,6 +1075,7 @@ function trafficColumnCount() {
 async function loadTraffic() {
 	const requestId = ++trafficRequestId;
 	const state = tableState.traffic;
+	applyColumnVisibility("traffic");
 	setTableLoading("events", trafficColumnCount());
 	updateSortIndicators("panel-traffic", state);
 	try {
@@ -1097,6 +1122,7 @@ async function loadTraffic() {
 							(event) => `<tr class="clickable-row" data-event-id="${escapeHtml(event.id)}">
           <td>${formatDate(event.created_at)}</td>
           <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
+          ${isColumnDisplayed("traffic", "site") ? `<td>${websiteCell(event.site_id)}</td>` : ""}
           ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
           ${isColumnVisible("traffic", "asn") ? `<td>${asnBadge(event.asn, event.asn_org)}</td>` : ""}
           ${isColumnVisible("traffic", "method") ? `<td><span class="method-badge">${escapeHtml(event.method)}</span></td>` : ""}
@@ -1617,6 +1643,7 @@ function renderSiteSelector() {
 					)
 					.join("")}`;
 	if (sites.length > 0) selector.value = selectedSiteId;
+	applyColumnVisibility("traffic");
 }
 
 function renderErrorResponseOptions() {
@@ -2480,6 +2507,7 @@ function resetSiteScopedPages() {
 	tableState.rules.page = 1;
 	byId("eventOrigin").value = "";
 	setTrafficOriginVisibility();
+	applyColumnVisibility("traffic");
 	latestMetrics = null;
 	routePolicies = [];
 	accessList = {
@@ -3546,6 +3574,7 @@ function chartOptions(definition, formatter) {
 	const showLegend = definition.datasets.length > 1;
 	return {
 		responsive: true,
+		maintainAspectRatio: false,
 		resizeDelay: 150,
 		animation: false,
 		normalized: true,

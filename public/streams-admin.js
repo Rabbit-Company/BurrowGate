@@ -60,6 +60,7 @@ const COLUMN_VISIBILITY_STORAGE_KEY = "burrowgate.streams-admin.column-visibilit
 
 const COLUMN_REGISTRY = {
 	connections: [
+		{ key: "stream", label: "Stream", defaultVisible: false },
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
 		{ key: "connected", label: "Connected" },
@@ -68,6 +69,7 @@ const COLUMN_REGISTRY = {
 		{ key: "toClient", label: "To client" },
 	],
 	events: [
+		{ key: "stream", label: "Stream", defaultVisible: false },
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
 		{ key: "event", label: "Event" },
@@ -113,6 +115,14 @@ function isColumnVisible(tableKey, columnKey) {
 	return COLUMN_REGISTRY[tableKey]?.find((column) => column.key === columnKey)?.defaultVisible !== false;
 }
 
+function isColumnApplicable(tableKey, columnKey) {
+	return !((tableKey === "connections" || tableKey === "events") && columnKey === "stream" && selectedStreamId);
+}
+
+function isColumnDisplayed(tableKey, columnKey) {
+	return isColumnApplicable(tableKey, columnKey) && isColumnVisible(tableKey, columnKey);
+}
+
 const TABLE_RELOADERS = {
 	connections: () => renderActive(activeConnections),
 	events: () => loadEvents(),
@@ -130,14 +140,21 @@ function setColumnVisible(tableKey, columnKey, visible) {
 
 function applyColumnVisibility(tableKey) {
 	for (const column of COLUMN_REGISTRY[tableKey] ?? []) {
-		const visible = isColumnVisible(tableKey, column.key);
+		const applicable = isColumnApplicable(tableKey, column.key);
+		const toggle = document.querySelector(`[data-column-toggle="${tableKey}:${column.key}"]`);
+		if (toggle instanceof HTMLInputElement) {
+			toggle.disabled = !applicable;
+			toggle.closest("label")?.toggleAttribute("title", !applicable);
+			if (!applicable) toggle.closest("label")?.setAttribute("title", "Available when All streams is selected");
+		}
+		const visible = isColumnDisplayed(tableKey, column.key);
 		document.querySelectorAll(`[data-column="${tableKey}:${column.key}"]`).forEach((element) => element.classList.toggle("hidden", !visible));
 	}
 }
 
 function visibleColumnCount(tableKey, fixedCount) {
 	const columns = COLUMN_REGISTRY[tableKey] ?? [];
-	return fixedCount + columns.filter((column) => isColumnVisible(tableKey, column.key)).length;
+	return fixedCount + columns.filter((column) => isColumnDisplayed(tableKey, column.key)).length;
 }
 
 function columnsMenuMarkup(tableKey) {
@@ -181,6 +198,12 @@ const escapeHtml = (value) =>
 function truncate(value, length = 72) {
 	const text = String(value ?? "");
 	return text.length > length ? `${text.slice(0, length - 1)}...` : text;
+}
+
+function streamCell(streamId) {
+	const stream = streams.find((item) => item.id === streamId);
+	if (!stream) return streamId ? `<code title="${escapeHtml(streamId)}">${escapeHtml(truncate(streamId, 18))}</code>` : '<span class="muted">-</span>';
+	return escapeHtml(stream.name);
 }
 
 function setTableLoading(id, columns) {
@@ -477,6 +500,7 @@ function createStreamChart(canvasId, definition) {
 		data: { labels, datasets },
 		options: {
 			responsive: true,
+			maintainAspectRatio: false,
 			resizeDelay: 150,
 			animation: false,
 			normalized: true,
@@ -983,6 +1007,8 @@ function renderStreamSelector() {
 	selector.innerHTML = `<option value="">All streams</option>${streams.map((stream) => `<option value="${escapeHtml(stream.id)}">${escapeHtml(stream.name)} (port ${stream.incomingPort})</option>`).join("")}`;
 	if (streams.some((stream) => stream.id === selectedStreamId)) selector.value = selectedStreamId;
 	else selectedStreamId = "";
+	applyColumnVisibility("connections");
+	applyColumnVisibility("events");
 }
 
 function renderRulesStreamSelector() {
@@ -1394,6 +1420,7 @@ function connectionsColumnCount() {
 
 function renderActive(items) {
 	activeConnections = items;
+	applyColumnVisibility("connections");
 	const state = tableState.connections;
 	const multiplier = state.sortDirection === "asc" ? 1 : -1;
 	const filtered = [...filteredActive(items)].sort((left, right) => compareValues(left, right, state.sortBy) * multiplier);
@@ -1409,6 +1436,7 @@ function renderActive(items) {
           <td><span class="badge info">${item.protocol.toUpperCase()}</span></td>
           <td><code>${item.incomingPort}</code></td>
           <td class="ip-cell"><code title="${escapeHtml(`${item.clientIp} (${countryDisplayName(item.countryCode || "ZZ")})`)}">${escapeHtml(item.clientIp)}:${item.clientPort}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
+          ${isColumnDisplayed("connections", "stream") ? `<td>${streamCell(item.streamId)}</td>` : ""}
           ${isColumnVisible("connections", "country") ? `<td>${countryBadge(item.countryCode)}</td>` : ""}
           ${isColumnVisible("connections", "asn") ? `<td>${asnBadge(item.asn, item.asnOrg)}</td>` : ""}
           ${isColumnVisible("connections", "connected") ? `<td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td>` : ""}
@@ -1778,6 +1806,7 @@ function eventsColumnCount() {
 
 async function loadEvents() {
 	const state = tableState.events;
+	applyColumnVisibility("events");
 	byId("streamEvents").innerHTML = `<tr><td colspan="${eventsColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
 	const result = await api(
 		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), asn: byId("eventAsn").value, ...rangeQuery() })}`,
@@ -1789,6 +1818,7 @@ async function loadEvents() {
 					(item) => `<tr>
           <td>${escapeHtml(formatDate(item.created_at))}</td>
           <td class="ip-cell"><code title="${item.client_ip ? escapeHtml(`${item.client_ip} (${countryDisplayName(item.country_code || "ZZ")})`) : ""}">${escapeHtml(item.client_ip || "-")}${item.client_port ? `:${item.client_port}` : ""}</code>${item.username ? `<span class="cell-subtext">${escapeHtml(item.username)}</span>` : ""}</td>
+          ${isColumnDisplayed("events", "stream") ? `<td>${streamCell(item.stream_id)}</td>` : ""}
           ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
           ${isColumnVisible("events", "asn") ? `<td>${asnBadge(item.asn, item.asn_org)}</td>` : ""}
           ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" || item.event_type === "monitored" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
@@ -2569,6 +2599,8 @@ byId("refreshEvents").addEventListener("click", () => void loadEvents());
 byId("refreshBandwidth").addEventListener("click", () => void loadBandwidth());
 byId("streamSelector").addEventListener("change", () => {
 	selectedStreamId = byId("streamSelector").value;
+	applyColumnVisibility("connections");
+	applyColumnVisibility("events");
 	eventPage = 1;
 	bandwidthPage = 1;
 	void refreshDashboard();

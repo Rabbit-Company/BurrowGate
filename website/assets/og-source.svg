@@ -37,8 +37,8 @@
     <rect x="302" y="450" width="160" height="42" rx="21" fill="#0c2945" stroke="#0369a1"/>
     <text x="325" y="477" fill="#bae6fd">Bun-native</text>
 
-    <rect x="478" y="450" width="116" height="42" rx="21" fill="#1f2937" stroke="#374151"/>
-    <text x="501" y="477" fill="#e5e7eb">GPLv3</text>
+    <rect x="478" y="450" width="132" height="42" rx="21" fill="#1f2937" stroke="#374151"/>
+    <text x="493" y="477" fill="#e5e7eb">EUPL-1.2</text>
   </g>
 
   <text x="100" y="565" font-family="Liberation Sans, Arial, sans-serif" font-weight="400" font-size="24" fill="#64748b">burrowgate.org</text>

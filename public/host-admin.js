@@ -276,6 +276,7 @@ function chartOptions(definition, formatter) {
 	const showLegend = definition.datasets.length > 1;
 	return {
 		responsive: true,
+		maintainAspectRatio: false,
 		resizeDelay: 150,
 		animation: false,
 		normalized: true,

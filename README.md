@@ -651,4 +651,4 @@ The project uses `.editorconfig` and `.prettierrc.json` with tabs and a width of
 
 ## License
 
-BurrowGate is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE).
+BurrowGate is licensed under the European Union Public Licence v1.2 (EUPL-1.2). See [`LICENSE`](LICENSE).
