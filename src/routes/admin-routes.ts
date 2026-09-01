@@ -113,6 +113,7 @@ import { instanceWebSocketDefaults } from "../services/websocket-policy-service.
 import { staticAssetCache } from "../services/static-cache-service.ts";
 import { instanceBodyCaptureDefaults, instanceHeaderCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
 import { resendCapturedRequest, ResendTargetError } from "../services/resend-service.ts";
+import { BOT_CATALOG } from "../services/bot-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
 import {
 	isAdministrator,
@@ -750,6 +751,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			bodyCaptureDefaults: instanceBodyCaptureDefaults(),
 			headerCaptureDefaults: instanceHeaderCaptureDefaults(),
 			managedProtection: managedRuleSetCatalog(),
+			botCatalog: BOT_CATALOG,
 			errorResponseDefaults: {
 				mode: "json",
 				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,
@@ -2101,6 +2103,24 @@ export function registerAdminRoutes(app: Web<any>): void {
 		});
 	});
 
+	app.get("/_burrowgate/api/admin/bot-metrics-tab", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const { user } = guarded;
+		const url = new URL(ctx.req.url);
+		const range = requestedDateRange(url);
+		const selection = await selectedSite(url, user);
+		if (selection.error) return selection.error;
+		const bots = await repository.tabBotMetrics(await metricsScopeSiteId(selection, user), range.since, range.until);
+		return jsonResponse({
+			rangeFrom: range.since,
+			rangeTo: range.until,
+			rangeDurationMs: range.durationMs,
+			site: selection.site ? siteView(selection.site) : null,
+			bots,
+		});
+	});
+
 	app.get("/_burrowgate/api/admin/ip-metrics-tab", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
@@ -2232,6 +2252,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 					"bandwidth",
 					"cache",
 					"protection",
+					"bots",
 					"sessions",
 					"rules",
 					"routes",
@@ -2296,6 +2317,35 @@ export function registerAdminRoutes(app: Web<any>): void {
 					data: metrics.series.map((point) => ({ bucket: point.bucket, ...point.timeoutPct })),
 				},
 				breakdown: metrics.summary.map((entry) => ({ label: entry.target, count: Math.round(entry.avgLatencyMs ?? 0) })),
+			});
+		}
+
+		if (section === "bots") {
+			const metrics = await repository.botMetrics(scopeSiteId, since, until, bucketMs);
+			return jsonResponse({
+				...base,
+				primary: {
+					title: "Bot requests over time",
+					subtitle: "Request counts for each identified crawler or AI bot",
+					type: "line",
+					timeSeries: true,
+					valueFormat: "number",
+					emptyMessage: "No bot requests in this range.",
+					datasets: metrics.bots.map((bot) => ({ key: bot.key, label: bot.name })),
+					data: metrics.series,
+				},
+				secondary: {
+					title: "Requests by bot",
+					subtitle: "Total identified requests in the selected range",
+					type: "bar",
+					timeSeries: false,
+					valueFormat: "number",
+					emptyMessage: "No bot requests in this range.",
+					datasets: [{ key: "count", label: "Requests" }],
+					data: metrics.bots.map((bot) => ({ label: bot.name, count: bot.count })),
+				},
+				breakdown: metrics.bots.map((bot) => ({ label: `${bot.name}${bot.verified ? " (IP verified)" : ""}`, count: bot.count })),
+				bots: metrics.bots,
 			});
 		}
 

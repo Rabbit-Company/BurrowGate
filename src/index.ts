@@ -94,6 +94,7 @@ import { haElectionService } from "./services/ha-election-service.ts";
 import { processLifecycle } from "./services/process-lifecycle-service.ts";
 import { dailyFileLogs } from "./services/daily-file-log-service.ts";
 import packageMetadata from "../package.json" with { type: "json" };
+import { botIsBlocked, identifyBot, startBotIpRangeRefresh } from "./services/bot-service.ts";
 
 process.on("SIGTERM", () => void processLifecycle.gracefulRestart("SIGTERM", 0));
 process.on("SIGINT", () => void processLifecycle.gracefulRestart("SIGINT", 0));
@@ -119,6 +120,7 @@ await ensureBootstrapAdministrator();
 await initializeGeoIp();
 await initializeAsnGeoIp();
 startGeoIpRetry();
+startBotIpRangeRefresh();
 await seedDefaultSite();
 await loadManagedRuleSets();
 await loadStreamRuleSets();
@@ -272,6 +274,7 @@ async function gateway(ctx: any): Promise<Response> {
 	const url = new URL(request.url);
 	const requestId = resolveRequestId(request);
 	const { referer, refererHost } = refererFields(request, site);
+	const bot = identifyBot(request, ip);
 	const eventBase: {
 		siteId: string;
 		ip: string;
@@ -290,6 +293,10 @@ async function gateway(ctx: any): Promise<Response> {
 		protectionRulesetId?: string | null;
 		protectionRulesetVersion?: string | null;
 		protectionMatches?: ManagedProtectionMatch[] | null;
+		botId?: string | null;
+		botName?: string | null;
+		botCategory?: string | null;
+		botVerified?: boolean | null;
 	} = {
 		siteId: site.id,
 		ip,
@@ -298,6 +305,7 @@ async function gateway(ctx: any): Promise<Response> {
 		requestId,
 		referer,
 		refererHost,
+		...(bot ? { botId: bot.id, botName: bot.name, botCategory: bot.category, botVerified: bot.verified } : {}),
 	};
 
 	if (!requestIsSecure(request) && config.https.enabled) {
@@ -357,6 +365,23 @@ async function gateway(ctx: any): Promise<Response> {
 				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
 			},
 			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
+		);
+	}
+
+	if (botIsBlocked(bot, site, route.policy)) {
+		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "bot-blocked", latencyMs: Math.round(performance.now() - started) });
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 403,
+				code: "bot_blocked",
+				error: "Automated crawler blocked by BurrowGate",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: `${bot?.name ?? "This bot"} is blocked by bot policy.`,
+			},
+			{ "x-burrowgate-error-code": "bot_blocked" },
 		);
 	}
 

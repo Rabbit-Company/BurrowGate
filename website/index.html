@@ -41,7 +41,7 @@
 				"name": "BurrowGate",
 				"applicationCategory": "SecurityApplication",
 				"operatingSystem": "Linux",
-				"description": "Self-hosted reverse proxy and access gateway with route policies, GeoIP, rate limiting, managed WAF, browser challenges, TLS termination, and traffic monitoring.",
+				"description": "Self-hosted reverse proxy and access gateway with bot identification and blocking, route policies, GeoIP, rate limiting, managed WAF, browser challenges, TLS termination, and traffic monitoring.",
 				"url": "https://burrowgate.org/",
 				"license": "https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12",
 				"offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
@@ -209,8 +209,8 @@
 							</div>
 							<h3>Stop bots before the origin</h3>
 							<p>
-								SHA-256 proof-of-work challenges, opaque revocable sessions, managed WAF rules, and layered rate limits keep abusive traffic from ever reaching
-								your application.
+								Identify 55 known search, social, SEO, archive, and AI bots, then block whole categories or individual agents per site or route. Challenges,
+								managed WAF rules, and layered rate limits handle the rest.
 							</p>
 						</div>
 						<div class="card value-card">
@@ -222,8 +222,8 @@
 							</div>
 							<h3>See every request</h3>
 							<p>
-								Paginated traffic, session, and rule monitoring, per-country GeoIP analytics on an interactive world map, per-ASN network-provider breakdowns,
-								and Prometheus/OpenTelemetry export for your existing stack.
+								Paginated traffic, session, and rule monitoring, bot identities and verification details, Top bots, per-bot graphs, GeoIP and ASN analytics, and
+								Prometheus/OpenTelemetry export for your existing stack.
 							</p>
 						</div>
 						<div class="card value-card">
@@ -276,7 +276,9 @@
 								</svg>
 							</div>
 							<h3>Bot &amp; abuse protection</h3>
-							<p>Managed WAF rules with monitor/block modes, ordered challenge chains, and proof-of-work verification.</p>
+							<p>
+								Category-aware bot identification and per-site/per-route blocking, optional IP verification, bot analytics, managed WAF rules, and challenges.
+							</p>
 						</div>
 						<div class="feature-card">
 							<div class="feature-icon">

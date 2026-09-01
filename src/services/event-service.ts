@@ -58,6 +58,10 @@ export async function recordEvent(input: {
 	accessUsername?: string | null;
 	referer?: string | null;
 	refererHost?: string | null;
+	botId?: string | null;
+	botName?: string | null;
+	botCategory?: string | null;
+	botVerified?: boolean | null;
 	requestBody?: string | null;
 	requestBodyTruncated?: boolean | null;
 	requestContentType?: string | null;
@@ -96,6 +100,10 @@ export async function recordEvent(input: {
 			access_username: input.accessUsername ?? null,
 			referer: input.referer ?? null,
 			referer_host: input.refererHost ?? null,
+			bot_id: input.botId ?? null,
+			bot_name: input.botName ?? null,
+			bot_category: input.botCategory ?? null,
+			bot_verified: input.botVerified === undefined || input.botVerified === null ? null : input.botVerified ? 1 : 0,
 			request_body: input.requestBody ?? null,
 			request_body_truncated: input.requestBodyTruncated === undefined || input.requestBodyTruncated === null ? null : input.requestBodyTruncated ? 1 : 0,
 			request_content_type: input.requestContentType ?? null,

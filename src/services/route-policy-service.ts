@@ -22,6 +22,7 @@ import {
 } from "./websocket-policy-service.ts";
 import { resolveHttpPolicy, routeHttpPolicyView, serializeRouteHttpPolicy, type ResolvedHttpPolicy, type RouteHttpPolicyView } from "./http-policy-service.ts";
 import { staticAssetCache } from "./static-cache-service.ts";
+import { serializeRouteBotPolicy, storedBotPolicy, type BotPolicy } from "./bot-service.ts";
 
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 
@@ -49,6 +50,7 @@ export interface RoutePolicyInput {
 	http?: unknown;
 	defaultIpAction?: unknown;
 	defaultCountryAction?: unknown;
+	botPolicy?: unknown;
 }
 
 export interface RoutePolicyView {
@@ -75,6 +77,7 @@ export interface RoutePolicyView {
 	http: RouteHttpPolicyView;
 	defaultIpAction: DefaultNetworkAction;
 	defaultCountryAction: DefaultNetworkAction;
+	botPolicy: BotPolicy | null;
 	priority: number;
 	enabled: boolean;
 	createdAt: number;
@@ -214,6 +217,7 @@ export function routePolicyView(policy: RoutePolicyRecord): RoutePolicyView {
 		http: routeHttpPolicyView(policy),
 		defaultIpAction: policy.default_ip_action ?? "inherit",
 		defaultCountryAction: policy.default_country_action ?? "inherit",
+		botPolicy: policy.bot_policy_json ? storedBotPolicy(policy.bot_policy_json) : null,
 		priority: Number(policy.priority),
 		enabled: policy.enabled === 1,
 		createdAt: Number(policy.created_at),
@@ -262,6 +266,7 @@ function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePo
 		http_policy_json: serializeRouteHttpPolicy(input.http, existing?.http_policy_json),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing?.default_ip_action ?? "inherit"),
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing?.default_country_action ?? "inherit"),
+		bot_policy_json: serializeRouteBotPolicy(input.botPolicy, existing?.bot_policy_json),
 		priority: integerValue(input.priority, "Priority", existing?.priority ?? 0, -100_000, 100_000),
 		enabled: booleanValue(input.enabled, existing?.enabled === 1) ? 1 : 0,
 		created_at: existing?.created_at ?? now,

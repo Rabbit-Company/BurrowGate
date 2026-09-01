@@ -223,6 +223,15 @@
 										<td>❌</td>
 									</tr>
 									<tr>
+										<th scope="row">Maintained bot catalog, blocking, and analytics</th>
+										<td class="burrowgate-col">✅ Category/site/route controls, IP verification, bot graphs</td>
+										<td>⚠️ Manual <code>HeaderRegexp</code> routing</td>
+										<td>⚠️ Custom nginx configuration</td>
+										<td>⚠️ Manual header matchers</td>
+										<td>⚠️ Manual User-Agent rules</td>
+										<td>⚠️ Manual <code>BrowserMatch</code>/<code>Require</code></td>
+									</tr>
+									<tr>
 										<th scope="row">IP/CIDR access rules</th>
 										<td class="burrowgate-col">✅ Per site and route</td>
 										<td>✅ <code>IPAllowList</code> middleware</td>
@@ -289,9 +298,12 @@
 							</table>
 						</div>
 						<p>
-							BurrowGate's distinction is the integration: protection decisions, browser challenges, local or OIDC-backed access accounts, signed upstream
-							identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small bundled ruleset does not inspect request
-							bodies and is not a replacement for the OWASP Core Rule Set. Read the
+							BurrowGate's distinction is the integration: bot identity and blocking, protection decisions, browser challenges, local or OIDC-backed access
+							accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small bundled ruleset does
+							not inspect request bodies and is not a replacement for the OWASP Core Rule Set. Read the
+							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/BOT_MANAGEMENT.md" target="_blank" rel="noopener"
+								>bot management documentation</a
+							>, and the
 							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/MANAGED_PROTECTION.md" target="_blank" rel="noopener"
 								>managed protection documentation</a
 							>.

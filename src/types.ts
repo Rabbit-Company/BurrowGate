@@ -129,6 +129,7 @@ export interface SiteRecord {
 	outbound_fetch_protocol?: OutboundFetchProtocol;
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
+	bot_policy_json?: string | null;
 	notification_event_types_json?: string | null;
 	created_at: number;
 	updated_at: number;
@@ -350,6 +351,7 @@ export interface RoutePolicyRecord {
 	rate_limit_scope: RateLimitScope;
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
+	bot_policy_json?: string | null;
 	default_ip_action?: DefaultNetworkAction;
 	default_country_action?: DefaultNetworkAction;
 	priority: number;
@@ -696,6 +698,10 @@ export interface RequestEventRecord {
 	access_username: string | null;
 	referer: string | null;
 	referer_host: string | null;
+	bot_id?: string | null;
+	bot_name?: string | null;
+	bot_category?: string | null;
+	bot_verified?: number | null;
 	request_body: string | null;
 	request_body_truncated: number | null;
 	request_content_type: string | null;

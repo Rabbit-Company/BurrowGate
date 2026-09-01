@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sites (
   outbound_fetch_protocol VARCHAR(16) NOT NULL DEFAULT 'http1',
   websocket_policy_json TEXT NULL,
   http_policy_json TEXT NULL,
+	bot_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS route_policies (
   rate_limit_scope VARCHAR(32) NOT NULL DEFAULT 'policy',
   websocket_policy_json TEXT NULL,
   http_policy_json TEXT NULL,
+	bot_policy_json TEXT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
@@ -277,6 +279,10 @@ CREATE TABLE IF NOT EXISTS request_events (
 	access_username VARCHAR(255) NULL,
 	referer TEXT NULL,
 	referer_host VARCHAR(255) NULL,
+	bot_id VARCHAR(64) NULL,
+	bot_name VARCHAR(128) NULL,
+	bot_category VARCHAR(32) NULL,
+	bot_verified INTEGER NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -813,6 +819,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_created ON request_events (site_id, protection_status, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_rule_created ON request_events (site_id, protection_rule_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_referer_host_created ON request_events (site_id, referer_host, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_bot_created ON request_events (site_id, bot_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -943,6 +950,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN outbound_fetch_protocol VARCHAR(16) NOT NULL DEFAULT 'http1'",
 		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN http_policy_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN bot_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN notification_event_types_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy'",
 	];
@@ -965,6 +973,7 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN http_policy_json TEXT NULL",
+		"ALTER TABLE route_policies ADD COLUMN bot_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE route_policies ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 	]) {
@@ -1261,6 +1270,10 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN access_username VARCHAR(255) NULL",
 		"ALTER TABLE request_events ADD COLUMN referer TEXT NULL",
 		"ALTER TABLE request_events ADD COLUMN referer_host VARCHAR(255) NULL",
+		"ALTER TABLE request_events ADD COLUMN bot_id VARCHAR(64) NULL",
+		"ALTER TABLE request_events ADD COLUMN bot_name VARCHAR(128) NULL",
+		"ALTER TABLE request_events ADD COLUMN bot_category VARCHAR(32) NULL",
+		"ALTER TABLE request_events ADD COLUMN bot_verified INTEGER NULL",
 		`ALTER TABLE request_events ADD COLUMN request_body ${largeTextType} NULL`,
 		"ALTER TABLE request_events ADD COLUMN request_body_truncated INTEGER NULL",
 		"ALTER TABLE request_events ADD COLUMN request_content_type VARCHAR(255) NULL",
