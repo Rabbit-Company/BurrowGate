@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Compare BurrowGate - Traefik, Nginx Proxy Manager, Caddy, Nginx &amp; Apache</title>
+		<meta
+			name="description"
+			content="Compare BurrowGate with Traefik, Nginx Proxy Manager, Caddy, Nginx, and Apache across setup, security, traffic management, observability, audit logging, and availability."
+		/>
+		<link rel="canonical" href="https://burrowgate.org/compare.html" />
+
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="BurrowGate" />
+		<meta property="og:title" content="Compare BurrowGate" />
+		<meta property="og:description" content="A practical capability comparison with Traefik, Nginx Proxy Manager, Caddy, Nginx, and Apache." />
+		<meta property="og:url" content="https://burrowgate.org/compare.html" />
+		<meta property="og:image" content="https://burrowgate.org/assets/og-image.png" />
+		<meta name="twitter:card" content="summary_large_image" />
+
+		<meta name="theme-color" content="#070a0f" />
+		<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+		<link rel="alternate icon" href="/assets/favicon.ico" />
+		<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+		<link rel="stylesheet" href="/css/style.css" />
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+
+		<header class="site-header">
+			<div class="shell row between">
+				<a class="brand" href="/">
+					<span class="mark" aria-hidden="true"></span>
+					BurrowGate
+				</a>
+
+				<button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M4 7h16M4 12h16M4 17h16" />
+					</svg>
+				</button>
+
+				<div class="nav-primary-links">
+					<ul class="nav-links">
+						<li><a href="/features.html">Features</a></li>
+						<li><a href="/compare.html" class="active">Compare</a></li>
+						<li><a href="/screenshots.html">Screenshots</a></li>
+						<li><a href="/docs.html">Docs</a></li>
+						<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub</a></li>
+					</ul>
+					<div class="nav-actions">
+						<a class="button secondary" href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord</a>
+						<a class="button gradient" href="/#quickstart">Get started</a>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<main id="main">
+			<section class="page-hero">
+				<div class="shell">
+					<div class="eyebrow center">Compare your options</div>
+					<h1>How BurrowGate compares</h1>
+					<p>A practical look at what is built in, what needs an external component, and where another proxy may be the better fit.</p>
+				</div>
+			</section>
+
+			<section class="section">
+				<div class="shell">
+					<div class="comparison-scope card pad-lg">
+						<p>
+							This is a capability comparison, not a performance or security benchmark. It compares free/community distributions and their standard first-party
+							modules. Paid editions and third-party extensions are called out rather than counted as built in. Features vary by version and packaging; this
+							comparison was reviewed against upstream documentation in September 2026.
+						</p>
+
+						<div class="comparison-products">
+							<div class="comparison-product">
+								<strong>BurrowGate</strong>
+								<span>A dashboard-managed reverse proxy and access gateway with integrated protection, analytics, and experimental HA.</span>
+							</div>
+							<div class="comparison-product">
+								<a href="https://traefik.io/traefik" target="_blank" rel="noopener">Traefik</a>
+								<span>A cloud-native application proxy focused on discovering services from providers such as Docker and Kubernetes.</span>
+							</div>
+							<div class="comparison-product">
+								<a href="https://nginxproxymanager.com/" target="_blank" rel="noopener">Nginx Proxy Manager</a>
+								<span>A web GUI for common nginx proxy, certificate, access-list, and stream-forwarding tasks.</span>
+							</div>
+							<div class="comparison-product">
+								<a href="https://caddyserver.com/" target="_blank" rel="noopener">Caddy</a>
+								<span>A general-purpose web server and application proxy best known for automatic HTTPS.</span>
+							</div>
+							<div class="comparison-product">
+								<a href="https://nginx.org/" target="_blank" rel="noopener">Nginx</a>
+								<span>A general-purpose web server and proxy with a large configuration and module ecosystem.</span>
+							</div>
+							<div class="comparison-product">
+								<a href="https://httpd.apache.org/" target="_blank" rel="noopener">Apache HTTP Server</a>
+								<span>A general-purpose, module-based web server that can also act as a capable HTTP proxy.</span>
+							</div>
+						</div>
+
+						<ul class="comparison-legend" aria-label="Comparison legend">
+							<li>✅ First-party capability</li>
+							<li>⚠️ Partial, limited, paid, or requires an external component or third-party extension</li>
+							<li>❌ No comparable first-party capability</li>
+						</ul>
+						<p class="text-sm">A feature can still require configuration when marked ✅. Scroll tables horizontally to see every product.</p>
+					</div>
+
+					<section class="comparison-group" aria-labelledby="setup-heading">
+						<h2 id="setup-heading">Setup &amp; TLS</h2>
+						<div class="comparison-table-wrap" tabindex="0" role="region" aria-label="Setup and TLS comparison table">
+							<table class="comparison-table">
+								<thead>
+									<tr>
+										<th scope="col">Capability</th>
+										<th scope="col" class="burrowgate-col">BurrowGate</th>
+										<th scope="col">Traefik</th>
+										<th scope="col">Nginx Proxy Manager</th>
+										<th scope="col">Caddy</th>
+										<th scope="col">Nginx</th>
+										<th scope="col">Apache</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">Primary configuration surface</th>
+										<td class="burrowgate-col">Web dashboard</td>
+										<td>Files, labels, CRDs</td>
+										<td>Web dashboard</td>
+										<td>Caddyfile or JSON API</td>
+										<td>Text files</td>
+										<td>Text files</td>
+									</tr>
+									<tr>
+										<th scope="row">Config as code / GitOps</th>
+										<td class="burrowgate-col">❌ Dashboard/database state</td>
+										<td>✅</td>
+										<td>❌ Dashboard/database state</td>
+										<td>✅</td>
+										<td>✅</td>
+										<td>✅</td>
+									</tr>
+									<tr>
+										<th scope="row">Docker/Kubernetes service discovery</th>
+										<td class="burrowgate-col">❌ Manual origins</td>
+										<td>✅ Provider integrations</td>
+										<td>❌ Manual hosts</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+									</tr>
+									<tr>
+										<th scope="row">Automatic ACME certificates</th>
+										<td class="burrowgate-col">✅ HTTP-01; RFC 2136 DNS-01 (no wildcard issuance)</td>
+										<td>✅ HTTP-01, DNS-01, TLS-ALPN</td>
+										<td>✅ HTTP-01 and DNS plugins</td>
+										<td>✅ Automatic; DNS via modules</td>
+										<td>⚠️ Optional official ACME module or Certbot</td>
+										<td>✅ <code>mod_md</code></td>
+									</tr>
+									<tr>
+										<th scope="row">Custom PEM certificates / multi-domain SNI</th>
+										<td class="burrowgate-col">✅</td>
+										<td>✅</td>
+										<td>✅</td>
+										<td>✅</td>
+										<td>✅</td>
+										<td>✅</td>
+									</tr>
+									<tr>
+										<th scope="row">Scheduled listener-affecting changes</th>
+										<td class="burrowgate-col">✅ Dashboard scheduler</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p>
+							BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. Traefik, Caddy, Nginx, and Apache are better fits when
+							version-controlled declarative configuration is a requirement; Traefik specializes in routes that follow a changing container or Kubernetes fleet.
+						</p>
+					</section>
+
+					<section class="comparison-group" aria-labelledby="security-heading">
+						<h2 id="security-heading">Security &amp; access control</h2>
+						<div class="comparison-table-wrap" tabindex="0" role="region" aria-label="Security and access control comparison table">
+							<table class="comparison-table">
+								<thead>
+									<tr>
+										<th scope="col">Capability</th>
+										<th scope="col" class="burrowgate-col">BurrowGate</th>
+										<th scope="col">Traefik</th>
+										<th scope="col">Nginx Proxy Manager</th>
+										<th scope="col">Caddy</th>
+										<th scope="col">Nginx</th>
+										<th scope="col">Apache</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">Bundled request-protection rules</th>
+										<td class="burrowgate-col">✅ Small managed ruleset</td>
+										<td>⚠️ Plugin or paid Traefik Hub WAF</td>
+										<td>⚠️ External/custom nginx build</td>
+										<td>⚠️ Third-party module</td>
+										<td>⚠️ ModSecurity module</td>
+										<td>⚠️ ModSecurity module</td>
+									</tr>
+									<tr>
+										<th scope="row">Browser challenge / proof of work</th>
+										<td class="burrowgate-col">✅ SHA-256 PoW, pluggable chain</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+									</tr>
+									<tr>
+										<th scope="row">IP/CIDR access rules</th>
+										<td class="burrowgate-col">✅ Per site and route</td>
+										<td>✅ <code>IPAllowList</code> middleware</td>
+										<td>✅ Per-host Access Lists</td>
+										<td>✅ Request matchers</td>
+										<td>✅ <code>allow</code>/<code>deny</code></td>
+										<td>✅ <code>Require ip</code></td>
+									</tr>
+									<tr>
+										<th scope="row">ASN/country policy</th>
+										<td class="burrowgate-col">✅ Per site and route</td>
+										<td>⚠️ Plugin/external GeoIP</td>
+										<td>⚠️ Custom nginx configuration</td>
+										<td>⚠️ Third-party module</td>
+										<td>⚠️ GeoIP2 module</td>
+										<td>⚠️ GeoIP module</td>
+									</tr>
+									<tr>
+										<th scope="row">Request rate limiting</th>
+										<td class="burrowgate-col">✅ Fixed/sliding/token-bucket, dashboard-managed</td>
+										<td>✅ Rate-limit middleware</td>
+										<td>⚠️ Custom nginx configuration</td>
+										<td>⚠️ Third-party module</td>
+										<td>✅ <code>limit_req</code></td>
+										<td>⚠️ Third-party module</td>
+									</tr>
+									<tr>
+										<th scope="row">Protected-app users with TOTP/WebAuthn</th>
+										<td class="burrowgate-col">✅</td>
+										<td>⚠️ External identity provider</td>
+										<td>⚠️ HTTP Basic Access Lists</td>
+										<td>⚠️ Basic auth or external auth</td>
+										<td>⚠️ Basic auth or external auth</td>
+										<td>⚠️ Basic/digest or external auth</td>
+									</tr>
+									<tr>
+										<th scope="row">OIDC SSO for dashboard and protected apps</th>
+										<td class="burrowgate-col">✅ Admin-wide and per-site SSO, auto-provisioning, back-channel logout</td>
+										<td>⚠️ Paid Hub or external ForwardAuth</td>
+										<td>⚠️ External authentication gateway</td>
+										<td>⚠️ <code>forward_auth</code> plus external gateway</td>
+										<td>⚠️ External service/module</td>
+										<td>⚠️ External module/service</td>
+									</tr>
+									<tr>
+										<th scope="row">Signed upstream identity / cross-site authentication</th>
+										<td class="burrowgate-col">✅ HMAC-signed identity headers and browser/backend SDK</td>
+										<td>⚠️ ForwardAuth/external identity service</td>
+										<td>⚠️ Custom configuration or external gateway</td>
+										<td>⚠️ <code>forward_auth</code> plus external gateway</td>
+										<td>⚠️ <code>auth_request</code> plus custom signing</td>
+										<td>⚠️ External module/custom signing</td>
+									</tr>
+									<tr>
+										<th scope="row">Firewall sync</th>
+										<td class="burrowgate-col">✅ Push bans to UniFi, nftables, OVH, or AWS</td>
+										<td>⚠️ External automation</td>
+										<td>⚠️ External automation</td>
+										<td>⚠️ External automation</td>
+										<td>⚠️ External automation</td>
+										<td>⚠️ External automation</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p>
+							BurrowGate's distinction is the integration: protection decisions, browser challenges, local or OIDC-backed access accounts, signed upstream
+							identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small bundled ruleset does not inspect request
+							bodies and is not a replacement for the OWASP Core Rule Set. Read the
+							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/MANAGED_PROTECTION.md" target="_blank" rel="noopener"
+								>managed protection documentation</a
+							>.
+						</p>
+					</section>
+
+					<section class="comparison-group" aria-labelledby="traffic-heading">
+						<h2 id="traffic-heading">Traffic management</h2>
+						<div class="comparison-table-wrap" tabindex="0" role="region" aria-label="Traffic management comparison table">
+							<table class="comparison-table">
+								<thead>
+									<tr>
+										<th scope="col">Capability</th>
+										<th scope="col" class="burrowgate-col">BurrowGate</th>
+										<th scope="col">Traefik</th>
+										<th scope="col">Nginx Proxy Manager</th>
+										<th scope="col">Caddy</th>
+										<th scope="col">Nginx</th>
+										<th scope="col">Apache</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">HTTP load balancing</th>
+										<td class="burrowgate-col">✅ Priority, round robin, weighted, sticky sessions</td>
+										<td>✅ Round robin, weighted, sticky cookies</td>
+										<td>❌ One upstream per host UI</td>
+										<td>✅ Multiple policies and sticky cookies</td>
+										<td>✅ Multiple policies</td>
+										<td>✅ <code>mod_proxy_balancer</code></td>
+									</tr>
+									<tr>
+										<th scope="row">Active origin health checks</th>
+										<td class="burrowgate-col">✅ With maintenance fallback</td>
+										<td>✅</td>
+										<td>❌</td>
+										<td>✅ Built in</td>
+										<td>⚠️ Active checks in NGINX Plus; passive in OSS</td>
+										<td>✅ <code>mod_proxy_hcheck</code></td>
+									</tr>
+									<tr>
+										<th scope="row">TCP/UDP proxying</th>
+										<td class="burrowgate-col">✅ TLS termination and health checks</td>
+										<td>✅ TCP/UDP routers</td>
+										<td>✅ TCP/UDP streams</td>
+										<td>⚠️ Third-party layer4 module</td>
+										<td>✅ Stream module</td>
+										<td>❌</td>
+									</tr>
+									<tr>
+										<th scope="row">TCP/UDP protection and per-client analytics</th>
+										<td class="burrowgate-col">✅ IP/CIDR/ASN/country policy, limits, managed rules, auto-bans, live peers, GeoIP, UDP amplification guard</td>
+										<td>⚠️ IP allowlists/connection limits; external analytics</td>
+										<td>❌ Stream forwarding only</td>
+										<td>⚠️ Third-party layer4 modules and external analytics</td>
+										<td>⚠️ Stream access/limit modules plus external analytics</td>
+										<td>❌ No generic stream proxy</td>
+									</tr>
+									<tr>
+										<th scope="row">Static file serving from disk</th>
+										<td class="burrowgate-col">✅ Folder picker, SPA fallback, mixable with proxy origins</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>✅</td>
+										<td>✅</td>
+										<td>✅</td>
+									</tr>
+									<tr>
+										<th scope="row">Reverse-proxy response caching</th>
+										<td class="burrowgate-col">✅ Bounded cache with dashboard purge</td>
+										<td>⚠️ Plugin or paid product</td>
+										<td>⚠️ Custom nginx configuration</td>
+										<td>⚠️ Third-party module</td>
+										<td>✅ <code>proxy_cache</code></td>
+										<td>✅ <code>mod_cache</code></td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p>
+							Caddy, Nginx, and Apache offer deeper general-purpose web-server configuration. BurrowGate exposes a narrower set of static serving, caching,
+							origin health, failover, and unusually broad TCP/UDP protection and telemetry controls through its dashboard.
+							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/STREAMS.md" target="_blank" rel="noopener"
+								>See how Streams work</a
+							>.
+						</p>
+					</section>
+
+					<section class="comparison-group" aria-labelledby="observability-heading">
+						<h2 id="observability-heading">Observability &amp; alerting</h2>
+						<div class="comparison-table-wrap" tabindex="0" role="region" aria-label="Observability and alerting comparison table">
+							<table class="comparison-table">
+								<thead>
+									<tr>
+										<th scope="col">Capability</th>
+										<th scope="col" class="burrowgate-col">BurrowGate</th>
+										<th scope="col">Traefik</th>
+										<th scope="col">Nginx Proxy Manager</th>
+										<th scope="col">Caddy</th>
+										<th scope="col">Nginx</th>
+										<th scope="col">Apache</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">Traffic/session/bandwidth analytics dashboard</th>
+										<td class="burrowgate-col">✅</td>
+										<td>⚠️ Routing dashboard; external analytics</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+									</tr>
+									<tr>
+										<th scope="row">GeoIP map / ASN breakdown</th>
+										<td class="burrowgate-col">✅ Interactive map, per country/ASN</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+										<td>❌</td>
+									</tr>
+									<tr>
+										<th scope="row">Request/response capture and resend</th>
+										<td class="burrowgate-col">✅ Bounded, redacted, dashboard resend</td>
+										<td>⚠️ Access logs only</td>
+										<td>⚠️ Log files only</td>
+										<td>⚠️ Access logs only</td>
+										<td>⚠️ Access logs only</td>
+										<td>⚠️ Access logs only</td>
+									</tr>
+									<tr>
+										<th scope="row">Structured administrative audit trail</th>
+										<td class="burrowgate-col">✅ Actor, IP, action, resource, time, search</td>
+										<td>⚠️ External Git/orchestrator audit or paid platform</td>
+										<td>✅ Built-in audit log</td>
+										<td>⚠️ External config/API audit</td>
+										<td>⚠️ OS/Git/SIEM or paid management plane</td>
+										<td>⚠️ OS/Git/SIEM</td>
+									</tr>
+									<tr>
+										<th scope="row">Prometheus-compatible metrics</th>
+										<td class="burrowgate-col">✅ OpenMetrics endpoint</td>
+										<td>✅</td>
+										<td>❌</td>
+										<td>✅ OpenMetrics</td>
+										<td>⚠️ Exporter or paid API</td>
+										<td>⚠️ <code>mod_status</code> plus exporter</td>
+									</tr>
+									<tr>
+										<th scope="row">Host/container and internet-connectivity monitoring</th>
+										<td class="burrowgate-col">✅ CPU, memory, disk, network, reachability, thresholds, history</td>
+										<td>⚠️ External host monitoring</td>
+										<td>⚠️ External host monitoring</td>
+										<td>⚠️ External host monitoring</td>
+										<td>⚠️ External host monitoring</td>
+										<td>⚠️ External host monitoring</td>
+									</tr>
+									<tr>
+										<th scope="row">Durable operational alerts and delivery history</th>
+										<td class="burrowgate-col">✅ Ordered retries, searchable log, recovery events, signed ntfy/Slack/Discord/generic webhooks</td>
+										<td>⚠️ External monitoring</td>
+										<td>⚠️ External monitoring</td>
+										<td>⚠️ External monitoring</td>
+										<td>⚠️ External monitoring</td>
+										<td>⚠️ External monitoring</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p>
+							Traefik and Caddy provide strong metrics for Prometheus, OpenTelemetry, or Grafana-based stacks. BurrowGate's advantage is immediate local
+							visibility and debugging, including host resources and internet reachability, plus an administrative audit trail and durable alert delivery in its
+							dashboard. An external telemetry stack remains the better choice for long-term, cross-service observability.
+						</p>
+						<div class="comparison-audit">
+							<p>
+								<strong>Audit-control alignment:</strong> BurrowGate's audit trail can contribute technical evidence toward
+								<a href="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final" target="_blank" rel="noopener">NIST SP 800-53 AU-2/AU-3/AU-6</a>,
+								<a href="https://www.iso.org/standard/27001" target="_blank" rel="noopener">ISO/IEC 27001:2022 Annex A 8.15/8.16</a>,
+								<a
+									href="https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022"
+									target="_blank"
+									rel="noopener"
+									>SOC 2 Trust Services Criteria</a
+								>
+								monitoring and change-management controls,
+								<a href="https://www.pcisecuritystandards.org/document_library/?class=pcidss&amp;doc=pci_dss" target="_blank" rel="noopener"
+									>PCI DSS 4.0.1 Requirement 10</a
+								>,
+								<a href="https://www.hhs.gov/hipaa/for-professionals/compliance-enforcement/audit/protocol-edited/index.html" target="_blank" rel="noopener"
+									>HIPAA Security Rule §164.312(b)</a
+								>, and <a href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" target="_blank" rel="noopener">GDPR Articles 5(2) and 32</a>. This does not mean
+								BurrowGate or a deployment is certified, attested, or compliant. Each framework requires additional controls, policies, operational evidence,
+								scope definition, and, where applicable, independent assessment. The
+								<a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/LOGGING.md" target="_blank" rel="noopener"
+									>logging and audit documentation</a
+								>
+								describes the trail's scope and current limitations.
+							</p>
+						</div>
+					</section>
+
+					<section class="comparison-group" aria-labelledby="availability-heading">
+						<h2 id="availability-heading">Availability &amp; ecosystem</h2>
+						<div class="comparison-table-wrap" tabindex="0" role="region" aria-label="Availability and ecosystem comparison table">
+							<table class="comparison-table">
+								<thead>
+									<tr>
+										<th scope="col">Capability</th>
+										<th scope="col" class="burrowgate-col">BurrowGate</th>
+										<th scope="col">Traefik</th>
+										<th scope="col">Nginx Proxy Manager</th>
+										<th scope="col">Caddy</th>
+										<th scope="col">Nginx</th>
+										<th scope="col">Apache</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<th scope="row">Multi-instance config replication and failover</th>
+										<td class="burrowgate-col">✅ Primary/replica replication and quorum election (experimental); external front-end LB required</td>
+										<td>⚠️ External orchestrator/LB and shared config</td>
+										<td>⚠️ External DB/storage/LB; no native cluster</td>
+										<td>⚠️ External config automation/storage/LB</td>
+										<td>⚠️ External automation/LB</td>
+										<td>⚠️ External automation/LB</td>
+									</tr>
+									<tr>
+										<th scope="row">Maturity &amp; community</th>
+										<td class="burrowgate-col">⚠️ New v1.x project, small community</td>
+										<td>✅ Mature, broad cloud-native adoption</td>
+										<td>✅ Mature, large homelab community</td>
+										<td>✅ Mature</td>
+										<td>✅ Long-established</td>
+										<td>✅ Long-established</td>
+									</tr>
+									<tr>
+										<th scope="row">Extension ecosystem</th>
+										<td class="burrowgate-col">⚠️ Provider interface, no loadable general plugin system</td>
+										<td>✅ Middleware/plugin catalog</td>
+										<td>⚠️ Nginx custom configuration</td>
+										<td>✅ Module ecosystem</td>
+										<td>✅ Extensive module ecosystem</td>
+										<td>✅ Extensive module ecosystem</td>
+									</tr>
+									<tr>
+										<th scope="row">License</th>
+										<td class="burrowgate-col">EUPL-1.2</td>
+										<td>MIT</td>
+										<td>MIT</td>
+										<td>Apache-2.0</td>
+										<td>2-clause BSD (Plus is commercial)</td>
+										<td>Apache-2.0</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p>
+							BurrowGate is the youngest project here, with the smallest community and a narrower extension story. Its experimental HA integrates configuration
+							and identity-state replication plus failover elections, but deployments still need a load balancer in front and should be tested carefully. Read
+							the
+							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/HIGH_AVAILABILITY.md" target="_blank" rel="noopener"
+								>high-availability guide</a
+							>.
+						</p>
+					</section>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="section-head center">
+						<div class="eyebrow center">Choose for your workload</div>
+						<h2>Which one should you use?</h2>
+						<p>Each option has a different center of gravity. Start with the operational model you actually want.</p>
+					</div>
+					<div class="comparison-choices">
+						<div class="comparison-choice card">
+							<h3>BurrowGate</h3>
+							<p>
+								Choose one dashboard-managed gateway for TLS, integrated protection, app access with 2FA, origin load balancing, audit history, and traffic
+								visibility.
+							</p>
+						</div>
+						<div class="comparison-choice card">
+							<h3>Traefik</h3>
+							<p>Choose it for Kubernetes or a fast-changing Docker fleet where routes should be discovered automatically from labels or CRDs.</p>
+						</div>
+						<div class="comparison-choice card">
+							<h3>Nginx Proxy Manager</h3>
+							<p>Choose a focused GUI for common homelab proxy hosts, certificates, access lists, and TCP/UDP forwarding.</p>
+						</div>
+						<div class="comparison-choice card">
+							<h3>Caddy</h3>
+							<p>Choose automatic HTTPS, concise configuration, and a capable general-purpose web server without an integrated management dashboard.</p>
+						</div>
+						<div class="comparison-choice card">
+							<h3>Nginx or Apache</h3>
+							<p>
+								Choose long operational histories, exact low-level control, or a mature module-and integrate authentication, protection, and monitoring as
+								needed.
+							</p>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="section section-border-top">
+				<div class="shell">
+					<div class="cta-band">
+						<div class="eyebrow center">See it for yourself</div>
+						<h2>Put BurrowGate in front of your first site</h2>
+						<p>Run it on your infrastructure with Docker Compose, then configure the gateway from your browser.</p>
+						<div class="row center wrap">
+							<a class="button gradient lg" href="/#quickstart">Get started</a>
+							<a class="button secondary lg" href="/features.html">Explore every feature</a>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">
+			<div class="shell">
+				<div class="footer-grid">
+					<div class="footer-brand">
+						<a class="brand" href="/"><span class="mark" aria-hidden="true"></span>BurrowGate</a>
+						<p>A self-hosted reverse proxy and access gateway. Open-source and built with love by Rabbit Company.</p>
+						<div class="footer-social">
+							<a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener" aria-label="GitHub">
+								<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.06 11.06 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.58.24 2.75.12 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"
+									/>
+								</svg>
+							</a>
+							<a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener" aria-label="Discord">
+								<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path
+										d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.07.07 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.319 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.955 2.42-2.157 2.42Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.42 0-1.333.955-2.42 2.157-2.42 1.21 0 2.176 1.096 2.157 2.42 0 1.334-.946 2.42-2.157 2.42Z"
+									/>
+								</svg>
+							</a>
+							<a href="https://rabbit-company.com/" target="_blank" rel="noopener" aria-label="Rabbit Company website">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<circle cx="12" cy="12" r="8" />
+									<path d="M4 12h16" />
+									<path d="M12 4a12 12 0 0 1 0 16" />
+									<path d="M12 4a12 12 0 0 0 0 16" />
+								</svg>
+							</a>
+						</div>
+					</div>
+					<div class="footer-col">
+						<h4>Product</h4>
+						<ul>
+							<li><a href="/features.html">Features</a></li>
+							<li><a href="/compare.html">Compare</a></li>
+							<li><a href="/screenshots.html">Screenshots</a></li>
+							<li><a href="/docs.html">Documentation</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/releases" target="_blank" rel="noopener">Releases</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Community</h4>
+						<ul>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate" target="_blank" rel="noopener">GitHub repository</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/issues" target="_blank" rel="noopener">Report an issue</a></li>
+							<li><a href="https://discord.rabbit-company.com/" target="_blank" rel="noopener">Discord server</a></li>
+						</ul>
+					</div>
+					<div class="footer-col">
+						<h4>Company</h4>
+						<ul>
+							<li><a href="https://rabbit-company.com/" target="_blank" rel="noopener">Rabbit Company</a></li>
+							<li><a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/LICENSE" target="_blank" rel="noopener">EUPL-1.2 license</a></li>
+						</ul>
+					</div>
+				</div>
+				<div class="footer-bottom">
+					<span>&copy; <span id="year">2026</span> Rabbit Company. Made with love, open-source under EUPL-1.2.</span>
+					<span>burrowgate.org</span>
+				</div>
+			</div>
+		</footer>
+
+		<script src="/js/main.js"></script>
+	</body>
+</html>

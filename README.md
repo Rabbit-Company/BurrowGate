@@ -30,6 +30,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Per-site/per-route CORS policy, answering cross-origin preflight requests directly ahead of verification and access-list sign-in
 - Per-site HSTS (`Strict-Transport-Security`) with optional includeSubDomains and preload
 - Resend any captured Recent Traffic request from the dashboard, with editable headers and body, automatic same-site redirect following, and a full hop-by-hop chain in the result
+- Structured administrative audit trail with actor, source IP, action, resource, timestamp, searchable history, and application-level append-only records
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
 - Stream connection logs, live TCP/UDP peers, GeoIP and ASN enrichment, and bandwidth by IP and incoming port
@@ -50,6 +51,106 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - In-dashboard update notifications, checking GitHub Releases hourly for a newer stable version
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support
 - Docker Compose deployment
+
+## How BurrowGate Compares
+
+These projects overlap, but they optimize for different jobs:
+
+| Tool                                                      | What it fundamentally is                                                                                        |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [**BurrowGate**](https://burrowgate.org)                  | A dashboard-managed reverse proxy and access gateway with integrated protection, analytics, and experimental HA |
+| [**Traefik**](https://traefik.io/traefik)                 | A cloud-native application proxy focused on discovering services from providers such as Docker and Kubernetes   |
+| [**Nginx Proxy Manager**](https://nginxproxymanager.com/) | A web GUI for managing common nginx reverse-proxy, certificate, access-list, and stream-forwarding tasks        |
+| [**Caddy**](https://caddyserver.com/)                     | A general-purpose web server and application proxy best known for automatic HTTPS                               |
+| [**Nginx**](https://nginx.org/)                           | A general-purpose web server and proxy with a large configuration and module ecosystem                          |
+| [**Apache HTTP Server**](https://httpd.apache.org/)       | A general-purpose, module-based web server that can also act as a capable HTTP proxy                            |
+
+This is a capability comparison, not a performance or security benchmark. It compares the free/community distributions and their standard first-party modules; paid editions and third-party extensions are called out rather than counted as built in. Features vary by version and packaging; this section was reviewed against upstream documentation in September 2026.
+
+Legend:
+
+- ✅ First-party capability
+- ⚠️ Partial, limited, paid, or requires an external component or third-party extension
+- ❌ No comparable first-party capability
+
+A feature can still require configuration when marked ✅.
+
+### Setup & TLS
+
+|                                            | BurrowGate                                         | Traefik                      | Nginx Proxy Manager         | Caddy                         | Nginx                                       | Apache      |
+| ------------------------------------------ | -------------------------------------------------- | ---------------------------- | --------------------------- | ----------------------------- | ------------------------------------------- | ----------- |
+| Primary configuration surface              | Web dashboard                                      | Files, labels, CRDs          | Web dashboard               | Caddyfile or JSON API         | Text files                                  | Text files  |
+| Config as code / GitOps                    | ❌ dashboard/database state                        | ✅                           | ❌ dashboard/database state | ✅                            | ✅                                          | ✅          |
+| Docker/Kubernetes service discovery        | ❌ manual origins                                  | ✅ provider integrations     | ❌ manual hosts             | ❌                            | ❌                                          | ❌          |
+| Automatic ACME certificates                | ✅ HTTP-01; RFC 2136 DNS-01 (no wildcard issuance) | ✅ HTTP-01, DNS-01, TLS-ALPN | ✅ HTTP-01 and DNS plugins  | ✅ automatic; DNS via modules | ⚠️ optional official ACME module or Certbot | ✅ `mod_md` |
+| Custom PEM certificates / multi-domain SNI | ✅                                                 | ✅                           | ✅                          | ✅                            | ✅                                          | ✅          |
+| Scheduled listener-affecting changes       | ✅ dashboard scheduler                             | ❌                           | ❌                          | ❌                            | ❌                                          | ❌          |
+
+BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. Traefik, Caddy, Nginx, and Apache are better fits when version-controlled declarative configuration is a requirement; Traefik is the clear specialist when routes should follow a changing container or Kubernetes fleet automatically.
+
+### Security & Access Control
+
+|                                                      | BurrowGate                                                             | Traefik                                  | Nginx Proxy Manager                         | Caddy                                   | Nginx                                 | Apache                            |
+| ---------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------- | --------------------------------------- | ------------------------------------- | --------------------------------- |
+| Bundled request-protection rules                     | ✅ small managed ruleset                                               | ⚠️ plugin or paid Traefik Hub WAF        | ⚠️ external/custom nginx build              | ⚠️ third-party module                   | ⚠️ ModSecurity module                 | ⚠️ ModSecurity module             |
+| Browser challenge / proof of work                    | ✅ SHA-256 PoW, pluggable chain                                        | ❌                                       | ❌                                          | ❌                                      | ❌                                    | ❌                                |
+| IP/CIDR access rules                                 | ✅ per site and route                                                  | ✅ `IPAllowList` middleware              | ✅ per-host Access Lists                    | ✅ request matchers                     | ✅ `allow`/`deny`                     | ✅ `Require ip`                   |
+| ASN/country policy                                   | ✅ per site and route                                                  | ⚠️ plugin/external GeoIP                 | ⚠️ custom nginx configuration               | ⚠️ third-party module                   | ⚠️ GeoIP2 module                      | ⚠️ GeoIP module                   |
+| Request rate limiting                                | ✅ fixed/sliding/token-bucket, dashboard-managed                       | ✅ rate-limit middleware                 | ⚠️ custom nginx configuration               | ⚠️ third-party module                   | ✅ `limit_req`                        | ⚠️ third-party module             |
+| Protected-app users with TOTP/WebAuthn               | ✅                                                                     | ⚠️ external identity provider            | ⚠️ HTTP Basic Access Lists                  | ⚠️ basic auth or external auth          | ⚠️ basic auth or external auth        | ⚠️ basic/digest or external auth  |
+| OIDC SSO for dashboard and protected apps            | ✅ admin-wide and per-site SSO, auto-provisioning, back-channel logout | ⚠️ paid Hub or external ForwardAuth      | ⚠️ external authentication gateway          | ⚠️ `forward_auth` plus external gateway | ⚠️ external service/module            | ⚠️ external module/service        |
+| Signed upstream identity / cross-site authentication | ✅ HMAC-signed identity headers and browser/backend SDK                | ⚠️ ForwardAuth/external identity service | ⚠️ custom configuration or external gateway | ⚠️ `forward_auth` plus external gateway | ⚠️ `auth_request` plus custom signing | ⚠️ external module/custom signing |
+| Firewall sync (push bans to UniFi/nftables/OVH/AWS)  | ✅                                                                     | ⚠️ external automation                   | ⚠️ external automation                      | ⚠️ external automation                  | ⚠️ external automation                | ⚠️ external automation            |
+
+BurrowGate's distinction is the integration: protection decisions, browser challenges, local or OIDC-backed access accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit surface. Its bundled request-protection rules are intentionally small and do not inspect request bodies; they are not a replacement for the OWASP Core Rule Set. See [Single Sign-On](docs/SSO.md), [Cross-site authentication](docs/CROSS_SITE_AUTH.md), and [Managed request protection](docs/MANAGED_PROTECTION.md).
+
+### Traffic Management
+
+|                                             | BurrowGate                                                                                                                       | Traefik                                                | Nginx Proxy Manager           | Caddy                                                | Nginx                                                  | Apache                     |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------- | ---------------------------------------------------- | ------------------------------------------------------ | -------------------------- |
+| HTTP load balancing                         | ✅ priority, round robin, weighted, sticky sessions                                                                              | ✅ round robin, weighted, sticky cookies               | ❌ one upstream per host UI   | ✅ multiple policies and sticky cookies              | ✅ multiple policies                                   | ✅ `mod_proxy_balancer`    |
+| Active origin health checks                 | ✅ with maintenance fallback                                                                                                     | ✅                                                     | ❌                            | ✅ built in                                          | ⚠️ active checks in NGINX Plus; passive in OSS         | ✅ `mod_proxy_hcheck`      |
+| TCP/UDP proxying                            | ✅ TLS termination and health checks                                                                                             | ✅ TCP/UDP routers                                     | ✅ TCP/UDP streams            | ⚠️ third-party layer4 module                         | ✅ stream module                                       | ❌                         |
+| TCP/UDP protection and per-client analytics | ✅ IP/CIDR/ASN/country policy, connection limits, managed rules, bandwidth auto-bans, live peers, GeoIP, UDP amplification guard | ⚠️ IP allowlists/connection limits; external analytics | ❌ stream forwarding only     | ⚠️ third-party layer4 modules and external analytics | ⚠️ stream access/limit modules plus external analytics | ❌ no generic stream proxy |
+| Static file serving from disk               | ✅ folder picker, SPA fallback, mixable with proxy origins                                                                       | ❌                                                     | ❌                            | ✅                                                   | ✅                                                     | ✅                         |
+| Reverse-proxy response caching              | ✅ bounded cache with dashboard purge                                                                                            | ⚠️ plugin or paid product                              | ⚠️ custom nginx configuration | ⚠️ third-party module                                | ✅ `proxy_cache`                                       | ✅ `mod_cache`             |
+
+Caddy, Nginx, and Apache offer deeper, more mature general-purpose web-server configuration. BurrowGate instead exposes a narrower set of static serving, caching, origin health, failover, and unusually broad TCP/UDP protection and telemetry controls through the same dashboard used by its proxy and access features. See [Streams](docs/STREAMS.md).
+
+### Observability & Alerting
+
+|                                                     | BurrowGate                                                                                      | Traefik                                             | Nginx Proxy Manager         | Caddy                        | Nginx                                   | Apache                        |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------- | ---------------------------- | --------------------------------------- | ----------------------------- |
+| Traffic/session/bandwidth analytics dashboard       | ✅                                                                                              | ⚠️ routing dashboard; external analytics            | ❌                          | ❌                           | ❌                                      | ❌                            |
+| GeoIP map / ASN breakdown                           | ✅ interactive map, per country/ASN                                                             | ❌                                                  | ❌                          | ❌                           | ❌                                      | ❌                            |
+| Request/response capture and resend                 | ✅ bounded, redacted, dashboard resend                                                          | ⚠️ access logs only                                 | ⚠️ log files only           | ⚠️ access logs only          | ⚠️ access logs only                     | ⚠️ access logs only           |
+| Structured administrative audit trail               | ✅ actor, IP, action, resource, time, search                                                    | ⚠️ external Git/orchestrator audit or paid platform | ✅ built-in audit log       | ⚠️ external config/API audit | ⚠️ OS/Git/SIEM or paid management plane | ⚠️ OS/Git/SIEM                |
+| Prometheus-compatible metrics                       | ✅ OpenMetrics endpoint                                                                         | ✅                                                  | ❌                          | ✅ OpenMetrics               | ⚠️ exporter or paid API                 | ⚠️ `mod_status` plus exporter |
+| Host/container and internet-connectivity monitoring | ✅ CPU, memory, disk, network, reachability, thresholds, history                                | ⚠️ external host monitoring                         | ⚠️ external host monitoring | ⚠️ external host monitoring  | ⚠️ external host monitoring             | ⚠️ external host monitoring   |
+| Durable operational alerts and delivery history     | ✅ ordered retries, searchable log, recovery events, signed ntfy/Slack/Discord/generic webhooks | ⚠️ external monitoring                              | ⚠️ external monitoring      | ⚠️ external monitoring       | ⚠️ external monitoring                  | ⚠️ external monitoring        |
+
+Traefik and Caddy provide strong metrics for Prometheus, OpenTelemetry, or Grafana-based stacks. BurrowGate's advantage is immediate local visibility and debugging, including the gateway host's resources and internet reachability, plus a structured administrative audit trail and durable alert delivery in its own dashboard. An external telemetry stack is typically the better choice for long-term, cross-service observability. See [Logging and audit trail](docs/LOGGING.md), [System monitoring](docs/SYSTEM_MONITORING.md), and [Notifications](docs/NOTIFICATIONS.md).
+
+**Audit-control alignment:** BurrowGate's audit trail can contribute technical evidence toward [NIST SP 800-53](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final) AU-2/AU-3/AU-6, [ISO/IEC 27001:2022](https://www.iso.org/standard/27001) Annex A 8.15/8.16, [SOC 2 Trust Services Criteria](https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022) monitoring and change-management controls, [PCI DSS 4.0.1](https://www.pcisecuritystandards.org/document_library/?class=pcidss&doc=pci_dss) Requirement 10, [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/compliance-enforcement/audit/protocol-edited/index.html) §164.312(b), and [GDPR](https://eur-lex.europa.eu/eli/reg/2016/679/oj) Articles 5(2) and 32. This is not a claim that BurrowGate or a deployment is certified, attested, or compliant; each framework requires additional technical controls, policies, operational evidence, scope definition, and, where applicable, independent assessment.
+
+### Availability & Ecosystem
+
+|                                                | BurrowGate                                                                                        | Traefik                                       | Nginx Proxy Manager                          | Caddy                                    | Nginx                             | Apache                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------- | ---------------------------------------- | --------------------------------- | ----------------------------- |
+| Multi-instance config replication and failover | ✅ primary/replica replication and quorum election (experimental); external front-end LB required | ⚠️ external orchestrator/LB and shared config | ⚠️ external DB/storage/LB; no native cluster | ⚠️ external config automation/storage/LB | ⚠️ external automation/LB         | ⚠️ external automation/LB     |
+| Maturity & community                           | ⚠️ new v1.x project, small community                                                              | ✅ mature, broad cloud-native adoption        | ✅ mature, large homelab community           | ✅ mature                                | ✅ long-established               | ✅ long-established           |
+| Extension ecosystem                            | ⚠️ provider interface, no loadable general plugin system                                          | ✅ middleware/plugin catalog                  | ⚠️ nginx custom configuration                | ✅ module ecosystem                      | ✅ extensive module ecosystem     | ✅ extensive module ecosystem |
+| License                                        | EUPL-1.2                                                                                          | MIT                                           | MIT                                          | Apache-2.0                               | 2-clause BSD (Plus is commercial) | Apache-2.0                    |
+
+This is the central trade-off: BurrowGate is the youngest project here, with the smallest community and a narrower extension story. Its experimental HA integrates configuration and identity-state replication plus failover elections, but deployments still need a load balancer in front and should be tested carefully. See [High Availability](docs/HIGH_AVAILABILITY.md).
+
+### Which one should you use?
+
+- **Reach for BurrowGate** if you want one dashboard-managed gateway that terminates TLS, applies integrated request and network protections, gates access behind logins with 2FA, load-balances origins, and shows you what happened without assembling several companion services.
+- **Reach for Traefik** if you're running Kubernetes or a large, fast-changing Docker fleet and want routing to auto-discover services from labels/CRDs - its dynamic-configuration model is more mature for that specific job.
+- **Reach for Nginx Proxy Manager** if you want a focused GUI for common homelab proxy hosts, certificates, access lists, and TCP/UDP forwarding.
+- **Reach for Caddy** if you want automatic HTTPS, a concise configuration, and a highly capable general-purpose web server without an integrated management dashboard.
+- **Reach for Nginx or Apache directly** if you value long operational histories, exact low-level control, or a mature module the others don't provide, and you're comfortable integrating authentication, protection, and monitoring separately when needed.
 
 ## Quick Start
 

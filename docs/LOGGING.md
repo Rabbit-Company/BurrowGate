@@ -1,4 +1,42 @@
-# File logging
+# Logging and administrative audit trail
+
+BurrowGate keeps two complementary kinds of logs:
+
+- a structured administrative audit trail in the configured SQL database
+- runtime logs written to the process console and, optionally, daily files.
+
+They have different purposes and retention. The audit trail answers who changed gateway configuration; runtime logs explain authentication, startup, proxy, and operational behavior.
+
+## Administrative audit trail
+
+Successful administrative changes across sites, routes, streams, network rules, users, certificates, DNS providers, firewall sync, and HA topology create a structured audit record containing:
+
+- the acting administrator's stable user ID and username
+- source IP address and timestamp
+- a stable action name such as `site.update`, `certificate.renew`, or `ha.promote_node`
+- the affected resource type and ID when applicable
+- a human-readable summary
+
+The dashboard provides an administrator-only, searchable, paginated audit view. The API additionally supports actor, action, resource, and time-range filters. There is no application endpoint for editing an audit entry. Administrators can purge records, but the purge creates a new `audit_log.purge` entry after the deletion.
+
+The database audit trail is separate from the `audit` runtime log level. Authentication successes, failures, rate limits, logging-setting changes, archive deletion, and other operational events are written through the runtime logger instead. In an HA deployment, audit and runtime logs remain node-local and are not replicated.
+
+Audit records currently remain in the database until an administrator purges them (there is no automatic audit-retention policy). They are not cryptographically chained or written to WORM storage, a database administrator can alter them directly, and timestamps rely on the host clock. Deployments with strict assurance requirements should enforce time synchronization and retention operationally and regularly copy records to independently controlled, append-only or tamper-evident storage/SIEM.
+
+### Compliance and control alignment
+
+The administrative audit trail can contribute technical evidence toward:
+
+- [NIST SP 800-53](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final) AU-2 Event Logging, AU-3 Content of Audit Records, and AU-6 Audit Record Review, Analysis, and Reporting;
+- [ISO/IEC 27001:2022](https://www.iso.org/standard/27001) Annex A 8.15 Logging and 8.16 Monitoring Activities;
+- [SOC 2 Trust Services Criteria](https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022) evidence for monitoring and change-management controls;
+- [PCI DSS 4.0.1](https://www.pcisecuritystandards.org/document_library/?class=pcidss&doc=pci_dss) Requirement 10, Log and Monitor All Access to System Components and Cardholder Data;
+- [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/compliance-enforcement/audit/protocol-edited/index.html) §164.312(b), Audit Controls; and
+- [GDPR](https://eur-lex.europa.eu/eli/reg/2016/679/oj) accountability and security-of-processing evidence under Articles 5(2) and 32.
+
+These are control-alignment references, not certifications or compliance claims. ISO/IEC 27001 certification applies to an organization's information security management system, SOC 2 is an independent attestation report, and PCI DSS, HIPAA, and GDPR compliance depend on the complete scoped environment plus organizational policies and procedures. Audit records can themselves contain personal data such as usernames and IP addresses, so operators must also apply appropriate access, minimization, and retention rules.
+
+## Runtime file logging
 
 BurrowGate always logs to the process console. Optional file logging adds one node-local file per calendar day under `BG_LOG_DIRECTORY` (default `./data/logs`):
 
