@@ -474,6 +474,14 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 			{ key: "size", label: "Size", type: "select", options: ["", "normal", "flexible", "compact"], default: "" },
 		],
 	},
+	snake: {
+		label: "Snake game",
+		fields: [
+			{ key: "gridSize", label: "Grid size", type: "number", min: 10, max: 40, default: 16, required: true },
+			{ key: "applesRequired", label: "Apples required", type: "number", min: 1, max: 30, default: 5, required: true },
+			{ key: "tickMs", label: "Speed (ms per move)", type: "number", min: 60, max: 500, default: 150, required: true },
+		],
+	},
 };
 const CHALLENGE_STEP_MAX = 16;
 

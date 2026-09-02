@@ -95,4 +95,11 @@ export function registerChallengeRoutes(app: Web<any>): void {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
 			}),
 	);
+	app.get(
+		"/_burrowgate/static/challenges/snake.js",
+		() =>
+			new Response(Bun.file("public/challenges/snake.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
 }
