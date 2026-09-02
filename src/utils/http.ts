@@ -27,16 +27,16 @@ export function jsonResponse(data: unknown, status = 200, headers?: HeadersInit)
 	return new Response(JSON.stringify(data), { status, headers: resultHeaders });
 }
 
-export function htmlResponse(html: string, status = 200, headers?: HeadersInit): Response {
+export const DEFAULT_CSP =
+	"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+export function htmlResponse(html: string, status = 200, headers?: HeadersInit, csp: string = DEFAULT_CSP): Response {
 	const resultHeaders = new Headers(headers);
 	resultHeaders.set("content-type", "text/html; charset=utf-8");
 	resultHeaders.set("cache-control", "no-store");
 	resultHeaders.set("x-content-type-options", "nosniff");
 	resultHeaders.set("referrer-policy", "same-origin");
-	resultHeaders.set(
-		"content-security-policy",
-		"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-	);
+	resultHeaders.set("content-security-policy", csp);
 	return new Response(html, { status, headers: resultHeaders });
 }
 

@@ -102,6 +102,12 @@ export async function encryptSecret(value: string): Promise<string> {
 	return await encryptWithKey(value, await encryptionKey());
 }
 
+const ENCRYPTED_SECRET_PATTERN = /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
+
+export function isEncryptedSecret(value: string): boolean {
+	return ENCRYPTED_SECRET_PATTERN.test(value);
+}
+
 export async function decryptSecret(value: string): Promise<string> {
 	return await decryptWithKey(value, await encryptionKey());
 }

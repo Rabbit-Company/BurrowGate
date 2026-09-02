@@ -33,8 +33,10 @@ The client script for `pow-sha256` looks for two elements and updates them as wo
 
 Both are optional for the page to _load_, but including them gives visitors live feedback. The default template contains both.
 
+`hcaptcha` and `turnstile` only look for `id="status"` for status text. They insert their own widget container immediately after it (or at the end of `<body>` if the template omits it) and render the CAPTCHA widget into that container once its script loads.
+
 ## Security
 
-Challenge pages are served with the standard BurrowGate control-plane Content Security Policy, which permits same-origin scripts and workers (the proof-of-work runs in a Web Worker) and the same-origin verification fetch. Placeholder values are escaped, and the injected script is inserted after all placeholder substitution so template values can never smuggle markup into the script region.
+Challenge pages are served with the standard BurrowGate control-plane Content Security Policy, which permits same-origin scripts and workers (the proof-of-work runs in a Web Worker) and the same-origin verification fetch. A provider that needs to load an external widget script or iframe can widen this for its own verification flow only: `hcaptcha` allows `https://*.hcaptcha.com` for scripts, frames, styles, images, and fetches, and `turnstile` allows `https://challenges.cloudflare.com` for scripts, frames, and fetches. The policy is only widened while that provider's step is active - a `pow-sha256` step, or any other provider without extra requirements, still gets the strict same-origin policy. Placeholder values are escaped, and the injected script is inserted after all placeholder substitution so template values can never smuggle markup into the script region.
 
 The template accepts a complete HTML document up to 131072 characters.

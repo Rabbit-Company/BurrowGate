@@ -394,7 +394,11 @@ export function adminPage(): string {
             </div>
             <label class="check-row"><input id="routePolicyEnabled" type="checkbox" checked><span><strong>Policy enabled</strong><small class="muted">Disabled policies remain stored but do not match requests.</small></span></label>
             <div id="routeChallengeSettings">
-              <label><span>Challenge policy override</span><textarea id="routePolicyChallenge" class="input code-input" rows="8" spellcheck="false" placeholder="Leave blank to inherit the site's challenge chain"></textarea><small id="routeChallengeHelp" class="muted">Only used when this route requires a challenge. A blank value inherits the site policy.</small></label>
+              <label><span>Route behavior</span><select id="routeChallengePolicyMode" class="select"><option value="inherit">Inherit the site's challenge chain</option><option value="override">Use a route-specific chain</option></select><small class="muted">Only used when this route requires a challenge.</small></label>
+              <div id="routeChallengeStepsPanel" class="hidden">
+                <div class="section-heading compact-heading"><div><h4>Challenge steps</h4><p class="muted">Each step is completed in order before the visitor receives a session.</p></div><button class="button secondary compact" type="button" data-challenge-add="route">Add challenge step</button></div>
+                <div id="routeChallengeSteps" class="challenge-step-list"></div>
+              </div>
             </div>
           </section>
           <section class="error-response-editor hidden" data-route-editor-panel="network">
@@ -741,7 +745,8 @@ export function adminPage(): string {
           <section class="error-response-editor hidden" data-site-editor-panel="access">
             <div class="section-heading error-response-heading"><div><h3>Origin trust and verification</h3><p class="muted">Sign trusted identity headers and define the default browser challenge chain.</p></div></div>
             <label><span>Origin signing secret</span><div class="secret-row"><input id="siteSigningSecret" class="input" name="originSigningSecret" type="password" autocomplete="new-password" placeholder="Generated automatically for new sites"><button id="generateSiteSecret" class="button secondary" type="button">Generate</button></div><small id="siteSecretHelp" class="muted">Leave blank to generate a secure secret. The generated value is shown once after creation.</small></label>
-            <label><span>Challenge policy</span><textarea id="siteChallengePolicy" class="input code-input" name="challengePolicy" rows="11" spellcheck="false" required></textarea><small id="challengeProviderHelp" class="muted">Ordered JSON array. Each provider is completed before the visitor receives a session.</small></label>
+            <div class="section-heading compact-heading"><div><h4>Challenge policy</h4><p class="muted">Each step is completed in order before the visitor receives a session.</p></div><button class="button secondary compact" type="button" data-challenge-add="site">Add challenge step</button></div>
+            <div id="siteChallengeSteps" class="challenge-step-list"></div>
           </section>
           <section class="error-response-editor hidden" data-site-editor-panel="origins">
             <div class="section-heading error-response-heading"><div><h3>Load balancing</h3><p class="muted">Choose how BurrowGate selects from healthy origins.</p></div></div>

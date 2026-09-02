@@ -1277,6 +1277,41 @@ form.grid label {
 	flex-wrap: wrap;
 	justify-content: flex-end;
 }
+.challenge-step-list {
+	display: grid;
+	gap: 12px;
+	margin: 14px 0;
+}
+.challenge-step-item {
+	display: grid;
+	gap: 12px;
+	padding: 13px 14px;
+	border: 1px solid #2b3648;
+	border-radius: 12px;
+	background: rgba(15, 23, 42, 0.66);
+}
+.challenge-step-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+.challenge-step-order {
+	font-weight: 700;
+	color: #94a3b8;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.challenge-step-provider {
+	flex: 1;
+	min-width: 160px;
+}
+.challenge-step-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
 .code-input {
 	min-height: 210px;
 	resize: vertical;

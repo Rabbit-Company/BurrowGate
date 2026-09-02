@@ -11,7 +11,7 @@ import type {
 	SiteRecord,
 } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
-import { parseChallengePolicy, parseDefaultNetworkAction } from "./site-service.ts";
+import { normalizeChallengePolicyForStorage, parseChallengePolicy, parseDefaultNetworkAction } from "./site-service.ts";
 import { invalidateRouteNetworkPolicy } from "./route-ip-rule-service.ts";
 import {
 	resolveWebSocketPolicy,
@@ -229,11 +229,12 @@ export function routePolicyView(policy: RoutePolicyRecord): RoutePolicyView {
 	};
 }
 
-function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePolicyRecord): RoutePolicyRecord {
+async function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePolicyRecord): Promise<RoutePolicyRecord> {
 	const now = Date.now();
 	const selectedKeyMode = keyMode(input.rateLimitKeyMode, existing?.rate_limit_key_mode ?? "ip");
 	const selectedAccessMode = accessMode(input.accessMode, existing?.access_mode ?? "inherit");
 	const selectedChallengePolicy = optionalChallengePolicy(input.challengePolicy, existing ? parseStoredPolicy(existing.challenge_policy_json) : null);
+	const normalizedChallengePolicy = selectedChallengePolicy ? await normalizeChallengePolicyForStorage(selectedChallengePolicy) : null;
 
 	// Validate route-specific challenge configuration at write time even when
 	// the route is currently set to another mode. This lets administrators
@@ -249,7 +250,7 @@ function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePo
 		path_pattern: normalizePathPattern(input.pathPattern ?? existing?.path_pattern),
 		methods_json: JSON.stringify(parseRouteMethods(input.methods ?? (existing ? parseStoredMethods(existing) : []))),
 		access_mode: selectedAccessMode,
-		challenge_policy_json: selectedChallengePolicy ? JSON.stringify(selectedChallengePolicy) : null,
+		challenge_policy_json: normalizedChallengePolicy ? JSON.stringify(normalizedChallengePolicy) : null,
 		rate_limit_enabled: booleanValue(input.rateLimitEnabled, existing?.rate_limit_enabled === 1) ? 1 : 0,
 		rate_limit_algorithm: algorithm(input.rateLimitAlgorithm, existing?.rate_limit_algorithm ?? "sliding-window"),
 		rate_limit_window_ms: integerValue(input.rateLimitWindowMs, "Rate-limit window", existing?.rate_limit_window_ms ?? 60_000, 100, 86_400_000),
@@ -281,7 +282,7 @@ function buildRecord(siteId: string, input: RoutePolicyInput, existing?: RoutePo
 
 export async function createRoutePolicy(siteId: string, input: RoutePolicyInput): Promise<RoutePolicyRecord> {
 	if (!(await repository.siteById(siteId))) throw new Error("Site not found");
-	const policy = buildRecord(siteId, input);
+	const policy = await buildRecord(siteId, input);
 	await repository.insertRoutePolicy(policy);
 	invalidateRoutePolicyCache(siteId);
 	return policy;
@@ -290,7 +291,7 @@ export async function createRoutePolicy(siteId: string, input: RoutePolicyInput)
 export async function updateRoutePolicy(siteId: string, id: string, input: RoutePolicyInput): Promise<RoutePolicyRecord> {
 	const existing = await repository.routePolicyById(id, siteId);
 	if (!existing) throw new Error("Route policy not found");
-	const policy = buildRecord(siteId, input, existing);
+	const policy = await buildRecord(siteId, input, existing);
 	await repository.updateRoutePolicy(policy);
 	staticAssetCache.purge({ siteId, routePolicyId: id });
 	invalidateRoutePolicyCache(siteId);

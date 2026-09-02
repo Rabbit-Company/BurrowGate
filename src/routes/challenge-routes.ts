@@ -3,7 +3,7 @@ import { challengeRegistry } from "../challenges/index.ts";
 import { cookieCanBeIssuedForRequest, insecureCookieConfigurationMessage } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { currentStep, verifyFlow } from "../services/challenge-service.ts";
-import { renderChallengePage } from "../services/challenge-page-service.ts";
+import { challengePageCsp, renderChallengePage } from "../services/challenge-page-service.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
 
 export function registerChallengeRoutes(app: Web<any>): void {
@@ -34,7 +34,8 @@ export function registerChallengeRoutes(app: Web<any>): void {
 		const step = await currentStep(flow);
 		const site = await repository.siteById(flow.site_id);
 		if (!site) return htmlResponse("This challenge expired. Return to the website and try again.", 410);
-		return htmlResponse(renderChallengePage(site, ctx.req, flow, step, challengeRegistry.get(step.provider)));
+		const provider = challengeRegistry.get(step.provider);
+		return htmlResponse(renderChallengePage(site, ctx.req, flow, step, provider), 200, undefined, challengePageCsp(provider));
 	});
 
 	app.post("/_burrowgate/api/challenge/verify", async (ctx) => {
@@ -77,6 +78,20 @@ export function registerChallengeRoutes(app: Web<any>): void {
 		"/_burrowgate/static/challenges/pow-sha256.js",
 		() =>
 			new Response(Bun.file("public/challenges/pow-sha256.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
+	app.get(
+		"/_burrowgate/static/challenges/hcaptcha.js",
+		() =>
+			new Response(Bun.file("public/challenges/hcaptcha.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
+	app.get(
+		"/_burrowgate/static/challenges/turnstile.js",
+		() =>
+			new Response(Bun.file("public/challenges/turnstile.js"), {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
 			}),
 	);

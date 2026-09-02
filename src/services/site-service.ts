@@ -404,6 +404,16 @@ export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyS
 	});
 }
 
+export async function normalizeChallengePolicyForStorage(steps: ChallengePolicyStep[]): Promise<ChallengePolicyStep[]> {
+	const result: ChallengePolicyStep[] = [];
+	for (const step of steps) {
+		const provider = challengeRegistry.get(step.provider);
+		const normalizedConfig = provider.normalizeConfigForStorage ? await provider.normalizeConfigForStorage(step.config) : step.config;
+		result.push({ provider: step.provider, config: normalizedConfig });
+	}
+	return result;
+}
+
 function policyFromRecord(site: SiteRecord): ChallengePolicyStep[] {
 	return parseChallengePolicy(site.challenge_policy_json);
 }
@@ -493,7 +503,9 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		enabled: enabledValue(input.enabled, true) ? 1 : 0,
 		session_ttl_seconds: sessionTtl(input.sessionTtlSeconds, config.defaultSite.sessionTtlSeconds),
 		challenge_policy_json: JSON.stringify(
-			parseChallengePolicy(input.challengePolicy, [{ provider: "pow-sha256", config: { difficulty: config.defaultSite.powDifficulty } }]),
+			await normalizeChallengePolicyForStorage(
+				parseChallengePolicy(input.challengePolicy, [{ provider: "pow-sha256", config: { difficulty: config.defaultSite.powDifficulty } }]),
+			),
 		),
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, config.defaultSite.accessMode),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, config.eventRetentionDays),
@@ -610,7 +622,7 @@ export async function updateSite(
 		ip_extraction_preset: parseIpExtractionPreset(input.ipExtractionPreset, existing.ip_extraction_preset ?? "direct"),
 		enabled: enabledValue(input.enabled, existing.enabled === 1) ? 1 : 0,
 		session_ttl_seconds: sessionTtl(input.sessionTtlSeconds, existing.session_ttl_seconds),
-		challenge_policy_json: JSON.stringify(parseChallengePolicy(input.challengePolicy, existingPolicy)),
+		challenge_policy_json: JSON.stringify(await normalizeChallengePolicyForStorage(parseChallengePolicy(input.challengePolicy, existingPolicy))),
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, existing.default_access_mode ?? "challenge"),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, existing.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing.default_ip_action ?? "inherit"),

@@ -97,3 +97,10 @@ BurrowGate, rather than the provider, handles:
 - Redirecting to the original GET/HEAD URL
 
 Providers should remain stateless except for data persisted in their challenge step.
+
+## Real examples
+
+`src/challenges/providers/hcaptcha.ts` and `src/challenges/providers/turnstile.ts` implement this contract against actual CAPTCHA services and cover two things the example above glosses over:
+
+- **Verification-page CSP.** hCaptcha and Turnstile both load a script and an iframe from their own domain. A provider that needs this declares `cspSources` (`scriptSrc`, `frameSrc`, `connectSrc`, `styleSrc`, `imgSrc`) on the `ChallengeProvider` object. BurrowGate widens the Content-Security-Policy of `/_burrowgate/verify` to include those hosts only when that provider is the active step. See [Custom Challenge Pages](CHALLENGE_PAGES.md).
+- **Secret storage.** A provider whose config includes a server-side secret (here, the CAPTCHA secret key used to call the provider's verification API) should implement the optional `normalizeConfigForStorage(config)` hook to encrypt it before it's written to the database, the same way every other secret in BurrowGate is stored. Both providers use `encryptSecret`/`decryptSecret`/`isEncryptedSecret` from `src/services/secret-encryption-service.ts`, encrypting only when the value isn't already in encrypted form so a re-save of an unrelated field doesn't touch it.

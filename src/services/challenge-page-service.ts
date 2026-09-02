@@ -3,6 +3,23 @@ import type { ChallengeFlowRecord, ChallengeStepRecord, SiteRecord } from "../ty
 import { config } from "../config.ts";
 import { requestHost } from "../utils/http.ts";
 
+export function challengePageCsp(provider: ChallengeProvider): string {
+	const extra = provider.cspSources;
+	if (!extra) {
+		return "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+	}
+	const directives = [
+		"default-src 'self'",
+		`style-src 'self' 'unsafe-inline'${extra.styleSrc?.length ? ` ${extra.styleSrc.join(" ")}` : ""}`,
+		`script-src 'self' 'unsafe-inline'${extra.scriptSrc?.length ? ` ${extra.scriptSrc.join(" ")}` : ""}`,
+		`img-src 'self' data:${extra.imgSrc?.length ? ` ${extra.imgSrc.join(" ")}` : ""}`,
+		`connect-src 'self'${extra.connectSrc?.length ? ` ${extra.connectSrc.join(" ")}` : ""}`,
+	];
+	if (extra.frameSrc?.length) directives.push(`frame-src 'self' ${extra.frameSrc.join(" ")}`);
+	directives.push("frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'");
+	return directives.join("; ");
+}
+
 export const CHALLENGE_TEMPLATE_PLACEHOLDERS = [
 	{ name: "title", description: 'Challenge provider title (e.g. "Verifying your browser").' },
 	{ name: "description", description: "Challenge provider description shown above the title." },

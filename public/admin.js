@@ -223,7 +223,6 @@ let accessSso = {
 	buttonLabel: "Single sign-on",
 };
 let editingPermissionsUserId = null;
-let challengeProviders = [];
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
 let challengeDefaults = { htmlTemplate: "", placeholders: [] };
@@ -450,6 +449,168 @@ function updateRouteNetworkPrivacyControls() {
 
 function updateRouteBotPolicyControls() {
 	byId("routeBotPolicySettings").classList.toggle("hidden", byId("routeBotPolicyMode").value === "inherit");
+}
+
+const CHALLENGE_PROVIDER_SCHEMAS = {
+	"pow-sha256": {
+		label: "SHA-256 proof of work",
+		fields: [{ key: "difficulty", label: "Difficulty", type: "number", min: 8, max: 63, default: 18, required: true }],
+	},
+	hcaptcha: {
+		label: "hCaptcha",
+		fields: [
+			{ key: "siteKey", label: "Site key", type: "text", required: true, maxLength: 256 },
+			{ key: "secretKey", label: "Secret key", type: "secret", required: true, maxLength: 512 },
+			{ key: "theme", label: "Theme", type: "select", options: ["", "light", "dark", "auto"], default: "" },
+			{ key: "size", label: "Size", type: "select", options: ["", "normal", "compact", "invisible"], default: "" },
+		],
+	},
+	turnstile: {
+		label: "Cloudflare Turnstile",
+		fields: [
+			{ key: "siteKey", label: "Site key", type: "text", required: true, maxLength: 256 },
+			{ key: "secretKey", label: "Secret key", type: "secret", required: true, maxLength: 512 },
+			{ key: "theme", label: "Theme", type: "select", options: ["", "light", "dark", "auto"], default: "" },
+			{ key: "size", label: "Size", type: "select", options: ["", "normal", "flexible", "compact"], default: "" },
+		],
+	},
+};
+const CHALLENGE_STEP_MAX = 16;
+
+function looksLikeEncryptedSecret(value) {
+	return /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(String(value ?? ""));
+}
+
+function challengeStepFieldHtml(field, value) {
+	if (field.type === "select") {
+		const current = value ?? field.default;
+		const options = field.options
+			.map((option) => `<option value="${escapeHtml(option)}"${current === option ? " selected" : ""}>${escapeHtml(option || "Default")}</option>`)
+			.join("");
+		return `<label><span>${escapeHtml(field.label)}</span><select class="select" data-challenge-field="${escapeHtml(field.key)}">${options}</select></label>`;
+	}
+	if (field.type === "secret") {
+		const encrypted = looksLikeEncryptedSecret(value);
+		const placeholder = encrypted ? "Leave blank to keep the current secret key" : field.label;
+		const original = encrypted ? escapeHtml(String(value)) : "";
+		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
+	}
+	if (field.type === "number") {
+		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+	}
+	return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="text" maxlength="${field.maxLength}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(value ?? "")}"></label>`;
+}
+
+function challengeStepFieldsHtml(provider, config) {
+	const schema = CHALLENGE_PROVIDER_SCHEMAS[provider];
+	if (!schema) return '<div class="site-form-grid challenge-step-fields"></div>';
+	return `<div class="site-form-grid challenge-step-fields">${schema.fields.map((field) => challengeStepFieldHtml(field, config?.[field.key])).join("")}</div>`;
+}
+
+function challengeStepProviderOptions(selected) {
+	return Object.entries(CHALLENGE_PROVIDER_SCHEMAS)
+		.map(([name, schema]) => `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(schema.label)}</option>`)
+		.join("");
+}
+
+function challengeStepCardHtml(step) {
+	const provider = CHALLENGE_PROVIDER_SCHEMAS[step.provider] ? step.provider : "pow-sha256";
+	return `<div class="challenge-step-item"><div class="challenge-step-header"><span class="challenge-step-order"></span><select class="select challenge-step-provider">${challengeStepProviderOptions(provider)}</select><div class="challenge-step-actions"><button class="button secondary compact" type="button" data-challenge-step-up>Move up</button><button class="button secondary compact" type="button" data-challenge-step-down>Move down</button><button class="button danger compact" type="button" data-challenge-step-remove>Remove</button></div></div>${challengeStepFieldsHtml(provider, step.config)}</div>`;
+}
+
+function renderChallengeSteps(scope, steps) {
+	byId(`${scope}ChallengeSteps`).innerHTML = (steps ?? []).map((step) => challengeStepCardHtml(step)).join("");
+	renumberChallengeSteps(scope);
+}
+
+function renumberChallengeSteps(scope) {
+	const container = byId(`${scope}ChallengeSteps`);
+	const items = [...container.querySelectorAll(".challenge-step-item")];
+	items.forEach((item, index) => {
+		item.querySelector(".challenge-step-order").textContent = `Step ${index + 1}`;
+		item.querySelector("[data-challenge-step-up]").disabled = index === 0;
+		item.querySelector("[data-challenge-step-down]").disabled = index === items.length - 1;
+		item.querySelector("[data-challenge-step-remove]").disabled = items.length <= 1;
+	});
+	const addButton = document.querySelector(`button[data-challenge-add="${scope}"]`);
+	if (addButton) addButton.disabled = items.length >= CHALLENGE_STEP_MAX;
+}
+
+function addChallengeStep(scope) {
+	const container = byId(`${scope}ChallengeSteps`);
+	if (container.querySelectorAll(".challenge-step-item").length >= CHALLENGE_STEP_MAX) return;
+	container.insertAdjacentHTML("beforeend", challengeStepCardHtml(defaultChallengePolicy()[0]));
+	renumberChallengeSteps(scope);
+}
+
+function moveChallengeStep(cardEl, direction) {
+	const list = cardEl.closest(".challenge-step-list");
+	if (direction === "up") {
+		const previous = cardEl.previousElementSibling;
+		if (previous) list.insertBefore(cardEl, previous);
+	} else {
+		const next = cardEl.nextElementSibling;
+		if (next) list.insertBefore(next, cardEl);
+	}
+	renumberChallengeSteps(list.id.replace("ChallengeSteps", ""));
+}
+
+function removeChallengeStep(cardEl) {
+	const list = cardEl.closest(".challenge-step-list");
+	if (list.querySelectorAll(".challenge-step-item").length <= 1) return;
+	const scope = list.id.replace("ChallengeSteps", "");
+	cardEl.remove();
+	renumberChallengeSteps(scope);
+}
+
+function onChallengeStepProviderChange(selectEl) {
+	const card = selectEl.closest(".challenge-step-item");
+	card.querySelector(".challenge-step-fields").outerHTML = challengeStepFieldsHtml(selectEl.value, {});
+}
+
+function collectChallengeSteps(scope) {
+	const items = [...byId(`${scope}ChallengeSteps`).querySelectorAll(".challenge-step-item")];
+	if (items.length === 0) throw new Error("Add at least one challenge step.");
+	if (items.length > CHALLENGE_STEP_MAX) throw new Error(`No more than ${CHALLENGE_STEP_MAX} challenge steps are allowed.`);
+	return items.map((item, index) => {
+		const provider = item.querySelector(".challenge-step-provider").value;
+		const schema = CHALLENGE_PROVIDER_SCHEMAS[provider];
+		const config = {};
+		for (const field of schema?.fields ?? []) {
+			const input = item.querySelector(`[data-challenge-field="${field.key}"]`);
+			if (!input) continue;
+			if (field.type === "select") {
+				if (input.value !== "") config[field.key] = input.value;
+				continue;
+			}
+			if (field.type === "secret") {
+				const value = input.value.trim() || input.dataset.originalSecret || "";
+				if (field.required && !value) throw new Error(`Step ${index + 1}: ${field.label} is required.`);
+				if (value) config[field.key] = value;
+				continue;
+			}
+			if (field.type === "number") {
+				const numberValue = Number(input.value);
+				if (!Number.isInteger(numberValue) || numberValue < field.min || numberValue > field.max) {
+					throw new Error(`Step ${index + 1}: ${field.label} must be a whole number from ${field.min} to ${field.max}.`);
+				}
+				config[field.key] = numberValue;
+				continue;
+			}
+			const textValue = input.value.trim();
+			if (field.required && !textValue) throw new Error(`Step ${index + 1}: ${field.label} is required.`);
+			if (textValue) config[field.key] = textValue;
+		}
+		return { provider, config };
+	});
+}
+
+function updateRouteChallengePolicyControls() {
+	const override = byId("routeChallengePolicyMode").value === "override";
+	byId("routeChallengeStepsPanel").classList.toggle("hidden", !override);
+	if (override && byId("routeChallengeSteps").querySelectorAll(".challenge-step-item").length === 0) {
+		renderChallengeSteps("route", defaultChallengePolicy());
+	}
 }
 
 function formatNumber(value) {
@@ -2490,7 +2651,7 @@ function resetSiteForm() {
 	byId("siteHealthRuntime").classList.add("hidden");
 	applySiteHealthStatus({ state: "disabled" }, []);
 	updateHealthControls();
-	byId("siteChallengePolicy").value = JSON.stringify(defaultChallengePolicy(), null, 2);
+	renderChallengeSteps("site", defaultChallengePolicy());
 	byId("siteErrorResponseMode").value = errorResponseDefaults.mode ?? "json";
 	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(errorResponseDefaults.jsonFields ?? []);
@@ -2561,7 +2722,7 @@ function editSite(id) {
 	updateHealthControls();
 	applySiteHealthStatus(site.originHealth ?? { state: health.enabled ? "unknown" : "disabled" }, []);
 	byId("siteSigningSecret").value = "";
-	byId("siteChallengePolicy").value = JSON.stringify(site.challengePolicy, null, 2);
+	renderChallengeSteps("site", site.challengePolicy?.length ? site.challengePolicy : defaultChallengePolicy());
 	byId("siteErrorResponseMode").value = site.errorResponse?.mode ?? "json";
 	byId("siteErrorHtmlTemplate").value = site.errorResponse?.htmlTemplate ?? errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(site.errorResponse?.jsonFields ?? errorResponseDefaults.jsonFields ?? []);
@@ -2597,7 +2758,6 @@ async function loadSites() {
 	const response = await api("/sites", {}, false);
 	sites = response.items ?? [];
 	sitePendingChanges = response.pendingChanges ?? [];
-	challengeProviders = response.challengeProviders ?? [];
 	defaultEventRetentionDays = Number(response.defaultEventRetentionDays ?? 7);
 	websocketDefaults = response.websocketDefaults ?? websocketDefaults;
 	httpCacheDefaults = response.httpCacheDefaults ?? httpCacheDefaults;
@@ -2644,11 +2804,6 @@ async function loadSites() {
 	renderSiteSelector();
 	renderSites();
 	if (loadedTabs.has("access")) renderAccessList();
-	const providerText = challengeProviders.length
-		? challengeProviders.map((provider) => `${provider.name} (${provider.title})`).join(", ")
-		: "No challenge providers are registered";
-	byId("challengeProviderHelp").textContent = `Ordered JSON array. Available providers: ${providerText}.`;
-	byId("routeChallengeHelp").textContent = `Leave blank to inherit the site chain. Available providers: ${providerText}.`;
 	return response;
 }
 
@@ -2723,10 +2878,10 @@ async function saveSite(event) {
 	byId("generatedSecretPanel").dataset.available = "false";
 	let challengePolicy;
 	try {
-		challengePolicy = JSON.parse(byId("siteChallengePolicy").value);
-	} catch {
+		challengePolicy = collectChallengeSteps("site");
+	} catch (error) {
 		setSiteEditorTab("access");
-		showToast("Challenge policy must be valid JSON.", "bad");
+		showToast(error.message, "bad");
 		submit.disabled = false;
 		return;
 	}
@@ -2913,7 +3068,9 @@ function resetRoutePolicyForm() {
 	byId("routePolicyPriority").value = "0";
 	byId("routePolicyAccessMode").value = "inherit";
 	byId("routePolicyEnabled").checked = true;
-	byId("routePolicyChallenge").value = "";
+	byId("routeChallengePolicyMode").value = "inherit";
+	renderChallengeSteps("route", []);
+	updateRouteChallengePolicyControls();
 	byId("routeDefaultIpAction").value = "inherit";
 	byId("routeDefaultCountryAction").value = "inherit";
 	byId("routeBotPolicyMode").value = "inherit";
@@ -2982,7 +3139,9 @@ function editRoutePolicy(id) {
 	byId("routePolicyPriority").value = String(policy.priority);
 	byId("routePolicyAccessMode").value = policy.accessMode;
 	byId("routePolicyEnabled").checked = Boolean(policy.enabled);
-	byId("routePolicyChallenge").value = policy.challengePolicy ? JSON.stringify(policy.challengePolicy, null, 2) : "";
+	byId("routeChallengePolicyMode").value = policy.challengePolicy ? "override" : "inherit";
+	renderChallengeSteps("route", policy.challengePolicy ?? []);
+	updateRouteChallengePolicyControls();
 	byId("routeDefaultIpAction").value = policy.defaultIpAction ?? "inherit";
 	byId("routeDefaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
 	byId("routeBotPolicyMode").value = policy.botPolicy ? "override" : "inherit";
@@ -3380,12 +3539,11 @@ async function saveRoutePolicy(event) {
 	const editorTabBeforeSave = activeRouteEditorTab;
 	submit.disabled = true;
 	let challengePolicy = null;
-	const challengeText = byId("routePolicyChallenge").value.trim();
-	if (challengeText) {
+	if (byId("routeChallengePolicyMode").value === "override") {
 		try {
-			challengePolicy = JSON.parse(challengeText);
-		} catch {
-			showToast("Route challenge policy must be valid JSON.", "bad");
+			challengePolicy = collectChallengeSteps("route");
+		} catch (error) {
+			showToast(error.message, "bad");
 			submit.disabled = false;
 			return;
 		}
@@ -5015,6 +5173,26 @@ async function purgeAuditLog() {
 }
 
 async function handleBodyClick(event) {
+	const challengeAddButton = event.target.closest("button[data-challenge-add]");
+	if (challengeAddButton) {
+		addChallengeStep(challengeAddButton.dataset.challengeAdd);
+		return;
+	}
+	const challengeStepUpButton = event.target.closest("button[data-challenge-step-up]");
+	if (challengeStepUpButton) {
+		moveChallengeStep(challengeStepUpButton.closest(".challenge-step-item"), "up");
+		return;
+	}
+	const challengeStepDownButton = event.target.closest("button[data-challenge-step-down]");
+	if (challengeStepDownButton) {
+		moveChallengeStep(challengeStepDownButton.closest(".challenge-step-item"), "down");
+		return;
+	}
+	const challengeStepRemoveButton = event.target.closest("button[data-challenge-step-remove]");
+	if (challengeStepRemoveButton) {
+		removeChallengeStep(challengeStepRemoveButton.closest(".challenge-step-item"));
+		return;
+	}
 	const eventRow = event.target.closest("tr[data-event-id]");
 	if (eventRow) {
 		await openEventDetail(eventRow.dataset.eventId);
@@ -5407,6 +5585,11 @@ async function handleBodyClick(event) {
 }
 
 function handleBodyChange(event) {
+	const challengeStepProvider = event.target.closest(".challenge-step-provider");
+	if (challengeStepProvider) {
+		onChallengeStepProviderChange(challengeStepProvider);
+		return;
+	}
 	const ruleCheckbox = event.target.closest(".rule-select");
 	if (ruleCheckbox) {
 		if (ruleCheckbox.checked) selectedRuleIds.add(ruleCheckbox.dataset.ruleId);
@@ -5527,6 +5710,7 @@ function bindActions() {
 	byId("routeWebSocketMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routeBotPolicyMode").addEventListener("change", updateRouteBotPolicyControls);
 	byId("routeNetworkPrivacyPolicyMode").addEventListener("change", updateRouteNetworkPrivacyControls);
+	byId("routeChallengePolicyMode").addEventListener("change", updateRouteChallengePolicyControls);
 	byId("purgeRouteCache").addEventListener(
 		"click",
 		(event) =>

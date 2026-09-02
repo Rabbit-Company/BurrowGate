@@ -8,6 +8,7 @@ import {
 	encryptSecret,
 	hasOperatorConfiguredMasterKey,
 	installMasterKeyFromPrimary,
+	isEncryptedSecret,
 	resetMasterKeyCache,
 	resolveSharedTokenPlaintext,
 } from "../src/services/secret-encryption-service.ts";
@@ -24,6 +25,19 @@ afterEach(() => {
 
 afterAll(() => {
 	resetMasterKeyCache();
+});
+
+describe("isEncryptedSecret", () => {
+	test("recognizes the encryptSecret output format", async () => {
+		expect(isEncryptedSecret(await encryptSecret("plain-value"))).toBe(true);
+	});
+
+	test("rejects plaintext values, including ones that merely resemble the format", () => {
+		expect(isEncryptedSecret("plain-value")).toBe(false);
+		expect(isEncryptedSecret("v1.only-one-segment")).toBe(false);
+		expect(isEncryptedSecret("v2.aaaa.bbbb")).toBe(false);
+		expect(isEncryptedSecret("")).toBe(false);
+	});
 });
 
 describe("hasOperatorConfiguredMasterKey", () => {
