@@ -62,6 +62,10 @@ export const DEFAULT_CHALLENGE_HTML_TEMPLATE = `<!doctype html>
 		.footnote { margin: 0; padding-top: 22px; border-top: 1px solid rgba(148, 163, 184, .18); font-size: 13px; color: #64748b; line-height: 1.6; }
 		.footnote strong { color: #a78bfa; font-weight: 600; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 		noscript { display: block; margin-top: 20px; padding: 12px 14px; border-radius: 10px; background: rgba(190, 18, 60, .16); color: #fda4af; font-size: 13px; }
+		@media (max-width: 520px) {
+			body { padding: 0; }
+			main { width: 100%; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; border: 0; border-radius: 0; box-shadow: none; padding: 24px 18px; }
+		}
 	</style>
 </head>
 <body>

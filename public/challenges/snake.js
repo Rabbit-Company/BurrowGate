@@ -103,7 +103,8 @@
 	let timer = null;
 	const startedAt = Date.now();
 
-	const CELL_PX = Math.max(8, Math.min(22, Math.floor(360 / gridSize)));
+	const availableWidth = Math.min(360, Math.max(200, (window.innerWidth || 360) - 48));
+	const CELL_PX = Math.max(8, Math.min(22, Math.floor(availableWidth / gridSize)));
 	const wrapper = document.createElement("div");
 	wrapper.className = "bg-snake-wrapper";
 
@@ -155,7 +156,8 @@
 		".bg-snake-dpad{display:grid;justify-items:center;gap:6px}" +
 		".bg-snake-dpad-row{display:flex;gap:6px}" +
 		".bg-snake-dpad button,.bg-snake-restart{min-width:44px;min-height:44px;border-radius:8px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.9);color:#e5e7eb;font-size:18px;cursor:pointer}" +
-		".bg-snake-dpad button:active,.bg-snake-restart:active{background:rgba(139,92,246,.35)}";
+		".bg-snake-dpad button:active,.bg-snake-restart:active{background:rgba(139,92,246,.35)}" +
+		"@media (max-width:520px){.bg-snake-dpad button,.bg-snake-restart{min-width:64px;min-height:64px;font-size:26px}.bg-snake-dpad,.bg-snake-dpad-row{gap:10px}}";
 	document.head.appendChild(style);
 
 	const context = canvas.getContext("2d");
