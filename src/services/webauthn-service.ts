@@ -1,7 +1,7 @@
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import type {
 	AuthenticationResponseJSON,
-	AuthenticatorTransportFuture,
+	AuthenticatorTransport,
 	PublicKeyCredentialCreationOptionsJSON,
 	PublicKeyCredentialRequestOptionsJSON,
 	RegistrationResponseJSON,
@@ -32,8 +32,8 @@ export interface VerifiedWebauthnRegistration {
 	backedUp: boolean;
 }
 
-function asTransports(value: string[]): AuthenticatorTransportFuture[] {
-	return value as AuthenticatorTransportFuture[];
+function asTransports(value: string[]): AuthenticatorTransport[] {
+	return value as AuthenticatorTransport[];
 }
 
 export async function buildRegistrationOptions(params: {
