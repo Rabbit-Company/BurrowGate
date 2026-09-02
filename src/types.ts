@@ -130,6 +130,7 @@ export interface SiteRecord {
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
 	bot_policy_json?: string | null;
+	network_privacy_policy_json?: string | null;
 	notification_event_types_json?: string | null;
 	created_at: number;
 	updated_at: number;
@@ -352,6 +353,7 @@ export interface RoutePolicyRecord {
 	websocket_policy_json?: string | null;
 	http_policy_json?: string | null;
 	bot_policy_json?: string | null;
+	network_privacy_policy_json?: string | null;
 	default_ip_action?: DefaultNetworkAction;
 	default_country_action?: DefaultNetworkAction;
 	priority: number;
@@ -488,6 +490,7 @@ export interface StreamRecord {
 	connection_rate_limit_precision_ms: number;
 	udp_amplification_max_ratio: number;
 	protection_policy_json: string | null;
+	network_privacy_policy_json?: string | null;
 	bandwidth_policy_json: string | null;
 	origin_health_check_enabled: number;
 	origin_health_check_interval_seconds: number;
@@ -529,6 +532,7 @@ export interface StreamEventRecord {
 	country_code: string | null;
 	asn: number | null;
 	asn_org: string | null;
+	network_privacy_json?: string | null;
 	reason: string | null;
 	error: string | null;
 	protection_rule_id: string | null;
@@ -702,6 +706,7 @@ export interface RequestEventRecord {
 	bot_name?: string | null;
 	bot_category?: string | null;
 	bot_verified?: number | null;
+	network_privacy_json?: string | null;
 	request_body: string | null;
 	request_body_truncated: number | null;
 	request_content_type: string | null;

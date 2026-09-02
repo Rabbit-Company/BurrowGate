@@ -48,6 +48,12 @@ UDP has no native connection lifecycle. BurrowGate therefore creates a peer sess
 
 Payload totals are accumulated in memory and persisted in one-minute buckets by stream, incoming port, IP, country, and protocol. The per-stream retention value removes both lifecycle events and bandwidth buckets. Lowering retention triggers immediate cleanup; regular maintenance performs subsequent cleanup.
 
+## Tor and network category policy
+
+Each stream can independently identify or block Tor exit nodes and any ASN-based network category (VPN, datacenter, ISP/telecom, and more) from the **Network rules** tab. The modes apply to both TCP connections and UDP peers and are disabled by default. ASN category classification requires GeoLite2 ASN enrichment.
+
+Explicit IP/CIDR and ASN **Allow** rules override automatic category blocking, so a trusted network can be admitted without disabling the broader category. Country and default allows do not override category blocks. BurrowGate records classifications in stream events and exposes a hidden **Network type** column for live connections and the Traffic log. See [Tor and ASN network category detection](NETWORK_PRIVACY.md) for data sources, precedence, and limitations.
+
 ## Origin health checks
 
 A TCP-enabled stream can opt into a periodic health check: BurrowGate opens, then immediately closes, a TCP connection to the stream's forward host and port on a timer and records the connect latency or a timeout. This is disabled by default - enabling it starts making connection attempts against your real backend (e.g. a game server) - and is configured per stream on the Streams dashboard's **Health** tab, alongside the check interval (minimum 3 seconds), timeout, and consecutive failure/recovery thresholds used to decide when the origin is actually considered down or recovered.

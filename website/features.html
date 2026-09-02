@@ -132,6 +132,12 @@
 								<li>Site-wide default IP and country actions for allow and blocklists (ASN rules apply directly, with no default ASN action needed)</li>
 								<li>Per-route IP, ASN, and country rules that override the site's for one path, like allowing a single trusted IP on an API endpoint</li>
 								<li>Per-route access modes: inherit, challenge, bypass, or block</li>
+								<li>
+									Opt-in Tor exit-node and dynamic ASN category detection (VPN, proxy, datacenter/hosting, ISP/telecom, mobile carrier, and more), discovered
+									from a published category list and refreshed daily
+								</li>
+								<li>Disabled, identify-only, or identify-and-block modes per category, set independently for each site, route, or TCP/UDP Stream</li>
+								<li>Explicit IP/CIDR and ASN allow rules take precedence over automatic privacy-category blocking</li>
 								<li>Access lists with global users, Argon2id password hashing, and rate-limited logins</li>
 								<li>
 									TOTP and WebAuthn (security key) two-factor authentication, with per-site key scoping for access lists, plus OIDC SSO with back-channel logout
@@ -519,6 +525,10 @@
 							default IP action keep applying. Full precedence rules live in
 							<a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_POLICIES.md" target="_blank" rel="noopener" class="link-accent"
 								>docs/NETWORK_POLICIES.md</a
+							>. Opt-in Tor/VPN/ASN privacy-network detection is evaluated as its own layer after this policy, with explicit IP/CIDR or ASN allow rules taking
+							precedence over an automatic category block - see
+							<a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_PRIVACY.md" target="_blank" rel="noopener" class="link-accent"
+								>docs/NETWORK_PRIVACY.md</a
 							>.
 						</p>
 					</div>

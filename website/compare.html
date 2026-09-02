@@ -232,6 +232,15 @@
 										<td>⚠️ Manual <code>BrowserMatch</code>/<code>Require</code></td>
 									</tr>
 									<tr>
+										<th scope="row">Tor/VPN/datacenter/ISP detection and blocking</th>
+										<td class="burrowgate-col">✅ Opt-in, dynamic categories, site/route/stream modes</td>
+										<td>⚠️ Middleware/plugin or external data</td>
+										<td>⚠️ Custom nginx configuration</td>
+										<td>⚠️ External data and matchers</td>
+										<td>⚠️ GeoIP/custom maps</td>
+										<td>⚠️ External data/custom rules</td>
+									</tr>
+									<tr>
 										<th scope="row">IP/CIDR access rules</th>
 										<td class="burrowgate-col">✅ Per site and route</td>
 										<td>✅ <code>IPAllowList</code> middleware</td>
@@ -298,11 +307,14 @@
 							</table>
 						</div>
 						<p>
-							BurrowGate's distinction is the integration: bot identity and blocking, protection decisions, browser challenges, local or OIDC-backed access
-							accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small bundled ruleset does
-							not inspect request bodies and is not a replacement for the OWASP Core Rule Set. Read the
+							BurrowGate's distinction is the integration: bot and privacy-network identity and blocking, protection decisions, browser challenges, local or
+							OIDC-backed access accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small
+							bundled ruleset does not inspect request bodies and is not a replacement for the OWASP Core Rule Set. Read the
 							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/BOT_MANAGEMENT.md" target="_blank" rel="noopener"
 								>bot management documentation</a
+							>, the
+							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/NETWORK_PRIVACY.md" target="_blank" rel="noopener"
+								>Tor and ASN network category detection documentation</a
 							>, and the
 							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/MANAGED_PROTECTION.md" target="_blank" rel="noopener"
 								>managed protection documentation</a

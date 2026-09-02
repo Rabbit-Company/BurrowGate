@@ -33,6 +33,7 @@ const COLUMN_REGISTRY = {
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
 		{ key: "bot", label: "Bot" },
+		{ key: "privacy", label: "Network type", defaultVisible: false },
 		{ key: "method", label: "Method" },
 		{ key: "path", label: "Path" },
 		{ key: "referer", label: "Referrer" },
@@ -227,6 +228,7 @@ let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
 let challengeDefaults = { htmlTemplate: "", placeholders: [] };
 let botCatalog = [];
+let networkPrivacyCategories = [];
 let websocketDefaults = {
 	available: true,
 	mode: "allow",
@@ -411,6 +413,39 @@ function setBlockedBots(scope, ids = []) {
 
 function selectedBlockedBots(scope) {
 	return [...document.querySelectorAll(`[data-bot-policy="${scope}"]:checked`)].map((input) => input.value);
+}
+
+function networkPrivacyCategoryLabel(id) {
+	return networkPrivacyCategories.find((category) => category.id === id)?.label ?? id;
+}
+
+function renderNetworkPrivacyControls(containerId, prefix) {
+	const container = byId(containerId);
+	container.innerHTML = networkPrivacyCategories
+		.map((category) => {
+			const description = category.description ? `<small class="muted">${escapeHtml(category.description)}</small>` : "";
+			return `<label><span>${escapeHtml(category.label)}</span><select data-network-privacy="${prefix}" data-network-privacy-category="${escapeHtml(category.id)}" class="select"><option value="disabled">Disabled</option><option value="monitor">Identify only</option><option value="block">Identify and block</option></select>${description}</label>`;
+		})
+		.join("");
+}
+
+function writeNetworkPrivacyPolicy(prefix, policy) {
+	const value = policy ?? {};
+	document.querySelectorAll(`[data-network-privacy="${prefix}"]`).forEach((select) => {
+		select.value = value[select.dataset.networkPrivacyCategory] ?? "disabled";
+	});
+}
+
+function readNetworkPrivacyPolicy(prefix) {
+	const result = {};
+	document.querySelectorAll(`[data-network-privacy="${prefix}"]`).forEach((select) => {
+		result[select.dataset.networkPrivacyCategory] = select.value;
+	});
+	return result;
+}
+
+function updateRouteNetworkPrivacyControls() {
+	byId("routeNetworkPrivacySettings").classList.toggle("hidden", byId("routeNetworkPrivacyPolicyMode").value === "inherit");
 }
 
 function updateRouteBotPolicyControls() {
@@ -1093,6 +1128,7 @@ function decisionClass(decision) {
 			"blocked",
 			"route-blocked",
 			"bot-blocked",
+			"privacy-blocked",
 			"managed-protection-blocked",
 			"websocket-policy-denied",
 			"origin-error",
@@ -1133,6 +1169,11 @@ function asnBadge(asn, org) {
 	const label = `AS${asn}`;
 	const title = org ? `${label} - ${org}` : label;
 	return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function networkPrivacyBadge(categories) {
+	if (!Array.isArray(categories) || categories.length === 0) return '<span class="muted">-</span>';
+	return categories.map((category) => `<span class="badge warn">${escapeHtml(networkPrivacyCategoryLabel(category))}</span>`).join(" ");
 }
 
 function refererLabel(host) {
@@ -1213,6 +1254,7 @@ async function loadTraffic() {
           ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
           ${isColumnVisible("traffic", "asn") ? `<td>${asnBadge(event.asn, event.asn_org)}</td>` : ""}
           ${isColumnVisible("traffic", "bot") ? `<td>${event.bot_id ? `<span class="badge ${event.bot_verified ? "ok" : "info"}" title="${escapeHtml(event.bot_category ?? "bot")}${event.bot_verified ? " · User-Agent + verified IP" : " · User-Agent only"}">${escapeHtml(event.bot_name ?? event.bot_id)}</span>` : '<span class="muted">-</span>'}</td>` : ""}
+          ${isColumnVisible("traffic", "privacy") ? `<td>${networkPrivacyBadge(event.network_privacy)}</td>` : ""}
           ${isColumnVisible("traffic", "method") ? `<td><span class="method-badge">${escapeHtml(event.method)}</span></td>` : ""}
           ${isColumnVisible("traffic", "path") ? `<td class="path-cell" title="${escapeHtml(event.path)}">${escapeHtml(truncate(event.path))}</td>` : ""}
           ${isColumnVisible("traffic", "referer") ? `<td class="referrer-cell" title="${escapeHtml(event.referer || "No referrer")}">${refererLabel(event.referer_host)}</td>` : ""}
@@ -1348,6 +1390,7 @@ function renderEventDetail(event) {
 				? `${escapeHtml(event.bot_name ?? event.bot_id)} <span class="badge ${event.bot_verified ? "ok" : "info"}">${event.bot_verified ? "User-Agent + verified IP" : "User-Agent only"}</span>`
 				: "-",
 		],
+		["Network type", networkPrivacyBadge(event.network_privacy)],
 		["Session", event.session_id ? escapeHtml(event.session_id) : "-"],
 		["User", event.access_username ? escapeHtml(event.access_username) : "-"],
 		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
@@ -2419,6 +2462,7 @@ function resetSiteForm() {
 	byId("siteDefaultAccessMode").value = "challenge";
 	byId("siteIpExtractionPreset").value = "direct";
 	setBlockedBots("site", []);
+	writeNetworkPrivacyPolicy("siteNetworkPrivacy", null);
 	byId("siteLoadBalancingAlgorithm").value = "failover";
 	byId("siteLoadBalancingAffinity").checked = true;
 	byId("siteOutboundFetchProtocol").value = "http1";
@@ -2487,6 +2531,7 @@ function editSite(id) {
 	byId("siteDefaultAccessMode").value = site.defaultAccessMode ?? "challenge";
 	byId("siteIpExtractionPreset").value = site.ipExtractionPreset ?? "direct";
 	setBlockedBots("site", site.botPolicy?.blockedBots ?? []);
+	writeNetworkPrivacyPolicy("siteNetworkPrivacy", site.networkPrivacyPolicy);
 	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
 	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
 	byId("siteOutboundFetchProtocol").value = site.outboundFetchProtocol ?? "http1";
@@ -2563,6 +2608,11 @@ async function loadSites() {
 	renderBotPolicyLists();
 	setBlockedBots("site", sites.find((site) => site.id === editingSiteId)?.botPolicy?.blockedBots ?? previousSiteBots);
 	setBlockedBots("route", routePolicies.find((policy) => policy.id === editingRoutePolicyId)?.botPolicy?.blockedBots ?? previousRouteBots);
+	networkPrivacyCategories = response.networkPrivacyCategories ?? networkPrivacyCategories;
+	renderNetworkPrivacyControls("siteNetworkPrivacySettings", "siteNetworkPrivacy");
+	renderNetworkPrivacyControls("routeNetworkPrivacySettings", "routeNetworkPrivacy");
+	writeNetworkPrivacyPolicy("siteNetworkPrivacy", sites.find((site) => site.id === editingSiteId)?.networkPrivacyPolicy ?? null);
+	writeNetworkPrivacyPolicy("routeNetworkPrivacy", routePolicies.find((policy) => policy.id === editingRoutePolicyId)?.networkPrivacyPolicy ?? null);
 	const protectionRulesetSelect = byId("siteHttpProtectionRuleset");
 	const selectedProtectionRuleset = protectionRulesetSelect.value;
 	protectionRulesetSelect.innerHTML = `<option value="default">Default managed ruleset</option>${managedProtection.items
@@ -2716,6 +2766,7 @@ async function saveSite(event) {
 		eventRetentionDays: Number(byId("siteEventRetentionDays").value),
 		challengePolicy,
 		botPolicy: { blockedBots: selectedBlockedBots("site") },
+		networkPrivacyPolicy: readNetworkPrivacyPolicy("siteNetworkPrivacy"),
 		originSigningSecret: byId("siteSigningSecret").value.trim(),
 		errorResponseMode,
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
@@ -2868,6 +2919,9 @@ function resetRoutePolicyForm() {
 	byId("routeBotPolicyMode").value = "inherit";
 	setBlockedBots("route", []);
 	updateRouteBotPolicyControls();
+	byId("routeNetworkPrivacyPolicyMode").value = "inherit";
+	writeNetworkPrivacyPolicy("routeNetworkPrivacy", null);
+	updateRouteNetworkPrivacyControls();
 	routeIpRules = [];
 	routeCountryRules = [];
 	routeAsnRules = [];
@@ -2934,6 +2988,9 @@ function editRoutePolicy(id) {
 	byId("routeBotPolicyMode").value = policy.botPolicy ? "override" : "inherit";
 	setBlockedBots("route", policy.botPolicy?.blockedBots ?? []);
 	updateRouteBotPolicyControls();
+	byId("routeNetworkPrivacyPolicyMode").value = policy.networkPrivacyPolicy ? "override" : "inherit";
+	writeNetworkPrivacyPolicy("routeNetworkPrivacy", policy.networkPrivacyPolicy);
+	updateRouteNetworkPrivacyControls();
 	byId("routeNetworkRulesSection").classList.remove("hidden");
 	byId("routeNetworkRulesPlaceholder").classList.add("hidden");
 	void loadRouteNetworkRules();
@@ -3352,6 +3409,7 @@ async function saveRoutePolicy(event) {
 		defaultIpAction: byId("routeDefaultIpAction").value,
 		defaultCountryAction: byId("routeDefaultCountryAction").value,
 		botPolicy: byId("routeBotPolicyMode").value === "inherit" ? null : { blockedBots: selectedBlockedBots("route") },
+		networkPrivacyPolicy: byId("routeNetworkPrivacyPolicyMode").value === "inherit" ? null : readNetworkPrivacyPolicy("routeNetworkPrivacy"),
 		rateLimitEnabled: byId("routeRateEnabled").checked,
 		rateLimitAlgorithm: byId("routeRateAlgorithm").value,
 		rateLimitMax: Number(byId("routeRateMax").value),
@@ -5468,6 +5526,7 @@ function bindActions() {
 	byId("routePolicyAccessMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routeWebSocketMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routeBotPolicyMode").addEventListener("change", updateRouteBotPolicyControls);
+	byId("routeNetworkPrivacyPolicyMode").addEventListener("change", updateRouteNetworkPrivacyControls);
 	byId("purgeRouteCache").addEventListener(
 		"click",
 		(event) =>

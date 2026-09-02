@@ -15,6 +15,7 @@ function bytesToMib(bytes) {
 
 let streams = [];
 let streamPendingChanges = [];
+let networkPrivacyCategories = [];
 let currentAdmin = null;
 let usersData = { items: [], sites: [], streams: [] };
 let editingPermissionsUserId = null;
@@ -63,6 +64,7 @@ const COLUMN_REGISTRY = {
 		{ key: "stream", label: "Stream", defaultVisible: false },
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
+		{ key: "privacy", label: "Network type", defaultVisible: false },
 		{ key: "connected", label: "Connected" },
 		{ key: "lastActivity", label: "Last activity" },
 		{ key: "toOrigin", label: "To origin" },
@@ -72,6 +74,7 @@ const COLUMN_REGISTRY = {
 		{ key: "stream", label: "Stream", defaultVisible: false },
 		{ key: "country", label: "Country" },
 		{ key: "asn", label: "ASN" },
+		{ key: "privacy", label: "Network type", defaultVisible: false },
 		{ key: "event", label: "Event" },
 		{ key: "reason", label: "Reason" },
 		{ key: "rule", label: "Rule" },
@@ -1376,6 +1379,8 @@ async function loadStreams() {
 	streamPendingChanges = result.pendingChanges ?? [];
 	certificates = result.certificates;
 	statuses = result.statuses;
+	networkPrivacyCategories = result.networkPrivacyCategories ?? networkPrivacyCategories;
+	renderNetworkPrivacyControls("streamNetworkPrivacySettings", "streamNetworkPrivacy");
 	byId("udpPeerNotice").textContent = `UDP peers disconnect after ${result.defaults.udpPeerIdleTimeoutSeconds} seconds without a datagram.`;
 	if (!byId("streamRetentionDays").value) byId("streamRetentionDays").value = String(result.defaults.retentionDays);
 	renderStreamSelector();
@@ -1439,6 +1444,7 @@ function renderActive(items) {
           ${isColumnDisplayed("connections", "stream") ? `<td>${streamCell(item.streamId)}</td>` : ""}
           ${isColumnVisible("connections", "country") ? `<td>${countryBadge(item.countryCode)}</td>` : ""}
           ${isColumnVisible("connections", "asn") ? `<td>${asnBadge(item.asn, item.asnOrg)}</td>` : ""}
+          ${isColumnVisible("connections", "privacy") ? `<td>${networkPrivacyBadge(item.networkPrivacy)}</td>` : ""}
           ${isColumnVisible("connections", "connected") ? `<td title="${escapeHtml(formatDate(item.connectedAt))}">${formatDuration(item.connectedAt)}</td>` : ""}
           ${isColumnVisible("connections", "lastActivity") ? `<td>${escapeHtml(formatDate(item.lastActivityAt))}</td>` : ""}
           ${isColumnVisible("connections", "toOrigin") ? `<td>${formatBytes(item.clientToUpstreamBytes)}</td>` : ""}
@@ -1520,6 +1526,33 @@ function asnBadge(asn, org) {
 	const label = `AS${asn}`;
 	const title = org ? `${label} - ${org}` : label;
 	return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function networkPrivacyCategoryLabel(id) {
+	return networkPrivacyCategories.find((category) => category.id === id)?.label ?? id;
+}
+
+function renderNetworkPrivacyControls(containerId, prefix) {
+	const container = byId(containerId);
+	container.innerHTML = networkPrivacyCategories
+		.map((category) => {
+			const description = category.description ? `<small class="muted">${escapeHtml(category.description)}</small>` : "";
+			return `<label><span>${escapeHtml(category.label)}</span><select data-network-privacy="${prefix}" data-network-privacy-category="${escapeHtml(category.id)}" class="select"><option value="disabled">Disabled</option><option value="monitor">Identify only</option><option value="block">Identify and block</option></select>${description}</label>`;
+		})
+		.join("");
+}
+
+function readStreamNetworkPrivacyPolicy() {
+	const result = {};
+	document.querySelectorAll('[data-network-privacy="streamNetworkPrivacy"]').forEach((select) => {
+		result[select.dataset.networkPrivacyCategory] = select.value;
+	});
+	return result;
+}
+
+function networkPrivacyBadge(categories) {
+	if (!Array.isArray(categories) || categories.length === 0) return '<span class="muted">-</span>';
+	return categories.map((category) => `<span class="badge warn">${escapeHtml(networkPrivacyCategoryLabel(category))}</span>`).join(" ");
 }
 
 function populateCountrySelects() {
@@ -1821,6 +1854,7 @@ async function loadEvents() {
           ${isColumnDisplayed("events", "stream") ? `<td>${streamCell(item.stream_id)}</td>` : ""}
           ${isColumnVisible("events", "country") ? `<td>${countryBadge(item.country_code)}</td>` : ""}
           ${isColumnVisible("events", "asn") ? `<td>${asnBadge(item.asn, item.asn_org)}</td>` : ""}
+          ${isColumnVisible("events", "privacy") ? `<td>${networkPrivacyBadge(item.network_privacy)}</td>` : ""}
           ${isColumnVisible("events", "event") ? `<td><span class="badge ${item.event_type.includes("error") || item.event_type === "blocked" ? "bad" : item.event_type === "throttled" || item.event_type === "monitored" ? "warn" : item.event_type === "connected" ? "ok" : "info"}">${escapeHtml(item.event_type)}</span></td>` : ""}
           <td class="protocol-column"><span class="protocol-badge">${item.protocol.toUpperCase()}</span></td>
           <td class="port-column"><code>${item.incoming_port}</code></td>
@@ -1949,6 +1983,10 @@ function renderStreamAsnRulesTable() {
 function applyStreamNetworkPolicy(policy) {
 	byId("streamDefaultIpAction").value = policy.defaultIpAction ?? "inherit";
 	byId("streamDefaultCountryAction").value = policy.defaultCountryAction ?? "inherit";
+	const privacy = policy.networkPrivacyPolicy ?? {};
+	document.querySelectorAll('[data-network-privacy="streamNetworkPrivacy"]').forEach((select) => {
+		select.value = privacy[select.dataset.networkPrivacyCategory] ?? "disabled";
+	});
 	streamCountryRules = policy.countryRules ?? [];
 	streamAsnRules = policy.asnRules ?? [];
 	const warning = byId("streamGeoPolicyWarning");
@@ -2050,14 +2088,16 @@ async function saveStreamNetworkDefaults() {
 		body: JSON.stringify({
 			defaultIpAction: byId("streamDefaultIpAction").value,
 			defaultCountryAction: byId("streamDefaultCountryAction").value,
+			networkPrivacyPolicy: readStreamNetworkPrivacyPolicy(),
 		}),
 	});
 	const stream = streams.find((item) => item.id === rulesStreamId);
 	if (stream) {
 		stream.defaultIpAction = result.defaultIpAction;
 		stream.defaultCountryAction = result.defaultCountryAction;
+		stream.networkPrivacyPolicy = result.networkPrivacyPolicy;
 	}
-	showToast("Default network actions saved.");
+	showToast("Stream network policy saved.");
 }
 
 function renderProtectionCatalog(enabledIds) {

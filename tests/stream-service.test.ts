@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { repository } from "../src/db/repository.ts";
 import { buildStream, pickStreamRestartFields, streamRestartDiffers, streamView } from "../src/services/stream-service.ts";
+import { serializeNetworkPrivacyPolicy } from "../src/services/network-privacy-service.ts";
 
 describe("stream configuration", () => {
 	test("requires at least one transport protocol", async () => {
@@ -84,6 +85,17 @@ describe("stream configuration", () => {
 		});
 		await repository.saveStream(stream);
 		expect((await repository.streamById(stream.id))?.proxy_protocol).toBe("v2");
+		await repository.deleteStream(stream.id);
+	});
+
+	test("exposes and persists stream network privacy modes", async () => {
+		const stream = await buildStream({ name: "Privacy stream", incomingPort: 29_134, forwardHost: "localhost", forwardPort: 29_135 });
+		stream.network_privacy_policy_json = serializeNetworkPrivacyPolicy({ tor: "monitor", vpn: "block" });
+		await repository.saveStream(stream);
+		expect(streamView((await repository.streamById(stream.id))!).networkPrivacyPolicy).toEqual({
+			tor: "monitor",
+			vpn: "block",
+		});
 		await repository.deleteStream(stream.id);
 	});
 });

@@ -23,6 +23,7 @@ import { addStreamAsnRule, addStreamCountryRule, addStreamIpRule, invalidateStre
 import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-service.ts";
 import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
 import { resolveStreamBandwidthPolicy, serializeStreamBandwidthPolicy } from "../services/stream-bandwidth-policy-service.ts";
+import { networkPrivacyCategoryCatalog, serializeNetworkPrivacyPolicy, storedNetworkPrivacyPolicy } from "../services/network-privacy-service.ts";
 import {
 	NOTIFICATION_EVENT_TYPES,
 	parseStreamNotificationPolicyInput,
@@ -233,6 +234,16 @@ async function body(request: Request): Promise<StreamInput> {
 	return value as StreamInput;
 }
 
+function stringArray(json: string | null | undefined): string[] {
+	if (!json) return [];
+	try {
+		const value = JSON.parse(json);
+		return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
 function certificateView(certificate: Awaited<ReturnType<typeof repository.streamCertificateOptions>>[number]) {
 	return {
 		id: certificate.id,
@@ -299,6 +310,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			).map(pendingChangeView),
 			certificates: (await repository.streamCertificateOptions()).map(certificateView),
 			statuses: streamProxyManager.statusesView(),
+			networkPrivacyCategories: networkPrivacyCategoryCatalog(),
 			defaults: {
 				retentionDays: config.eventRetentionDays,
 				udpPeerIdleTimeoutSeconds: config.streams.udpPeerIdleTimeoutSeconds,
@@ -642,21 +654,23 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const asn = Number(stringParam(url, "asn"));
-		return jsonResponse(
-			await repository.pagedStreamEvents({
-				streamId: scopeStreamId,
-				page: integerParam(url, "page", 1, 1, 1_000_000),
-				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				search: stringParam(url, "search"),
-				protocol: protocolParam(url),
-				eventType: eventTypeParam(url),
-				countryCode: stringParam(url, "country")?.toUpperCase(),
-				...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
-				sortBy: eventSortBy(url),
-				sortDirection: sortDirection(url),
-				...selectedRange,
-			}),
-		);
+		const result = await repository.pagedStreamEvents({
+			streamId: scopeStreamId,
+			page: integerParam(url, "page", 1, 1, 1_000_000),
+			pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
+			search: stringParam(url, "search"),
+			protocol: protocolParam(url),
+			eventType: eventTypeParam(url),
+			countryCode: stringParam(url, "country")?.toUpperCase(),
+			...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
+			sortBy: eventSortBy(url),
+			sortDirection: sortDirection(url),
+			...selectedRange,
+		});
+		return jsonResponse({
+			...result,
+			items: result.items.map((event) => ({ ...event, network_privacy: stringArray(event.network_privacy_json) })),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/streams/bandwidth", async (ctx) => {
@@ -693,6 +707,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		return jsonResponse({
 			defaultIpAction: selection.stream.default_ip_action ?? "inherit",
 			defaultCountryAction: selection.stream.default_country_action ?? "inherit",
+			networkPrivacyPolicy: storedNetworkPrivacyPolicy(selection.stream.network_privacy_policy_json),
 			countryRules: await repository.streamCountryRules(selection.stream.id),
 			asnRules: await repository.streamAsnRules(selection.stream.id),
 			geoip: geoIpStatus(),
@@ -713,12 +728,22 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
 		if (forwarded) return forwarded;
 		try {
-			const body = (await ctx.req.json()) as { defaultIpAction?: StreamDefaultNetworkAction; defaultCountryAction?: StreamDefaultNetworkAction };
+			const body = (await ctx.req.json()) as {
+				defaultIpAction?: StreamDefaultNetworkAction;
+				defaultCountryAction?: StreamDefaultNetworkAction;
+				networkPrivacyPolicy?: unknown;
+			};
 			const defaultIpAction = parseStreamDefaultNetworkAction(body.defaultIpAction, selection.stream.default_ip_action ?? "inherit");
 			const defaultCountryAction = parseStreamDefaultNetworkAction(body.defaultCountryAction, selection.stream.default_country_action ?? "inherit");
-			await repository.updateStreamNetworkDefaults(selection.stream.id, defaultIpAction, defaultCountryAction, Date.now());
+			const networkPrivacyPolicyJson = serializeNetworkPrivacyPolicy(body.networkPrivacyPolicy, selection.stream.network_privacy_policy_json);
+			await repository.updateStreamNetworkDefaults(selection.stream.id, defaultIpAction, defaultCountryAction, Date.now(), networkPrivacyPolicyJson);
 			invalidateStreamNetworkPolicy(selection.stream.id);
-			await streamProxyManager.enforceNetworkPolicy({ ...selection.stream, default_ip_action: defaultIpAction, default_country_action: defaultCountryAction });
+			await streamProxyManager.enforceNetworkPolicy({
+				...selection.stream,
+				default_ip_action: defaultIpAction,
+				default_country_action: defaultCountryAction,
+				network_privacy_policy_json: networkPrivacyPolicyJson,
+			});
 			await recordAdminAudit({
 				actor: user,
 				action: "stream_network_policy.update",
@@ -727,7 +752,13 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				summary: `Updated default network policy for stream ${selection.stream.name} (port ${selection.stream.incoming_port})`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse(await withDurability({ defaultIpAction, defaultCountryAction }));
+			return jsonResponse(
+				await withDurability({
+					defaultIpAction,
+					defaultCountryAction,
+					networkPrivacyPolicy: storedNetworkPrivacyPolicy(networkPrivacyPolicyJson),
+				}),
+			);
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update network policy" }, 400);
 		}

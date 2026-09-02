@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sites (
   websocket_policy_json TEXT NULL,
   http_policy_json TEXT NULL,
 	bot_policy_json TEXT NULL,
+  network_privacy_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS route_policies (
   websocket_policy_json TEXT NULL,
   http_policy_json TEXT NULL,
 	bot_policy_json TEXT NULL,
+  network_privacy_policy_json TEXT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
@@ -283,6 +285,7 @@ CREATE TABLE IF NOT EXISTS request_events (
 	bot_name VARCHAR(128) NULL,
 	bot_category VARCHAR(32) NULL,
 	bot_verified INTEGER NULL,
+	network_privacy_json TEXT NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -450,6 +453,7 @@ CREATE TABLE IF NOT EXISTS streams (
   connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100,
   udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0,
   protection_policy_json TEXT NULL,
+  network_privacy_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -472,6 +476,7 @@ CREATE TABLE IF NOT EXISTS stream_events (
   country_code VARCHAR(2) NULL,
   asn BIGINT NULL,
   asn_org VARCHAR(255) NULL,
+  network_privacy_json TEXT NULL,
   reason VARCHAR(255) NULL,
   error TEXT NULL,
   protection_rule_id VARCHAR(128) NULL,
@@ -951,6 +956,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN http_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN bot_policy_json TEXT NULL",
+		"ALTER TABLE sites ADD COLUMN network_privacy_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN notification_event_types_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy'",
 	];
@@ -974,6 +980,7 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 		"ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN http_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN bot_policy_json TEXT NULL",
+		"ALTER TABLE route_policies ADD COLUMN network_privacy_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE route_policies ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 	]) {
@@ -1086,6 +1093,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN connection_rate_limit_precision_ms INTEGER NOT NULL DEFAULT 100",
 		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
+		"ALTER TABLE streams ADD COLUMN network_privacy_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled'",
 		"ALTER TABLE streams ADD COLUMN bandwidth_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN origin_health_check_enabled INTEGER NOT NULL DEFAULT 0",
@@ -1246,6 +1254,7 @@ async function ensureStreamEventColumns(): Promise<void> {
 		"ALTER TABLE stream_events ADD COLUMN protection_rule_id VARCHAR(128) NULL",
 		"ALTER TABLE stream_events ADD COLUMN duration_ms BIGINT NULL",
 		"ALTER TABLE stream_events ADD COLUMN username VARCHAR(255) NULL",
+		"ALTER TABLE stream_events ADD COLUMN network_privacy_json TEXT NULL",
 	]) {
 		try {
 			await db.unsafe(statement);
@@ -1274,6 +1283,7 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN bot_name VARCHAR(128) NULL",
 		"ALTER TABLE request_events ADD COLUMN bot_category VARCHAR(32) NULL",
 		"ALTER TABLE request_events ADD COLUMN bot_verified INTEGER NULL",
+		"ALTER TABLE request_events ADD COLUMN network_privacy_json TEXT NULL",
 		`ALTER TABLE request_events ADD COLUMN request_body ${largeTextType} NULL`,
 		"ALTER TABLE request_events ADD COLUMN request_body_truncated INTEGER NULL",
 		"ALTER TABLE request_events ADD COLUMN request_content_type VARCHAR(255) NULL",

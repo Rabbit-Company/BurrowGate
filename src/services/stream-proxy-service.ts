@@ -28,6 +28,7 @@ import {
 	streamConnectionMetrics,
 } from "./stream-connection-tracker.ts";
 import { STREAM_RULESET_LIMITS } from "./stream-ruleset-format.ts";
+import { evaluateNetworkPrivacy, identifyNetworkPrivacy, networkPrivacyCategoryLabel, storedNetworkPrivacyPolicy } from "./network-privacy-service.ts";
 
 type TcpSocket = Bun.Socket<TcpConnection>;
 
@@ -129,6 +130,7 @@ export interface ActiveStreamConnection {
 	countryCode: string | null;
 	asn: number | null;
 	asnOrg: string | null;
+	networkPrivacy: string[];
 	connectedAt: number;
 	lastActivityAt: number;
 	clientToUpstreamBytes: number;
@@ -167,11 +169,27 @@ type StreamEventInput = Omit<StreamEventRecord, "id" | "created_at" | "protectio
 };
 
 function event(input: StreamEventInput): StreamEventRecord {
-	return { id: randomId("stream_evt"), created_at: Date.now(), protection_rule_id: null, duration_ms: null, username: null, ...input };
+	return {
+		id: randomId("stream_evt"),
+		created_at: Date.now(),
+		protection_rule_id: null,
+		duration_ms: null,
+		username: null,
+		network_privacy_json: null,
+		...input,
+	};
 }
 
 function runtimeError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function streamPrivacyEvaluation(record: StreamRecord, ip: string, decision: Awaited<ReturnType<typeof evaluateStreamIp>>) {
+	return evaluateNetworkPrivacy(ip, decision.asn, storedNetworkPrivacyPolicy(record.network_privacy_policy_json), decision.source, decision.action);
+}
+
+function privacyBlockedReason(category: ReturnType<typeof streamPrivacyEvaluation>["blockedCategory"]): string | null {
+	return category ? `Blocked ${networkPrivacyCategoryLabel(category)} traffic by stream privacy policy` : null;
 }
 
 function tcpFingerprint(record: StreamRecord): string {
@@ -272,7 +290,15 @@ export class StreamProxyManager {
 	}
 
 	private monitorEvent(input: StreamEventInput): void {
-		recordStreamEvent(event(input));
+		const record = this.tcpRuntimes.get(input.stream_id)?.record ?? this.udpRuntimes.get(input.stream_id)?.record;
+		const identity =
+			record && input.client_ip ? identifyNetworkPrivacy(input.client_ip, input.asn, storedNetworkPrivacyPolicy(record.network_privacy_policy_json)) : null;
+		recordStreamEvent(
+			event({
+				...input,
+				network_privacy_json: identity ? JSON.stringify(identity.categories) : null,
+			}),
+		);
 	}
 
 	private async tryBanStreamIp(
@@ -598,6 +624,9 @@ export class StreamProxyManager {
 		}
 		if (connection.closed) return;
 		let blockedReason: string | null = decision?.action === "block" ? (decision.reason ?? "Blocked by network rule") : null;
+		if (!blockedReason && decision) {
+			blockedReason = privacyBlockedReason(streamPrivacyEvaluation(record, connection.clientIp, decision).blockedCategory);
+		}
 		if (!blockedReason && record.max_connections_per_ip > 0) {
 			const activeFromIp = [...this.tcpConnections.values()].filter(
 				(other) => other.id !== connection.id && !other.closed && other.record.id === record.id && other.clientIp === connection.clientIp,
@@ -1119,6 +1148,7 @@ export class StreamProxyManager {
 				try {
 					const decision = await evaluateStreamIp(runtime.record, clientIp);
 					if (decision.action === "block") blockedReason = decision.reason ?? "Blocked by network rule";
+					else blockedReason = privacyBlockedReason(streamPrivacyEvaluation(runtime.record, clientIp, decision).blockedCategory);
 				} catch (error) {
 					Logger.error(`Unable to evaluate network policy for stream ${runtime.record.id}`, { error });
 				}
@@ -1340,22 +1370,28 @@ export class StreamProxyManager {
 	activeConnections(): ActiveStreamConnection[] {
 		const tcp: ActiveStreamConnection[] = [...this.tcpConnections.values()]
 			.filter((connection) => !connection.closed)
-			.map((connection) => ({
-				id: connection.id,
-				streamId: connection.record.id,
-				incomingPort: connection.record.incoming_port,
-				protocol: "tcp",
-				clientIp: connection.clientIp,
-				clientPort: connection.clientPort,
-				countryCode: connection.countryCode,
-				asn: connection.asn,
-				asnOrg: connection.asnOrg,
-				connectedAt: connection.openedAt,
-				lastActivityAt: connection.lastActivityAt,
-				clientToUpstreamBytes: connection.clientToUpstreamBytes,
-				upstreamToClientBytes: connection.upstreamToClientBytes,
-				username: connection.username,
-			}));
+			.map((connection) => {
+				const currentRecord = this.tcpRuntimes.get(connection.record.id)?.record ?? connection.record;
+				return {
+					id: connection.id,
+					streamId: connection.record.id,
+					incomingPort: connection.record.incoming_port,
+					protocol: "tcp",
+					clientIp: connection.clientIp,
+					clientPort: connection.clientPort,
+					countryCode: connection.countryCode,
+					asn: connection.asn,
+					asnOrg: connection.asnOrg,
+					networkPrivacy:
+						identifyNetworkPrivacy(connection.clientIp, connection.asn, storedNetworkPrivacyPolicy(currentRecord.network_privacy_policy_json))?.categories ??
+						[],
+					connectedAt: connection.openedAt,
+					lastActivityAt: connection.lastActivityAt,
+					clientToUpstreamBytes: connection.clientToUpstreamBytes,
+					upstreamToClientBytes: connection.upstreamToClientBytes,
+					username: connection.username,
+				};
+			});
 		const udp: ActiveStreamConnection[] = [...this.udpRuntimes.values()].flatMap((runtime) =>
 			[...runtime.peers.values()].map((peer) => ({
 				id: peer.id,
@@ -1367,6 +1403,8 @@ export class StreamProxyManager {
 				countryCode: peer.countryCode,
 				asn: peer.asn,
 				asnOrg: peer.asnOrg,
+				networkPrivacy:
+					identifyNetworkPrivacy(peer.clientIp, peer.asn, storedNetworkPrivacyPolicy(runtime.record.network_privacy_policy_json))?.categories ?? [],
 				connectedAt: peer.openedAt,
 				lastActivityAt: peer.lastActivityAt,
 				clientToUpstreamBytes: peer.clientToUpstreamBytes,
@@ -1388,7 +1426,13 @@ export class StreamProxyManager {
 			} catch (error) {
 				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
-			if (decision?.action !== "block") continue;
+			const blockedReason =
+				decision?.action === "block"
+					? (decision.reason ?? "Blocked by network rule")
+					: decision
+						? privacyBlockedReason(streamPrivacyEvaluation(record, connection.clientIp, decision).blockedCategory)
+						: null;
+			if (!blockedReason) continue;
 			this.monitorEvent({
 				stream_id: record.id,
 				incoming_port: record.incoming_port,
@@ -1400,12 +1444,12 @@ export class StreamProxyManager {
 				country_code: connection.countryCode,
 				asn: connection.asn,
 				asn_org: connection.asnOrg,
-				reason: decision.reason ?? "Blocked by network rule",
+				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
 				upstream_to_client_bytes: 0,
 			});
-			this.finishTcp(connection, decision.reason ?? "blocked by network rule");
+			this.finishTcp(connection, blockedReason);
 		}
 		const runtime = this.udpRuntimes.get(record.id);
 		if (!runtime) return;
@@ -1417,7 +1461,13 @@ export class StreamProxyManager {
 			} catch (error) {
 				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
-			if (decision?.action !== "block") continue;
+			const blockedReason =
+				decision?.action === "block"
+					? (decision.reason ?? "Blocked by network rule")
+					: decision
+						? privacyBlockedReason(streamPrivacyEvaluation(record, peer.clientIp, decision).blockedCategory)
+						: null;
+			if (!blockedReason) continue;
 			this.monitorEvent({
 				stream_id: record.id,
 				incoming_port: record.incoming_port,
@@ -1429,12 +1479,12 @@ export class StreamProxyManager {
 				country_code: peer.countryCode,
 				asn: peer.asn,
 				asn_org: peer.asnOrg,
-				reason: decision.reason ?? "Blocked by network rule",
+				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
 				upstream_to_client_bytes: 0,
 			});
-			this.closeUdpPeer(runtime, peer, decision.reason ?? "blocked by network rule");
+			this.closeUdpPeer(runtime, peer, blockedReason);
 		}
 	}
 }

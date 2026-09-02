@@ -114,6 +114,7 @@ import { staticAssetCache } from "../services/static-cache-service.ts";
 import { instanceBodyCaptureDefaults, instanceHeaderCaptureDefaults, instanceStaticCacheDefaults } from "../services/http-policy-service.ts";
 import { resendCapturedRequest, ResendTargetError } from "../services/resend-service.ts";
 import { BOT_CATALOG } from "../services/bot-service.ts";
+import { networkPrivacyCategoryCatalog } from "../services/network-privacy-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
 import {
 	isAdministrator,
@@ -222,6 +223,16 @@ function protectionMatches(value: string | null): unknown[] {
 	try {
 		const parsed = JSON.parse(value) as unknown;
 		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function stringArray(value: string | null | undefined): string[] {
+	if (!value) return [];
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
 	} catch {
 		return [];
 	}
@@ -752,6 +763,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			headerCaptureDefaults: instanceHeaderCaptureDefaults(),
 			managedProtection: managedRuleSetCatalog(),
 			botCatalog: BOT_CATALOG,
+			networkPrivacyCategories: networkPrivacyCategoryCatalog(),
 			errorResponseDefaults: {
 				mode: "json",
 				htmlTemplate: DEFAULT_ERROR_HTML_TEMPLATE,
@@ -2908,6 +2920,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			items: page.items.map((event) => ({
 				...event,
 				protection_matches: protectionMatches(event.protection_matches_json),
+				network_privacy: stringArray(event.network_privacy_json),
 				origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null,
 			})),
 			origins: origins.map((origin) => ({ id: origin.id, name: origin.name })),
@@ -2925,6 +2938,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		return jsonResponse({
 			...event,
 			protection_matches: protectionMatches(event.protection_matches_json),
+			network_privacy: stringArray(event.network_privacy_json),
 			origin_name: origin?.name ?? null,
 		});
 	});

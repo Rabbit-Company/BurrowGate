@@ -95,6 +95,14 @@ import { processLifecycle } from "./services/process-lifecycle-service.ts";
 import { dailyFileLogs } from "./services/daily-file-log-service.ts";
 import packageMetadata from "../package.json" with { type: "json" };
 import { botIsBlocked, identifyBot, startBotIpRangeRefresh } from "./services/bot-service.ts";
+import {
+	blockedNetworkPrivacyCategory,
+	identifyNetworkPrivacy,
+	networkPrivacyBlockIsBypassed,
+	networkPrivacyCategoryLabel,
+	resolvedNetworkPrivacyPolicy,
+	startNetworkPrivacyRefresh,
+} from "./services/network-privacy-service.ts";
 
 process.on("SIGTERM", () => void processLifecycle.gracefulRestart("SIGTERM", 0));
 process.on("SIGINT", () => void processLifecycle.gracefulRestart("SIGINT", 0));
@@ -121,6 +129,7 @@ await initializeGeoIp();
 await initializeAsnGeoIp();
 startGeoIpRetry();
 startBotIpRangeRefresh();
+await startNetworkPrivacyRefresh();
 await seedDefaultSite();
 await loadManagedRuleSets();
 await loadStreamRuleSets();
@@ -297,6 +306,7 @@ async function gateway(ctx: any): Promise<Response> {
 		botName?: string | null;
 		botCategory?: string | null;
 		botVerified?: boolean | null;
+		networkPrivacy?: string[] | null;
 	} = {
 		siteId: site.id,
 		ip,
@@ -348,6 +358,9 @@ async function gateway(ctx: any): Promise<Response> {
 	eventBase.countryCode = ipRule.countryCode;
 	eventBase.asn = ipRule.asn;
 	eventBase.asnOrg = ipRule.asnOrg;
+	const networkPrivacyPolicy = resolvedNetworkPrivacyPolicy(site, route.policy);
+	const networkPrivacy = identifyNetworkPrivacy(ip, ipRule.asn, networkPrivacyPolicy);
+	if (networkPrivacy) eventBase.networkPrivacy = networkPrivacy.categories;
 	if (ipRule.action === "block") {
 		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "blocked", latencyMs: Math.round(performance.now() - started) });
 		const retryAfterSeconds = ipRule.expiresAt ? Math.max(1, Math.ceil((ipRule.expiresAt - Date.now()) / 1_000)) : null;
@@ -365,6 +378,26 @@ async function gateway(ctx: any): Promise<Response> {
 				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
 			},
 			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
+		);
+	}
+
+	const privacyBlock = blockedNetworkPrivacyCategory(networkPrivacy, networkPrivacyPolicy);
+	const explicitlyWhitelisted = networkPrivacyBlockIsBypassed(ipRule.source, ipRule.action);
+	if (privacyBlock && !explicitlyWhitelisted) {
+		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "privacy-blocked", latencyMs: Math.round(performance.now() - started) });
+		const label = networkPrivacyCategoryLabel(privacyBlock);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 403,
+				code: "network_privacy_blocked",
+				error: "Network category blocked by BurrowGate",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: `This request was classified as ${label} and blocked by network privacy policy.`,
+			},
+			{ "x-burrowgate-error-code": "network_privacy_blocked" },
 		);
 	}
 

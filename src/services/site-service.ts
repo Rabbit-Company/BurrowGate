@@ -38,6 +38,7 @@ import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } 
 import { staticAssetCache } from "./static-cache-service.ts";
 import { NOTIFICATION_EVENT_TYPES } from "./stream-notification-policy-service.ts";
 import { serializeBotPolicy, storedBotPolicy, type BotPolicy } from "./bot-service.ts";
+import { serializeNetworkPrivacyPolicy, storedNetworkPrivacyPolicy, type NetworkPrivacyPolicy } from "./network-privacy-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -66,6 +67,7 @@ export interface SiteInput {
 	websocket?: unknown;
 	http?: unknown;
 	botPolicy?: unknown;
+	networkPrivacyPolicy?: unknown;
 	effectiveAt?: unknown;
 }
 
@@ -107,6 +109,7 @@ export interface SiteView {
 	websocket: SiteWebSocketPolicyView;
 	http: SiteHttpPolicyView;
 	botPolicy: BotPolicy;
+	networkPrivacyPolicy: NetworkPrivacyPolicy;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -463,6 +466,7 @@ export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | nu
 		websocket: siteWebSocketPolicyView(site),
 		http: siteHttpPolicyView(site),
 		botPolicy: storedBotPolicy(site.bot_policy_json),
+		networkPrivacyPolicy: storedNetworkPrivacyPolicy(site.network_privacy_policy_json),
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -516,6 +520,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket),
 		http_policy_json: serializeSiteHttpPolicy(input.http),
 		bot_policy_json: serializeBotPolicy(input.botPolicy),
+		network_privacy_policy_json: serializeNetworkPrivacyPolicy(input.networkPrivacyPolicy),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
@@ -635,6 +640,7 @@ export async function updateSite(
 		websocket_policy_json: serializeSiteWebSocketPolicy(input.websocket, existing.websocket_policy_json),
 		http_policy_json: serializeSiteHttpPolicy(input.http, existing.http_policy_json),
 		bot_policy_json: serializeBotPolicy(input.botPolicy, existing.bot_policy_json),
+		network_privacy_policy_json: serializeNetworkPrivacyPolicy(input.networkPrivacyPolicy, existing.network_privacy_policy_json),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};

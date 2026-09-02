@@ -4,6 +4,7 @@ import { repository } from "../db/repository.ts";
 import type { RateLimitAlgorithm, StreamProxyProtocol, StreamRecord } from "../types.ts";
 import { randomId } from "../utils/crypto.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
+import { storedNetworkPrivacyPolicy } from "./network-privacy-service.ts";
 import { streamHealthManager } from "./stream-health-service.ts";
 import { streamProxyManager } from "./stream-proxy-service.ts";
 
@@ -174,6 +175,7 @@ export function streamView(stream: StreamRecord) {
 			recoveryThreshold: Number(stream.origin_health_check_recovery_threshold ?? 2),
 		},
 		protection: resolveStreamProtectionPolicy(stream),
+		networkPrivacyPolicy: storedNetworkPrivacyPolicy(stream.network_privacy_policy_json),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};
@@ -269,6 +271,7 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 			20,
 		),
 		protection_policy_json: existing?.protection_policy_json ?? null,
+		network_privacy_policy_json: existing?.network_privacy_policy_json ?? null,
 		bandwidth_policy_json: existing?.bandwidth_policy_json ?? null,
 		notification_policy_json: existing?.notification_policy_json ?? null,
 		created_at: existing?.created_at ?? now,

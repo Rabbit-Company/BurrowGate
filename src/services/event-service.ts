@@ -62,6 +62,7 @@ export async function recordEvent(input: {
 	botName?: string | null;
 	botCategory?: string | null;
 	botVerified?: boolean | null;
+	networkPrivacy?: string[] | null;
 	requestBody?: string | null;
 	requestBodyTruncated?: boolean | null;
 	requestContentType?: string | null;
@@ -104,6 +105,7 @@ export async function recordEvent(input: {
 			bot_name: input.botName ?? null,
 			bot_category: input.botCategory ?? null,
 			bot_verified: input.botVerified === undefined || input.botVerified === null ? null : input.botVerified ? 1 : 0,
+			network_privacy_json: input.networkPrivacy?.length ? JSON.stringify(input.networkPrivacy) : null,
 			request_body: input.requestBody ?? null,
 			request_body_truncated: input.requestBodyTruncated === undefined || input.requestBodyTruncated === null ? null : input.requestBodyTruncated ? 1 : 0,
 			request_content_type: input.requestContentType ?? null,
