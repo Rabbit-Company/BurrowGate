@@ -102,4 +102,18 @@ export function registerChallengeRoutes(app: Web<any>): void {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
 			}),
 	);
+	app.get(
+		"/_burrowgate/static/challenges/recaptcha-v2.js",
+		() =>
+			new Response(Bun.file("public/challenges/recaptcha-v2.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
+	app.get(
+		"/_burrowgate/static/challenges/recaptcha-v3.js",
+		() =>
+			new Response(Bun.file("public/challenges/recaptcha-v3.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
 }

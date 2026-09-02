@@ -474,6 +474,24 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 			{ key: "size", label: "Size", type: "select", options: ["", "normal", "flexible", "compact"], default: "" },
 		],
 	},
+	"recaptcha-v2": {
+		label: "reCAPTCHA v2",
+		fields: [
+			{ key: "siteKey", label: "Site key", type: "text", required: true, maxLength: 256 },
+			{ key: "secretKey", label: "Secret key", type: "secret", required: true, maxLength: 512 },
+			{ key: "theme", label: "Theme", type: "select", options: ["", "light", "dark"], default: "" },
+			{ key: "size", label: "Size", type: "select", options: ["", "normal", "compact", "invisible"], default: "" },
+		],
+	},
+	"recaptcha-v3": {
+		label: "reCAPTCHA v3",
+		fields: [
+			{ key: "siteKey", label: "Site key", type: "text", required: true, maxLength: 256 },
+			{ key: "secretKey", label: "Secret key", type: "secret", required: true, maxLength: 512 },
+			{ key: "action", label: "Action name", type: "text", maxLength: 100 },
+			{ key: "scoreThreshold", label: "Minimum score", type: "decimal", min: 0, max: 1, step: 0.05, default: 0.5, required: true },
+		],
+	},
 	snake: {
 		label: "Snake game",
 		fields: [
@@ -505,6 +523,9 @@ function challengeStepFieldHtml(field, value) {
 	}
 	if (field.type === "number") {
 		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+	}
+	if (field.type === "decimal") {
+		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" step="${field.step ?? 0.01}" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
 	}
 	return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="text" maxlength="${field.maxLength}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(value ?? "")}"></label>`;
 }
@@ -603,6 +624,14 @@ function collectChallengeSteps(scope) {
 					throw new Error(`Step ${index + 1}: ${field.label} must be a whole number from ${field.min} to ${field.max}.`);
 				}
 				config[field.key] = numberValue;
+				continue;
+			}
+			if (field.type === "decimal") {
+				const decimalValue = Number(input.value);
+				if (!Number.isFinite(decimalValue) || decimalValue < field.min || decimalValue > field.max) {
+					throw new Error(`Step ${index + 1}: ${field.label} must be a number from ${field.min} to ${field.max}.`);
+				}
+				config[field.key] = decimalValue;
 				continue;
 			}
 			const textValue = input.value.trim();
