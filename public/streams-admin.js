@@ -50,7 +50,7 @@ let streamTopListRequestId = 0;
 let dateTimeFormat = "iso-24";
 
 const tableState = {
-	connections: { sortBy: "connectedAt", sortDirection: "desc" },
+	connections: { page: 1, pageSize: 50, sortBy: "connectedAt", sortDirection: "desc" },
 	events: { sortBy: "created_at", sortDirection: "desc" },
 	bandwidth: { sortBy: "total_bytes", sortDirection: "desc" },
 	rules: { page: 1, pageSize: 50, sortBy: "created_at", sortDirection: "desc" },
@@ -1392,7 +1392,18 @@ async function loadStreams() {
 }
 
 function filteredActive(items) {
-	return selectedStreamId ? items.filter((item) => item.streamId === selectedStreamId) : items;
+	const search = byId("connectionsSearch").value.trim().toLowerCase();
+	const protocol = byId("connectionsProtocol").value;
+	const country = byId("connectionsCountry").value.trim().toUpperCase();
+	const asn = Number(byId("connectionsAsn").value);
+	return items.filter(
+		(item) =>
+			(!selectedStreamId || item.streamId === selectedStreamId) &&
+			(!search || item.clientIp?.toLowerCase().includes(search) || item.username?.toLowerCase().includes(search)) &&
+			(!protocol || item.protocol === protocol) &&
+			(!country || String(item.countryCode || "").toUpperCase() === country) &&
+			(!Number.isInteger(asn) || asn <= 0 || Number(item.asn) === asn),
+	);
 }
 
 function compareValues(left, right, key) {
@@ -1434,8 +1445,12 @@ function renderActive(items) {
 	byId("activeUdp").textContent = formatNumber(filtered.filter((item) => item.protocol === "udp").length);
 	geoData.active = activeCountries(items);
 	if (byId("geoMetricMode").value === "active") renderGeoMap();
-	byId("activeConnections").innerHTML = filtered.length
-		? filtered
+	const total = filtered.length;
+	const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+	state.page = Math.min(Math.max(state.page, 1), totalPages);
+	const pageItems = filtered.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
+	byId("activeConnections").innerHTML = pageItems.length
+		? pageItems
 				.map(
 					(item) => `<tr>
           <td><span class="badge info">${item.protocol.toUpperCase()}</span></td>
@@ -1453,6 +1468,7 @@ function renderActive(items) {
 				)
 				.join("")
 		: `<tr><td colspan="${connectionsColumnCount()}" class="empty-cell">No active connections or UDP peers.</td></tr>`;
+	updatePagination("connections", { page: state.page, pageSize: state.pageSize, total, totalPages }, () => renderActive(activeConnections));
 }
 
 async function loadConnections() {
@@ -1564,6 +1580,7 @@ function populateCountrySelects() {
 	const configurations = [
 		["eventCountry", "All countries"],
 		["bandwidthCountry", "All countries"],
+		["connectionsCountry", "All countries"],
 		["streamCountryRuleCountry", "Select country"],
 	];
 	for (const [id, emptyLabel] of configurations) {
@@ -1819,18 +1836,16 @@ function updatePagination(prefix, result, load) {
 	byId(`${prefix}Page`).textContent = `Page ${result.page} of ${result.totalPages}`;
 	byId(`${prefix}Previous`).disabled = result.page <= 1;
 	byId(`${prefix}Next`).disabled = result.page >= result.totalPages;
-	byId(`${prefix}Previous`).onclick = () => {
-		if (prefix === "events") eventPage -= 1;
-		else if (prefix === "bandwidth") bandwidthPage -= 1;
-		else tableState.rules.page -= 1;
+	const step = (delta) => {
+		if (prefix === "events") eventPage += delta;
+		else if (prefix === "bandwidth") bandwidthPage += delta;
+		else if (prefix === "connections") tableState.connections.page += delta;
+		else if (prefix === "auditLog") tableState.auditLog.page += delta;
+		else tableState.rules.page += delta;
 		void load();
 	};
-	byId(`${prefix}Next`).onclick = () => {
-		if (prefix === "events") eventPage += 1;
-		else if (prefix === "bandwidth") bandwidthPage += 1;
-		else tableState.rules.page += 1;
-		void load();
-	};
+	byId(`${prefix}Previous`).onclick = () => step(-1);
+	byId(`${prefix}Next`).onclick = () => step(1);
 }
 
 function eventsColumnCount() {
@@ -2609,7 +2624,10 @@ document.querySelectorAll(".sort-button").forEach((button) => {
 				? "asc"
 				: "desc";
 		}
-		if (name === "connections") renderActive(activeConnections);
+		if (name === "connections") {
+			state.page = 1;
+			renderActive(activeConnections);
+		}
 		if (name === "events") {
 			eventPage = 1;
 			void loadEvents();
@@ -2641,6 +2659,7 @@ byId("streamSelector").addEventListener("change", () => {
 	selectedStreamId = byId("streamSelector").value;
 	applyColumnVisibility("connections");
 	applyColumnVisibility("events");
+	tableState.connections.page = 1;
 	eventPage = 1;
 	bandwidthPage = 1;
 	void refreshDashboard();
@@ -2763,6 +2782,24 @@ for (const id of ["streamRuleAction", "streamRuleState", "streamRulePageSize"])
 		tableState.rules.page = 1;
 		void loadStreamRules();
 	});
+byId("connectionsPageSize").addEventListener("change", () => {
+	tableState.connections.pageSize = Number(byId("connectionsPageSize").value);
+	tableState.connections.page = 1;
+	renderActive(activeConnections);
+});
+for (const id of ["connectionsProtocol", "connectionsCountry"])
+	byId(id).addEventListener("change", () => {
+		tableState.connections.page = 1;
+		renderActive(activeConnections);
+	});
+for (const id of ["connectionsSearch", "connectionsAsn"])
+	byId(id).addEventListener(
+		"input",
+		debounce(() => {
+			tableState.connections.page = 1;
+			renderActive(activeConnections);
+		}),
+	);
 byId("logout").addEventListener("click", async () => {
 	await api("/logout", { method: "POST" });
 	location.href = "/_burrowgate/admin/login";
