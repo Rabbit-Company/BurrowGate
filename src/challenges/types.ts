@@ -7,6 +7,7 @@ export interface ChallengeCreateContext {
 }
 export interface ChallengeVerifyContext extends ChallengeCreateContext {
 	attempts: number;
+	createdAt: number;
 }
 export interface ChallengeMaterial {
 	publicData: Record<string, unknown>;

@@ -80,6 +80,7 @@ export async function verifyFlow(
 			userAgentHash: flow.user_agent_hash,
 			expiresAt: flow.expires_at,
 			attempts: step.attempts,
+			createdAt: step.created_at,
 		},
 		JSON.parse(step.config_json),
 		JSON.parse(step.private_data_json),

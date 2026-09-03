@@ -10,7 +10,12 @@ const verifyContext: ChallengeVerifyContext = {
 	userAgentHash: "ua",
 	expiresAt: Date.now() + 60_000,
 	attempts: 0,
+	createdAt: Date.now() - 60_000,
 };
+
+function plausibleTimings(moves: string, tickMs = 150): number[] {
+	return Array.from({ length: moves.length }, () => tickMs);
+}
 
 describe("mulberry32 / shuffledCells", () => {
 	test("produces a pinned, deterministic sequence for a given seed", () => {
@@ -97,13 +102,15 @@ describe("snakeProvider", () => {
 
 	test("verify accepts a winning transcript end-to-end", async () => {
 		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
-		const result = await snakeProvider.verify(verifyContext, {}, privateData, { moves: "RUUULLLLLLDDDDDD" });
+		const moves = "RUUULLLLLLDDDDDD";
+		const result = await snakeProvider.verify(verifyContext, {}, privateData, { moves, timings: plausibleTimings(moves) });
 		expect(result.success).toBe(true);
 	});
 
 	test("verify rejects a losing transcript", async () => {
 		const privateData = { seed: 1, gridSize: 12, applesRequired: 3 };
-		const result = await snakeProvider.verify(verifyContext, {}, privateData, { moves: "U".repeat(7) });
+		const moves = "U".repeat(7);
+		const result = await snakeProvider.verify(verifyContext, {}, privateData, { moves, timings: plausibleTimings(moves) });
 		expect(result.success).toBe(false);
 	});
 
@@ -118,5 +125,64 @@ describe("snakeProvider", () => {
 		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
 		const result = await snakeProvider.verify(verifyContext, {}, privateData, { moves: "U".repeat(20_000) });
 		expect(result.success).toBe(false);
+	});
+
+	test("verify rejects a winning transcript submitted faster than the tick rate allows", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const instantContext = { ...verifyContext, createdAt: Date.now() };
+		const result = await snakeProvider.verify(instantContext, { tickMs: 150 }, privateData, { moves, timings: plausibleTimings(moves) });
+		expect(result.success).toBe(false);
+		expect(result.reason).toBe("Snake challenge failed");
+	});
+
+	test("verify accepts the same transcript once enough real time has passed", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const plausibleContext = { ...verifyContext, createdAt: Date.now() - moves.length * 150 };
+		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, { moves, timings: plausibleTimings(moves) });
+		expect(result.success).toBe(true);
+	});
+
+	test("verify rejects a winning transcript with no per-move timings (the pre-telemetry solver shape)", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const plausibleContext = { ...verifyContext, createdAt: Date.now() - moves.length * 150 };
+		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, { moves });
+		expect(result.success).toBe(false);
+		expect(result.reason).toBe("Snake challenge failed");
+	});
+
+	test("verify rejects timings whose length doesn't match the move string", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const plausibleContext = { ...verifyContext, createdAt: Date.now() - moves.length * 150 };
+		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, {
+			moves,
+			timings: plausibleTimings(moves).slice(0, -1),
+		});
+		expect(result.success).toBe(false);
+		expect(result.reason).toBe("Snake challenge failed");
+	});
+
+	test("verify rejects a winning transcript where the total wait was padded but individual moves are near-instant", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const plausibleContext = { ...verifyContext, createdAt: Date.now() - moves.length * 150 };
+		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, {
+			moves,
+			timings: moves.split("").map(() => 1),
+		});
+		expect(result.success).toBe(false);
+		expect(result.reason).toBe("Snake challenge failed");
+	});
+
+	test("verify accepts naturally jittery per-move timings as long as every gap clears the floor", async () => {
+		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
+		const moves = "RUUULLLLLLDDDDDD";
+		const timings = moves.split("").map((_, index) => (index % 2 === 0 ? 130 : 220));
+		const plausibleContext = { ...verifyContext, createdAt: Date.now() - timings.reduce((a, b) => a + b, 0) };
+		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, { moves, timings });
+		expect(result.success).toBe(true);
 	});
 });

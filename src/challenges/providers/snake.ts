@@ -9,6 +9,9 @@ const MIN_TICK_MS = 60;
 const MAX_TICK_MS = 500;
 const DEFAULT_TICK_MS = 150;
 const MOVE_PATTERN = /^[UDLR]+$/u;
+const GENERIC_FAILURE_REASON = "Snake challenge failed";
+const MIN_ELAPSED_RATIO = 0.85;
+const MIN_TICK_RATIO = 0.5;
 
 function gridSize(config: Record<string, unknown>): number {
 	const value = Number(config.gridSize);
@@ -26,7 +29,7 @@ function applesRequired(config: Record<string, unknown>): number {
 	return value;
 }
 
-/** Client-only rendering speed - the server never validates timing, only the final move sequence. */
+/** Client rendering speed, also used server-side as the per-move pace for the minimum-elapsed-time check in verify(). */
 function tickMs(config: Record<string, unknown>): number {
 	if (config.tickMs === undefined) return DEFAULT_TICK_MS;
 	const value = Number(config.tickMs);
@@ -63,11 +66,26 @@ export const snakeProvider: ChallengeProvider = {
 		};
 	},
 
-	async verify(_context, _config, privateData, answer) {
-		const moves = answer && typeof answer === "object" ? String((answer as Record<string, unknown>).moves ?? "") : "";
+	async verify(context, config, privateData, answer) {
+		const answerObject = answer && typeof answer === "object" ? (answer as Record<string, unknown>) : {};
+		const moves = String(answerObject.moves ?? "");
 		const size = Number(privateData.gridSize);
 		if (!moves || !MOVE_PATTERN.test(moves) || moves.length > maxMoves(size)) {
-			return { success: false, reason: "Invalid move sequence" };
+			return { success: false, reason: GENERIC_FAILURE_REASON };
+		}
+		const speed = tickMs(config);
+		const minElapsedMs = moves.length * speed * MIN_ELAPSED_RATIO;
+		if (Date.now() - context.createdAt < minElapsedMs) {
+			return { success: false, reason: GENERIC_FAILURE_REASON };
+		}
+		const timings = answerObject.timings;
+		const tickFloorMs = speed * MIN_TICK_RATIO;
+		const hasPlausiblePacing =
+			Array.isArray(timings) &&
+			timings.length === moves.length &&
+			timings.every((gap) => typeof gap === "number" && Number.isFinite(gap) && gap >= tickFloorMs);
+		if (!hasPlausiblePacing) {
+			return { success: false, reason: GENERIC_FAILURE_REASON };
 		}
 		const result = simulateSnake({
 			seed: Number(privateData.seed),
@@ -77,6 +95,6 @@ export const snakeProvider: ChallengeProvider = {
 		});
 		return result.success
 			? { success: true, metadata: { provider: "snake", applesEaten: result.applesEaten } }
-			: { success: false, reason: result.reason ?? "Snake challenge failed" };
+			: { success: false, reason: GENERIC_FAILURE_REASON };
 	},
 };

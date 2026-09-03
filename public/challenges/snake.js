@@ -98,6 +98,8 @@
 	let state = freshState();
 	let desiredDirection = "R";
 	let moves = "";
+	let moveTimings = [];
+	let lastTickAt = Date.now();
 	let finished = false;
 	let gameOver = false;
 	let timer = null;
@@ -207,7 +209,7 @@
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ flowId: challenge.flowId, answer: { moves } }),
+			body: JSON.stringify({ flowId: challenge.flowId, answer: { moves, timings: moveTimings } }),
 		});
 		const result = await response.json();
 		if (result.done) {
@@ -248,6 +250,8 @@
 		state = freshState();
 		desiredDirection = "R";
 		moves = "";
+		moveTimings = [];
+		lastTickAt = Date.now();
 		gameOver = false;
 		overlay.classList.remove("is-visible");
 		if (status) status.textContent = statusMessage();
@@ -260,7 +264,10 @@
 	function tick() {
 		if (gameOver || finished) return;
 		const next = stepOnce(state, desiredDirection, gridSize, cells);
+		const now = Date.now();
 		moves += desiredDirection;
+		moveTimings.push(now - lastTickAt);
+		lastTickAt = now;
 		if (next.collided === "wall") {
 			endGame("The snake hit a wall. Try again.");
 			return;

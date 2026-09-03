@@ -18,6 +18,7 @@ const verifyContext: ChallengeVerifyContext = {
 	userAgentHash: "ua",
 	expiresAt: Date.now() + 60_000,
 	attempts: 0,
+	createdAt: Date.now(),
 };
 
 const SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
