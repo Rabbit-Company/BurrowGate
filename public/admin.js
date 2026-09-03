@@ -492,6 +492,26 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 			{ key: "scoreThreshold", label: "Minimum score", type: "decimal", min: 0, max: 1, step: 0.05, default: 0.5, required: true },
 		],
 	},
+	slider: {
+		label: "Drag slider",
+		fields: [
+			{ key: "trackWidth", label: "Track width (px)", type: "number", min: 220, max: 400, default: 300, required: true },
+			{ key: "pieceSize", label: "Piece size (px)", type: "number", min: 28, max: 56, default: 40, required: true },
+		],
+	},
+	trace: {
+		label: "Trace the path",
+		fields: [
+			{
+				key: "shape",
+				label: "Track shape",
+				type: "select",
+				options: ["chokepoint", "bezier", "zigzag", "loop"],
+				default: "chokepoint",
+			},
+			{ key: "pathWidth", label: "Path width (px)", type: "number", min: 28, max: 56, default: 36, required: true },
+		],
+	},
 	snake: {
 		label: "Snake game",
 		fields: [
