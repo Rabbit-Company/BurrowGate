@@ -1,6 +1,13 @@
 (() => {
 	const challenge = window.__BURROWGATE_CHALLENGE__;
 	const status = document.getElementById("status");
+	const T = challenge.text || {};
+	function t(key, fallback) {
+		return T[key] ?? fallback;
+	}
+	function substitute(str, vars) {
+		return str.replace(/\{\{(\w+)\}\}/g, (_, name) => (name in vars ? String(vars[name]) : `{{${name}}}`));
+	}
 
 	// Shared engine: MUST match src/challenges/providers/trace-engine.ts exactly. Same PRNG, same
 	// track-shape generators, same point-to-segment distance/wall-metrics math. If you change one,
@@ -121,6 +128,11 @@
 	const MAX_SAMPLES = 1200;
 
 	const { shape, pathWidth, seed, ballRadius, endRadius } = challenge.publicData;
+	const trackColor = challenge.publicData.trackColor || "#1e293b";
+	const targetColor = challenge.publicData.targetColor || "#ff4d4d";
+	const trailColor = challenge.publicData.trailColor || "#22d3ee";
+	const ballColor = challenge.publicData.ballColor || "#7c3aed";
+	const backgroundColor = challenge.publicData.backgroundColor || "#0b1220";
 	const track = generatePathPoints(shape, seed, pathWidth);
 
 	// Element contract: a template may supply [data-bg-trace="canvas"] and/or ["metrics"] - each is
@@ -146,7 +158,7 @@
 
 		const hint = document.createElement("div");
 		hint.className = "bg-trace-hint";
-		hint.textContent = "Drag the ball along the path to the target without touching the walls";
+		hint.textContent = t("hint", "Drag the ball along the path to the target without touching the walls");
 		wrapper.appendChild(hint);
 
 		(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
@@ -157,11 +169,12 @@
 	const style = document.createElement("style");
 	style.textContent =
 		".bg-trace-wrapper{display:grid;gap:10px;justify-items:center;margin:18px 0}" +
-		".bg-trace-canvas{display:block;max-width:100%;background:#0b1220;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
+		".bg-trace-canvas{display:block;max-width:100%;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
 		".bg-trace-canvas.is-dragging{cursor:grabbing}" +
 		".bg-trace-metrics{font-size:12px;color:#94a3b8;display:flex;gap:14px}" +
 		".bg-trace-hint{font-size:13px;color:#94a3b8}";
 	document.head.appendChild(style);
+	canvas.style.background = backgroundColor;
 
 	const context = canvas.getContext("2d");
 
@@ -174,7 +187,11 @@
 	let finished = false;
 
 	function updateMetrics() {
-		if (metricsEl) metricsEl.textContent = `Wall touches: ${hitCount} | Max excursion: ${maxExcursion.toFixed(1)}px`;
+		if (metricsEl)
+			metricsEl.textContent = substitute(t("metrics", "Wall touches: {{hitCount}} | Max excursion: {{maxExcursion}}px"), {
+				hitCount,
+				maxExcursion: maxExcursion.toFixed(1),
+			});
 	}
 
 	function draw() {
@@ -186,7 +203,7 @@
 			context.beginPath();
 			context.moveTo(p1.x, p1.y);
 			context.lineTo(p2.x, p2.y);
-			context.strokeStyle = "#1e293b";
+			context.strokeStyle = trackColor;
 			context.lineWidth = p1.width;
 			context.lineCap = "round";
 			context.lineJoin = "round";
@@ -195,21 +212,21 @@
 
 		context.beginPath();
 		context.arc(track.end.x, track.end.y, endRadius, 0, Math.PI * 2);
-		context.fillStyle = "#ff4d4d";
+		context.fillStyle = targetColor;
 		context.fill();
 
 		if (path.length > 1) {
 			context.beginPath();
 			context.moveTo(path[0].x, path[0].y);
 			for (let i = 1; i < path.length; i += 1) context.lineTo(path[i].x, path[i].y);
-			context.strokeStyle = "#22d3ee";
+			context.strokeStyle = trailColor;
 			context.lineWidth = 2;
 			context.stroke();
 		}
 
 		context.beginPath();
 		context.arc(ballPos.x, ballPos.y, ballRadius, 0, Math.PI * 2);
-		context.fillStyle = "#7c3aed";
+		context.fillStyle = ballColor;
 		context.fill();
 		context.strokeStyle = "#fff";
 		context.lineWidth = 2;
@@ -237,7 +254,7 @@
 	async function submit() {
 		if (finished) return;
 		finished = true;
-		if (status) status.textContent = "Verifying with BurrowGate...";
+		if (status) status.textContent = t("verifying", "Verifying with BurrowGate...");
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
@@ -249,12 +266,17 @@
 			const minimumDisplayMs = Math.max(0, Number(challenge.minimumDisplayMs) || 0);
 			const startedAt = Date.now();
 			if (minimumDisplayMs > 0) {
-				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(minimumDisplayMs / 1000)} seconds...`;
+				if (status)
+					status.textContent = substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), {
+						seconds: Math.ceil(minimumDisplayMs / 1000),
+					});
 				const countdown = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 					if (status)
 						status.textContent =
-							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+							left > 0
+								? substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), { seconds: Math.ceil(left / 1000) })
+								: t("redirecting", "Verification successful. Redirecting...");
 					if (left <= 0) clearInterval(countdown);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), minimumDisplayMs);
@@ -268,7 +290,7 @@
 			return;
 		}
 		finished = false;
-		if (status) status.textContent = result.reason || "Verification failed. Reloading...";
+		if (status) status.textContent = result.reason || t("verificationFailed", "Verification failed. Reloading...");
 		setTimeout(() => location.reload(), 1200);
 	}
 
@@ -319,7 +341,7 @@
 		if (reachedEnd && hitRatio <= MAX_HIT_RATIO && maxExcursion <= MAX_OOB_DEPTH_PX) {
 			void submit();
 		} else {
-			if (status) status.textContent = "Not quite - try again.";
+			if (status) status.textContent = t("retry", "Not quite - try again.");
 			resetBall();
 		}
 	}
@@ -327,7 +349,7 @@
 	canvas.addEventListener("pointerup", endDrag);
 	canvas.addEventListener("pointercancel", endDrag);
 
-	if (status) status.textContent = "Drag the ball along the path to the target without touching the walls.";
+	if (status) status.textContent = t("statusReady", "Drag the ball along the path to the target without touching the walls.");
 	updateMetrics();
 	draw();
 })();

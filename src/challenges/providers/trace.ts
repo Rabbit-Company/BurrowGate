@@ -1,4 +1,5 @@
 import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
+import { hexColorConfig } from "../color-config.ts";
 import type { ChallengeProvider } from "../types.ts";
 import { BALL_RADIUS, TARGET_RADIUS, generatePathPoints, pathLength, trackMetrics, type TraceShape } from "./trace-engine.ts";
 
@@ -26,7 +27,12 @@ const MAX_HIT_RATIO = 0.35;
 const MAX_OOB_DEPTH_PX = 25;
 const MIN_TIME_JITTER_VARIANCE = 1;
 const PERFECT_CENTER_EPSILON_PX = 0.6;
-const GENERIC_FAILURE_REASON = "Trace challenge failed";
+const GENERIC_FAILURE_REASON = "traceChallengeFailed";
+const DEFAULT_TRACK_COLOR = "#1e293b";
+const DEFAULT_TARGET_COLOR = "#ff4d4d";
+const DEFAULT_TRAIL_COLOR = "#22d3ee";
+const DEFAULT_BALL_COLOR = "#7c3aed";
+const DEFAULT_BACKGROUND_COLOR = "#0b1220";
 
 function shapeConfig(config: Record<string, unknown>): TraceShape {
 	const value = String(config.shape) as TraceShape;
@@ -83,10 +89,30 @@ export const traceProvider: ChallengeProvider = {
 	extraTemplateContext(publicData) {
 		return { shape: String(publicData.shape ?? "") };
 	},
+	defaultTexts: [
+		{ key: "hint", label: "Hint text under the canvas", default: "Drag the ball along the path to the target without touching the walls" },
+		{
+			key: "statusReady",
+			label: "Initial status message",
+			default: "Drag the ball along the path to the target without touching the walls.",
+		},
+		{
+			key: "metrics",
+			label: "Live metrics line (use {{hitCount}}, {{maxExcursion}})",
+			default: "Wall touches: {{hitCount}} | Max excursion: {{maxExcursion}}px",
+		},
+		{ key: "retry", label: "Off-track retry message", default: "Not quite - try again." },
+		{ key: "traceChallengeFailed", label: "Generic failure message", default: "Trace challenge failed" },
+	],
 
 	validateConfig(config) {
 		shapeConfig(config);
 		pathWidthConfig(config);
+		hexColorConfig(config, "trackColor", DEFAULT_TRACK_COLOR);
+		hexColorConfig(config, "targetColor", DEFAULT_TARGET_COLOR);
+		hexColorConfig(config, "trailColor", DEFAULT_TRAIL_COLOR);
+		hexColorConfig(config, "ballColor", DEFAULT_BALL_COLOR);
+		hexColorConfig(config, "backgroundColor", DEFAULT_BACKGROUND_COLOR);
 	},
 
 	async create(_context, config) {
@@ -100,6 +126,11 @@ export const traceProvider: ChallengeProvider = {
 			seed,
 			ballRadius: BALL_RADIUS,
 			endRadius: TARGET_RADIUS,
+			trackColor: hexColorConfig(config, "trackColor", DEFAULT_TRACK_COLOR),
+			targetColor: hexColorConfig(config, "targetColor", DEFAULT_TARGET_COLOR),
+			trailColor: hexColorConfig(config, "trailColor", DEFAULT_TRAIL_COLOR),
+			ballColor: hexColorConfig(config, "ballColor", DEFAULT_BALL_COLOR),
+			backgroundColor: hexColorConfig(config, "backgroundColor", DEFAULT_BACKGROUND_COLOR),
 		};
 		return { publicData: data, privateData: data };
 	},

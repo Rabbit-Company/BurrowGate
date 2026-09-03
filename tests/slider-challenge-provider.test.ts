@@ -64,6 +64,13 @@ describe("sliderProvider", () => {
 		expect(() => sliderProvider.validateConfig?.({ trackWidth: 300 })).toThrow();
 	});
 
+	test("validateConfig rejects an invalid piece shape or a malformed hex color", () => {
+		expect(() => sliderProvider.validateConfig?.({ trackWidth: 300, pieceSize: 40, pieceShape: "triangle" })).toThrow();
+		expect(() => sliderProvider.validateConfig?.({ trackWidth: 300, pieceSize: 40, pieceColor: "not-a-color" })).toThrow();
+		expect(() => sliderProvider.validateConfig?.({ trackWidth: 300, pieceSize: 40, pieceColor: "#7c3aed" })).not.toThrow();
+		expect(() => sliderProvider.validateConfig?.({ trackWidth: 300, pieceSize: 40, pieceShape: "square" })).not.toThrow();
+	});
+
 	test("create returns matching public/private data with targetX inside the draggable range", async () => {
 		const material = await sliderProvider.create(
 			{ flowId: "flow_1", siteId: "site_1", clientIp: "203.0.113.10", userAgentHash: "ua", expiresAt: Date.now() + 60_000 },
@@ -74,9 +81,34 @@ describe("sliderProvider", () => {
 		expect(material.publicData.trackWidth).toBe(300);
 		expect(material.publicData.pieceSize).toBe(40);
 		expect(material.publicData.tolerancePx).toBe(6);
+		expect(material.publicData.pieceShape).toBe("circle");
+		expect(material.publicData.pieceColor).toBe("#7c3aed");
+		expect(material.publicData.targetColor).toBe("#22d3ee");
+		expect(material.publicData.trackColor).toBe("#94a3b8");
+		expect(material.publicData.backgroundColor).toBe("#0b1220");
 		const targetX = Number(material.publicData.targetX);
 		expect(targetX).toBeGreaterThanOrEqual(80);
 		expect(targetX).toBeLessThanOrEqual(260);
+	});
+
+	test("create carries through a custom piece shape and colors", async () => {
+		const material = await sliderProvider.create(
+			{ flowId: "flow_1", siteId: "site_1", clientIp: "203.0.113.10", userAgentHash: "ua", expiresAt: Date.now() + 60_000 },
+			{
+				trackWidth: 300,
+				pieceSize: 40,
+				pieceShape: "square",
+				pieceColor: "#ff0000",
+				targetColor: "#00ff00",
+				trackColor: "#0000ff",
+				backgroundColor: "#111111",
+			},
+		);
+		expect(material.publicData.pieceShape).toBe("square");
+		expect(material.publicData.pieceColor).toBe("#ff0000");
+		expect(material.publicData.targetColor).toBe("#00ff00");
+		expect(material.publicData.trackColor).toBe("#0000ff");
+		expect(material.publicData.backgroundColor).toBe("#111111");
 	});
 
 	test("verify accepts a plausible, jittered winning drag", async () => {
@@ -87,7 +119,7 @@ describe("sliderProvider", () => {
 	test("verify rejects landing outside the tolerance", async () => {
 		const result = await sliderProvider.verify(verifyContext, {}, privateData, { finalX: 130, path: PLAUSIBLE_PATH });
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Slider challenge failed");
+		expect(result.reason).toBe("sliderChallengeFailed");
 	});
 
 	test("verify rejects a path shorter than the minimum sample count", async () => {

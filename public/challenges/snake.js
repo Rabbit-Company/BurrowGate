@@ -1,6 +1,13 @@
 (() => {
 	const challenge = window.__BURROWGATE_CHALLENGE__;
 	const status = document.getElementById("status");
+	const T = challenge.text || {};
+	function t(key, fallback) {
+		return T[key] ?? fallback;
+	}
+	function substitute(str, vars) {
+		return str.replace(/\{\{(\w+)\}\}/g, (_, name) => (name in vars ? String(vars[name]) : `{{${name}}}`));
+	}
 
 	// Shared deterministic engine: MUST match src/challenges/providers/snake-engine.ts exactly.
 	// Same PRNG, same apple shuffle, same fixed start state, same step/collision rules. If you change
@@ -79,6 +86,10 @@
 
 	const { seed, gridSize, applesRequired } = challenge.publicData;
 	const TICK_MS = Number(challenge.publicData.tickMs) || 150;
+	const backgroundColor = challenge.publicData.backgroundColor || "#0b1220";
+	const appleColor = challenge.publicData.appleColor || "#22d3ee";
+	const snakeColor = challenge.publicData.snakeColor || "#7c3aed";
+	const snakeHeadColor = challenge.publicData.snakeHeadColor || "#a78bfa";
 	const rng = mulberry32(seed);
 	const cells = shuffledCells(gridSize, rng);
 	const firstApple = nextApplePosition(cells, 0, new Set(initialBody(gridSize)));
@@ -149,7 +160,7 @@
 		overlay.className = overlay.className || "bg-snake-overlay";
 		restartButton = document.createElement("button");
 		restartButton.type = "button";
-		restartButton.textContent = "Start";
+		restartButton.textContent = t("start", "Start");
 		restartButton.className = "bg-snake-restart";
 		overlay.appendChild(restartButton);
 		if (canvasWrap) canvasWrap.appendChild(overlay);
@@ -203,16 +214,16 @@
 
 	function render() {
 		if (scoreEl) scoreEl.textContent = `${state.applesEaten} / ${applesRequired}`;
-		context.fillStyle = "#0b1220";
+		context.fillStyle = backgroundColor;
 		context.fillRect(0, 0, canvas.width, canvas.height);
 		const appleX = state.applePos % gridSize;
 		const appleY = (state.applePos / gridSize) | 0;
-		context.fillStyle = "#22d3ee";
+		context.fillStyle = appleColor;
 		context.fillRect(appleX * CELL_PX + 2, appleY * CELL_PX + 2, CELL_PX - 4, CELL_PX - 4);
 		state.body.forEach((segment, index) => {
 			const x = segment % gridSize;
 			const y = (segment / gridSize) | 0;
-			context.fillStyle = index === 0 ? "#a78bfa" : "#7c3aed";
+			context.fillStyle = index === 0 ? snakeHeadColor : snakeColor;
 			context.fillRect(x * CELL_PX + 1, y * CELL_PX + 1, CELL_PX - 2, CELL_PX - 2);
 		});
 	}
@@ -235,13 +246,13 @@
 	});
 
 	function statusMessage() {
-		return `Eat ${applesRequired} apple${applesRequired === 1 ? "" : "s"} to continue. Avoid the wall and yourself.`;
+		return substitute(t("goal", "Eat {{applesRequired}} apple(s) to continue. Avoid the wall and yourself."), { applesRequired });
 	}
 
 	async function submit() {
 		if (finished) return;
 		finished = true;
-		if (status) status.textContent = "Verifying with BurrowGate...";
+		if (status) status.textContent = t("verifying", "Verifying with BurrowGate...");
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
@@ -253,12 +264,17 @@
 			const minimumDisplayMs = Math.max(0, Number(challenge.minimumDisplayMs) || 0);
 			const remainingMs = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 			if (remainingMs > 0) {
-				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(remainingMs / 1000)} seconds...`;
+				if (status)
+					status.textContent = substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), {
+						seconds: Math.ceil(remainingMs / 1000),
+					});
 				const countdown = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 					if (status)
 						status.textContent =
-							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+							left > 0
+								? substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), { seconds: Math.ceil(left / 1000) })
+								: t("redirecting", "Verification successful. Redirecting...");
 					if (left <= 0) clearInterval(countdown);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), remainingMs);
@@ -272,7 +288,7 @@
 			return;
 		}
 		finished = false;
-		if (status) status.textContent = result.reason || "Verification failed. Reloading...";
+		if (status) status.textContent = result.reason || t("verificationFailed", "Verification failed. Reloading...");
 		setTimeout(() => location.reload(), 1200);
 	}
 
@@ -306,11 +322,11 @@
 		moveTimings.push(now - lastTickAt);
 		lastTickAt = now;
 		if (next.collided === "wall") {
-			endGame("The snake hit a wall. Try again.");
+			endGame(t("wallHit", "The snake hit a wall. Try again."));
 			return;
 		}
 		if (next.collided === "self") {
-			endGame("The snake collided with itself. Try again.");
+			endGame(t("selfHit", "The snake collided with itself. Try again."));
 			return;
 		}
 		state = next;

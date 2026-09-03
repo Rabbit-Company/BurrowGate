@@ -47,6 +47,12 @@ export const hcaptchaProvider: ChallengeProvider = {
 		styleSrc: ["https://*.hcaptcha.com"],
 		imgSrc: ["https://*.hcaptcha.com"],
 	},
+	defaultTexts: [
+		{ key: "widgetLoading", label: "Widget-loading message", default: "Loading hCaptcha..." },
+		{ key: "completePrompt", label: "Prompt shown once the widget is ready", default: "Complete the challenge to continue." },
+		{ key: "loadFailed", label: "Widget-failed-to-load message", default: "hCaptcha failed to load. Reloading..." },
+		{ key: "verificationFailed", label: "Generic failure message", default: "Verification failed. Try again." },
+	],
 
 	validateConfig(config) {
 		siteKey(config);

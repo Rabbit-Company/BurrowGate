@@ -834,6 +834,11 @@ form.grid label {
 	border-color: #7c3aed;
 	box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.13);
 }
+.input.color-input {
+	padding: 4px;
+	height: 42px;
+	cursor: pointer;
+}
 .spinner {
 	display: inline-block;
 	width: 14px;

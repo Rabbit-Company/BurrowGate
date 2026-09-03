@@ -64,7 +64,7 @@ import {
 	ERROR_JSON_FIELD_OPTIONS,
 	ERROR_TEMPLATE_PLACEHOLDERS,
 } from "../services/error-response-service.ts";
-import { DEFAULT_CHALLENGE_HTML_TEMPLATE, CHALLENGE_TEMPLATE_PLACEHOLDERS } from "../services/challenge-page-service.ts";
+import { DEFAULT_CHALLENGE_HTML_TEMPLATE, CHALLENGE_TEMPLATE_PLACEHOLDERS, BASE_CHALLENGE_TEXTS } from "../services/challenge-page-service.ts";
 import { requestTlsReload } from "../services/tls-listener-service.ts";
 import {
 	applyPendingChangeNow,
@@ -314,6 +314,8 @@ function providerViews() {
 			description: provider.description,
 			defaultHtmlTemplate: provider.defaultHtmlTemplate ?? DEFAULT_CHALLENGE_HTML_TEMPLATE,
 			extraPlaceholders: provider.extraPlaceholders ?? [],
+			defaultTexts: provider.defaultTexts ?? [],
+			cspSources: provider.cspSources ?? {},
 		};
 	});
 }
@@ -780,6 +782,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			challengeDefaults: {
 				htmlTemplate: DEFAULT_CHALLENGE_HTML_TEMPLATE,
 				placeholders: CHALLENGE_TEMPLATE_PLACEHOLDERS,
+				texts: BASE_CHALLENGE_TEXTS,
 			},
 		});
 	});

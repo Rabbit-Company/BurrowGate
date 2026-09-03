@@ -125,6 +125,35 @@ describe("traceProvider", () => {
 		expect(material.publicData.ballRadius).toBe(10);
 		expect(material.publicData.endRadius).toBe(16);
 		expect(typeof material.publicData.seed).toBe("number");
+		expect(material.publicData.trackColor).toBe("#1e293b");
+		expect(material.publicData.targetColor).toBe("#ff4d4d");
+		expect(material.publicData.trailColor).toBe("#22d3ee");
+		expect(material.publicData.ballColor).toBe("#7c3aed");
+		expect(material.publicData.backgroundColor).toBe("#0b1220");
+	});
+
+	test("create carries through custom colors", async () => {
+		const material = await traceProvider.create(
+			{ flowId: "flow_1", siteId: "site_1", clientIp: "203.0.113.10", userAgentHash: "ua", expiresAt: Date.now() + 60_000 },
+			{
+				shape: "zigzag",
+				pathWidth: 70,
+				trackColor: "#111111",
+				targetColor: "#222222",
+				trailColor: "#333333",
+				ballColor: "#444444",
+				backgroundColor: "#555555",
+			},
+		);
+		expect(material.publicData.trackColor).toBe("#111111");
+		expect(material.publicData.targetColor).toBe("#222222");
+		expect(material.publicData.trailColor).toBe("#333333");
+		expect(material.publicData.ballColor).toBe("#444444");
+		expect(material.publicData.backgroundColor).toBe("#555555");
+	});
+
+	test("validateConfig rejects a malformed hex color", () => {
+		expect(() => traceProvider.validateConfig?.({ shape: "bezier", pathWidth: 60, ballColor: "purple" })).toThrow();
 	});
 
 	test("verify accepts a plausible, jittered run along the real track", async () => {
@@ -137,7 +166,7 @@ describe("traceProvider", () => {
 		const track = generatePathPoints(SHAPE, SEED, PATH_WIDTH);
 		const result = await traceProvider.verify(verifyContext, {}, privateData, { path: buildRun(track, { sampleCount: 10 }) });
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Trace challenge failed");
+		expect(result.reason).toBe("traceChallengeFailed");
 	});
 
 	test("verify rejects a run that never reaches the end", async () => {

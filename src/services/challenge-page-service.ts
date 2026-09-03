@@ -1,11 +1,66 @@
-import type { ChallengeProvider } from "../challenges/types.ts";
+import type { ChallengeProvider, ChallengeProviderCspSources } from "../challenges/types.ts";
 import type { ChallengeFlowRecord, ChallengeStepRecord, SiteRecord } from "../types.ts";
 import { config } from "../config.ts";
 import { requestHost } from "../utils/http.ts";
 
-export function challengePageCsp(provider: ChallengeProvider): string {
-	const extra = provider.cspSources;
-	if (!extra) {
+export const CSP_SOURCE_FIELDS = ["scriptSrc", "frameSrc", "connectSrc", "styleSrc", "imgSrc"] as const;
+
+// A single CSP source-expression token: a keyword, data:/blob:, a bare scheme, or scheme://host[:port]
+// (host optionally a "*." wildcard subdomain). Rejects a bare "*" and anything containing ";"/","/
+// whitespace, since these values are joined directly into a Content-Security-Policy header value.
+const CSP_SOURCE_PATTERN = /^(?:'self'|'none'|'unsafe-inline'|'unsafe-eval'|data:|blob:|[a-z][a-z0-9+.-]*:(?:\/\/(?:\*\.)?[a-z0-9.-]+(?::\d+)?\/?)?)$/iu;
+
+/** Parses a space/newline-separated list of extra CSP source expressions, validating each token. Throws on an invalid token. */
+export function parseCspSourceList(value: string): string[] {
+	const tokens = value.split(/\s+/u).filter(Boolean);
+	for (const token of tokens) {
+		if (!CSP_SOURCE_PATTERN.test(token)) throw new Error(`Invalid CSP source "${token}"`);
+	}
+	return tokens;
+}
+
+/** Parses `sites.challenge_csp_overrides_json` - only well-formed { provider: { field: string[] } } entries survive; malformed data is silently dropped rather than thrown, since stored data is trusted (validated at write time via parseCspSourceList) but must never crash a read. */
+export function parseStoredChallengeCsp(json: string | null | undefined): Record<string, ChallengeProviderCspSources> {
+	if (!json) return {};
+	try {
+		const parsed: unknown = JSON.parse(json);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const result: Record<string, ChallengeProviderCspSources> = {};
+		for (const [provider, entry] of Object.entries(parsed as Record<string, unknown>)) {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+			const fields: ChallengeProviderCspSources = {};
+			for (const field of CSP_SOURCE_FIELDS) {
+				const value = (entry as Record<string, unknown>)[field];
+				if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+					const list = value.filter(Boolean);
+					if (list.length > 0) fields[field] = list;
+				}
+			}
+			if (Object.keys(fields).length > 0) result[provider] = fields;
+		}
+		return result;
+	} catch {
+		return {};
+	}
+}
+
+/** Merges a provider's own built-in CSP widening with the site's per-provider extra sources, field by field (union, no dedup needed - a repeated source is harmless in a CSP header). */
+export function resolveProviderCspSources(site: SiteRecord, provider: ChallengeProvider): ChallengeProviderCspSources {
+	const overrides = parseStoredChallengeCsp(site.challenge_csp_overrides_json)[provider.name];
+	if (!overrides) return provider.cspSources ?? {};
+	const merged: ChallengeProviderCspSources = { ...provider.cspSources };
+	for (const field of CSP_SOURCE_FIELDS) {
+		const extra = overrides[field];
+		if (!extra?.length) continue;
+		merged[field] = [...(merged[field] ?? []), ...extra];
+	}
+	return merged;
+}
+
+export function challengePageCsp(site: SiteRecord, provider: ChallengeProvider): string {
+	const extra = resolveProviderCspSources(site, provider);
+	const hasAny = CSP_SOURCE_FIELDS.some((field) => extra[field]?.length);
+	if (!hasAny) {
 		return "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 	}
 	const directives = [
@@ -32,6 +87,24 @@ export const CHALLENGE_TEMPLATE_PLACEHOLDERS = [
 		description: "Required. BurrowGate injects the challenge bootstrap and client script here. The page cannot verify without it.",
 	},
 ] as const;
+
+/**
+ * Base visitor-facing text strings duplicated across every challenge provider's client script
+ * (the "Verifying...", redirect-countdown, and generic-failure lines). A provider overrides any of
+ * these by listing the same key in its own `defaultTexts` with a different `default` - same
+ * override-by-key-match rule `extraTemplateContext` uses for placeholders. `{{name}}` markers are
+ * substituted client-side (not HTML-escaped, since this travels as JSON, not markup).
+ */
+export const BASE_CHALLENGE_TEXTS: ReadonlyArray<{ key: string; label: string; default: string }> = [
+	{ key: "verifying", label: "Verifying status message", default: "Verifying with BurrowGate..." },
+	{
+		key: "redirectingIn",
+		label: "Redirect countdown message (use {{seconds}})",
+		default: "Verification successful. Redirecting in {{seconds}} seconds...",
+	},
+	{ key: "redirecting", label: "Redirect message (no countdown left)", default: "Verification successful. Redirecting..." },
+	{ key: "verificationFailed", label: "Generic failure message", default: "Verification failed. Reloading..." },
+];
 
 const LOGO_DATA_URI =
 	"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22BurrowGate%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22bg%22%20x1%3D%2210%22%20y1%3D%228%22%20x2%3D%2254%22%20y2%3D%2256%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20stop-color%3D%22%238b5cf6%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2322d3ee%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22url%28%23bg%29%22%2F%3E%3Cg%20transform%3D%22translate%2814%2014%29%20scale%281.5%29%22%20fill%3D%22none%22%20stroke%3D%22%230b1020%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2021h14a2%202%200%200%200%202%20-2v-7a9%209%200%200%200%20-18%200v7a2%202%200%200%200%202%202%22%2F%3E%3Cpath%20d%3D%22M8%2021v-9a4%204%200%201%201%208%200v9%22%2F%3E%3Cpath%20d%3D%22M3%2017h4%22%2F%3E%3Cpath%20d%3D%22M17%2017h4%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E";
@@ -178,7 +251,7 @@ function contextFor(site: SiteRecord, request: Request, provider: ChallengeProvi
 	};
 }
 
-function challengeScript(flow: ChallengeFlowRecord, provider: ChallengeProvider, publicData: unknown): string {
+function challengeScript(flow: ChallengeFlowRecord, provider: ChallengeProvider, publicData: unknown, text: Record<string, string>): string {
 	// Server-generated markup: never HTML-escaped. The bootstrap JSON is neutralized against
 	// "</script>" breakout the same way the previous hard-coded page did.
 	const bootstrap = JSON.stringify({
@@ -186,6 +259,7 @@ function challengeScript(flow: ChallengeFlowRecord, provider: ChallengeProvider,
 		provider: provider.name,
 		publicData,
 		minimumDisplayMs: config.challengeMinDisplayMs,
+		text,
 	}).replaceAll("<", "\\u003c");
 	return `<script>window.__BURROWGATE_CHALLENGE__=${bootstrap};</script><script src="${escapeHtml(provider.clientScript)}"></script>`;
 }
@@ -213,6 +287,47 @@ export function parseStoredChallengeTemplates(json: string | null | undefined): 
 	} catch {
 		return {};
 	}
+}
+
+/** Parses `sites.challenge_text_overrides_json` - one level deeper than templates: only a well-formed { provider: { key: string } } shape survives, everything else is silently dropped. */
+export function parseStoredChallengeTexts(json: string | null | undefined): Record<string, Record<string, string>> {
+	if (!json) return {};
+	try {
+		const parsed: unknown = JSON.parse(json);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const result: Record<string, Record<string, string>> = {};
+		for (const [provider, entry] of Object.entries(parsed as Record<string, unknown>)) {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+			const keys: Record<string, string> = {};
+			for (const [key, value] of Object.entries(entry as Record<string, unknown>)) {
+				if (typeof value === "string" && value) keys[key] = value;
+			}
+			if (Object.keys(keys).length > 0) result[provider] = keys;
+		}
+		return result;
+	} catch {
+		return {};
+	}
+}
+
+/** Merges BASE_CHALLENGE_TEXTS -> provider.defaultTexts -> the site's stored per-provider text overrides, by key. */
+export function resolveProviderTexts(site: SiteRecord, provider: ChallengeProvider): Record<string, string> {
+	const merged: Record<string, string> = {};
+	for (const text of BASE_CHALLENGE_TEXTS) merged[text.key] = text.default;
+	for (const text of provider.defaultTexts ?? []) merged[text.key] = text.default;
+	const overrides = parseStoredChallengeTexts(site.challenge_text_overrides_json)[provider.name] ?? {};
+	for (const [key, value] of Object.entries(overrides)) merged[key] = value;
+	return merged;
+}
+
+/**
+ * Resolves a provider's verify() reason (a stable key like "sliderChallengeFailed", not display
+ * text) through the same merge resolveProviderTexts uses. A reason that isn't a registered text key
+ * passes through unchanged - this is how pow-sha256/CAPTCHA providers' diagnostic reason strings
+ * (never registered as text keys) stay untranslated English, unaffected by this mechanism.
+ */
+export function resolveChallengeReasonText(site: SiteRecord, provider: ChallengeProvider, reason: string): string {
+	return resolveProviderTexts(site, provider)[reason] ?? reason;
 }
 
 /**
@@ -252,5 +367,5 @@ export function renderChallengePage(
 		result = result.replaceAll(`{{${name}}}`, escapeHtml(value));
 	}
 	// Injected last, unescaped, so template values can never smuggle markup into the script region.
-	return result.replaceAll("{{challengeScript}}", challengeScript(flow, provider, publicData));
+	return result.replaceAll("{{challengeScript}}", challengeScript(flow, provider, publicData, resolveProviderTexts(site, provider)));
 }

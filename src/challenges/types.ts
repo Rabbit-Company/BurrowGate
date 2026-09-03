@@ -38,6 +38,8 @@ export interface ChallengeProvider {
 	readonly extraPlaceholders?: ReadonlyArray<{ name: string; description: string }>;
 	/** Exposes this provider's own static, known-at-render-time publicData fields as extra {{name}} template placeholders. Only for values fixed at create() time - a value that changes live during play (e.g. apples eaten so far) can't be server-substituted and must stay a DOM hook the client script updates instead. */
 	extraTemplateContext?(publicData: Record<string, unknown>): Record<string, string>;
+	/** Extra visitor-facing text keys this provider's client script (and, for a few providers, verify()'s reason) reads - beyond BASE_CHALLENGE_TEXTS. Site-editable for translation/branding. A key matching a base key overrides that base default for this provider. */
+	readonly defaultTexts?: ReadonlyArray<{ key: string; label: string; default: string }>;
 	validateConfig?(config: Record<string, unknown>): void;
 	/** Transforms step config before it is persisted (encrypting a secret). Called only on write, not on every read. */
 	normalizeConfigForStorage?(config: Record<string, unknown>): Promise<Record<string, unknown>>;

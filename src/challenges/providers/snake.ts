@@ -1,4 +1,5 @@
 import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
+import { hexColorConfig } from "../color-config.ts";
 import type { ChallengeProvider } from "../types.ts";
 import { simulateSnake } from "./snake-engine.ts";
 
@@ -37,9 +38,13 @@ const MIN_TICK_MS = 60;
 const MAX_TICK_MS = 500;
 const DEFAULT_TICK_MS = 150;
 const MOVE_PATTERN = /^[UDLR]+$/u;
-const GENERIC_FAILURE_REASON = "Snake challenge failed";
+const GENERIC_FAILURE_REASON = "snakeChallengeFailed";
 const MIN_ELAPSED_RATIO = 0.85;
 const MIN_TICK_RATIO = 0.5;
+const DEFAULT_BACKGROUND_COLOR = "#0b1220";
+const DEFAULT_APPLE_COLOR = "#22d3ee";
+const DEFAULT_SNAKE_COLOR = "#7c3aed";
+const DEFAULT_SNAKE_HEAD_COLOR = "#a78bfa";
 
 function gridSize(config: Record<string, unknown>): number {
 	const value = Number(config.gridSize);
@@ -84,11 +89,22 @@ export const snakeProvider: ChallengeProvider = {
 	extraTemplateContext(publicData) {
 		return { applesRequired: String(publicData.applesRequired ?? ""), gridSize: String(publicData.gridSize ?? "") };
 	},
+	defaultTexts: [
+		{ key: "goal", label: "Goal message (use {{applesRequired}})", default: "Eat {{applesRequired}} apple(s) to continue. Avoid the wall and yourself." },
+		{ key: "wallHit", label: "Wall-collision message", default: "The snake hit a wall. Try again." },
+		{ key: "selfHit", label: "Self-collision message", default: "The snake collided with itself. Try again." },
+		{ key: "start", label: "Start/restart button label", default: "Start" },
+		{ key: "snakeChallengeFailed", label: "Generic failure message", default: "Snake challenge failed" },
+	],
 
 	validateConfig(config) {
 		gridSize(config);
 		applesRequired(config);
 		tickMs(config);
+		hexColorConfig(config, "backgroundColor", DEFAULT_BACKGROUND_COLOR);
+		hexColorConfig(config, "appleColor", DEFAULT_APPLE_COLOR);
+		hexColorConfig(config, "snakeColor", DEFAULT_SNAKE_COLOR);
+		hexColorConfig(config, "snakeHeadColor", DEFAULT_SNAKE_HEAD_COLOR);
 	},
 
 	async create(_context, config) {
@@ -96,8 +112,14 @@ export const snakeProvider: ChallengeProvider = {
 		const apples = applesRequired(config);
 		const speed = tickMs(config);
 		const seed = crypto.getRandomValues(new Uint32Array(1))[0]!;
+		const colors = {
+			backgroundColor: hexColorConfig(config, "backgroundColor", DEFAULT_BACKGROUND_COLOR),
+			appleColor: hexColorConfig(config, "appleColor", DEFAULT_APPLE_COLOR),
+			snakeColor: hexColorConfig(config, "snakeColor", DEFAULT_SNAKE_COLOR),
+			snakeHeadColor: hexColorConfig(config, "snakeHeadColor", DEFAULT_SNAKE_HEAD_COLOR),
+		};
 		return {
-			publicData: { kind: "snake", seed, gridSize: size, applesRequired: apples, tickMs: speed },
+			publicData: { kind: "snake", seed, gridSize: size, applesRequired: apples, tickMs: speed, ...colors },
 			privateData: { seed, gridSize: size, applesRequired: apples },
 		};
 	},

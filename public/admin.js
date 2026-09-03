@@ -225,11 +225,15 @@ let accessSso = {
 let editingPermissionsUserId = null;
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
-let challengeDefaults = { htmlTemplate: "", placeholders: [] };
+let challengeDefaults = { htmlTemplate: "", placeholders: [], texts: [] };
 let challengeProviders = [];
 let challengeTemplateSite = null;
 let challengeTemplateValues = {};
 let challengeTemplateOriginal = {};
+let challengeTextValues = {};
+let challengeTextOriginal = {};
+let challengeCspValues = {};
+let challengeCspOriginal = {};
 let activeChallengeTemplateProvider = null;
 let botCatalog = [];
 let networkPrivacyCategories = [];
@@ -502,6 +506,11 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 		fields: [
 			{ key: "trackWidth", label: "Track width (px)", type: "number", min: 220, max: 400, default: 300, required: true },
 			{ key: "pieceSize", label: "Piece size (px)", type: "number", min: 28, max: 56, default: 40, required: true },
+			{ key: "pieceShape", label: "Piece shape", type: "select", options: ["circle", "square"], default: "circle" },
+			{ key: "pieceColor", label: "Piece color", type: "color", default: "#7c3aed" },
+			{ key: "targetColor", label: "Target color", type: "color", default: "#22d3ee" },
+			{ key: "trackColor", label: "Track color", type: "color", default: "#94a3b8" },
+			{ key: "backgroundColor", label: "Background color", type: "color", default: "#0b1220" },
 		],
 	},
 	trace: {
@@ -515,6 +524,11 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 				default: "chokepoint",
 			},
 			{ key: "pathWidth", label: "Path width (px)", type: "number", min: 48, max: 96, default: 60, required: true },
+			{ key: "trackColor", label: "Track/wall color", type: "color", default: "#1e293b" },
+			{ key: "targetColor", label: "Target color", type: "color", default: "#ff4d4d" },
+			{ key: "trailColor", label: "Trail color", type: "color", default: "#22d3ee" },
+			{ key: "ballColor", label: "Ball color", type: "color", default: "#7c3aed" },
+			{ key: "backgroundColor", label: "Background color", type: "color", default: "#0b1220" },
 		],
 	},
 	password: {
@@ -527,6 +541,10 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 			{ key: "gridSize", label: "Grid size", type: "number", min: 10, max: 40, default: 16, required: true },
 			{ key: "applesRequired", label: "Apples required", type: "number", min: 1, max: 30, default: 5, required: true },
 			{ key: "tickMs", label: "Speed (ms per move)", type: "number", min: 60, max: 500, default: 150, required: true },
+			{ key: "backgroundColor", label: "Background color", type: "color", default: "#0b1220" },
+			{ key: "appleColor", label: "Apple color", type: "color", default: "#22d3ee" },
+			{ key: "snakeColor", label: "Snake body color", type: "color", default: "#7c3aed" },
+			{ key: "snakeHeadColor", label: "Snake head color", type: "color", default: "#a78bfa" },
 		],
 	},
 };
@@ -560,6 +578,9 @@ function challengeStepFieldHtml(field, value) {
 		const original = hashed ? escapeHtml(String(value)) : "";
 		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
 	}
+	if (field.type === "color") {
+		return `<label><span>${escapeHtml(field.label)}</span><input class="input color-input" type="color" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+	}
 	if (field.type === "number") {
 		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
 	}
@@ -586,8 +607,17 @@ function challengeStepCardHtml(step) {
 	return `<div class="challenge-step-item"><div class="challenge-step-header"><span class="challenge-step-order"></span><select class="select challenge-step-provider">${challengeStepProviderOptions(provider)}</select><div class="challenge-step-actions"><button class="button secondary compact" type="button" data-challenge-step-up>Move up</button><button class="button secondary compact" type="button" data-challenge-step-down>Move down</button><button class="button danger compact" type="button" data-challenge-step-remove>Remove</button></div></div>${challengeStepFieldsHtml(provider, step.config)}</div>`;
 }
 
+function syncColorInputSwatches(root) {
+	for (const input of root.querySelectorAll('input[type="color"]')) {
+		const value = input.getAttribute("value");
+		if (value) input.value = value;
+	}
+}
+
 function renderChallengeSteps(scope, steps) {
-	byId(`${scope}ChallengeSteps`).innerHTML = (steps ?? []).map((step) => challengeStepCardHtml(step)).join("");
+	const container = byId(`${scope}ChallengeSteps`);
+	container.innerHTML = (steps ?? []).map((step) => challengeStepCardHtml(step)).join("");
+	syncColorInputSwatches(container);
 	renumberChallengeSteps(scope);
 }
 
@@ -608,6 +638,7 @@ function addChallengeStep(scope) {
 	const container = byId(`${scope}ChallengeSteps`);
 	if (container.querySelectorAll(".challenge-step-item").length >= CHALLENGE_STEP_MAX) return;
 	container.insertAdjacentHTML("beforeend", challengeStepCardHtml(defaultChallengePolicy()[0]));
+	syncColorInputSwatches(container);
 	renumberChallengeSteps(scope);
 }
 
@@ -634,6 +665,7 @@ function removeChallengeStep(cardEl) {
 function onChallengeStepProviderChange(selectEl) {
 	const card = selectEl.closest(".challenge-step-item");
 	card.querySelector(".challenge-step-fields").outerHTML = challengeStepFieldsHtml(selectEl.value, {});
+	syncColorInputSwatches(card);
 }
 
 function collectChallengeSteps(scope) {
@@ -2049,6 +2081,55 @@ function renderChallengePlaceholders(providerName) {
 		.join("");
 }
 
+function challengeProviderTexts(providerName) {
+	const merged = new Map((challengeDefaults.texts ?? []).map((text) => [text.key, text]));
+	for (const text of challengeProviderEntry(providerName)?.defaultTexts ?? []) merged.set(text.key, text);
+	return [...merged.values()];
+}
+
+function challengeEffectiveText(providerName, key, defaultValue) {
+	return challengeTemplateSite?.challengePage?.textOverrides?.[providerName]?.[key] ?? defaultValue;
+}
+
+function renderChallengeTextFields(providerName) {
+	const texts = challengeProviderTexts(providerName);
+	const values = challengeTextValues[providerName] ?? {};
+	byId("challengeTextFields").innerHTML = texts
+		.map(
+			(text) =>
+				`<label><span>${escapeHtml(text.label)}</span><input class="input" type="text" data-challenge-text-field="${escapeHtml(text.key)}" value="${escapeHtml(values[text.key] ?? text.default)}"></label>`,
+		)
+		.join("");
+}
+
+const CSP_FIELD_LABELS = {
+	scriptSrc: "Script sources",
+	styleSrc: "Style sources",
+	imgSrc: "Image sources",
+	connectSrc: "Connect sources",
+	frameSrc: "Frame sources",
+};
+
+function challengeProviderBaseCspSources(providerName) {
+	return challengeProviderEntry(providerName)?.cspSources ?? {};
+}
+
+function challengeEffectiveCsp(providerName, field) {
+	const overrides = challengeTemplateSite?.challengePage?.cspOverrides?.[providerName]?.[field];
+	return overrides?.length ? overrides.join(" ") : "";
+}
+
+function renderChallengeCspFields(providerName) {
+	const base = challengeProviderBaseCspSources(providerName);
+	const values = challengeCspValues[providerName] ?? {};
+	byId("challengeCspFields").innerHTML = Object.entries(CSP_FIELD_LABELS)
+		.map(([field, label]) => {
+			const baseSources = base[field]?.length ? base[field].join(" ") : "'self' only";
+			return `<label><span>${escapeHtml(label)}</span><input class="input" type="text" data-challenge-csp-field="${escapeHtml(field)}" value="${escapeHtml(values[field] ?? "")}" placeholder="No extra sources"><small class="muted">Already allowed: ${escapeHtml(baseSources)}</small></label>`;
+		})
+		.join("");
+}
+
 function challengeInheritedTemplate(providerName) {
 	const legacy = challengeTemplateSite?.challengePage?.htmlTemplate;
 	if (legacy && legacy !== challengeDefaults.htmlTemplate) return legacy;
@@ -2069,9 +2150,23 @@ function renderChallengeTemplateTabs() {
 		.join("");
 }
 
+function collectChallengeTextFieldValues() {
+	const values = {};
+	for (const input of document.querySelectorAll("[data-challenge-text-field]")) values[input.dataset.challengeTextField] = input.value;
+	return values;
+}
+
+function collectChallengeCspFieldValues() {
+	const values = {};
+	for (const input of document.querySelectorAll("[data-challenge-csp-field]")) values[input.dataset.challengeCspField] = input.value;
+	return values;
+}
+
 function switchChallengeTemplateTab(providerName) {
 	if (activeChallengeTemplateProvider) {
 		challengeTemplateValues[activeChallengeTemplateProvider] = byId("siteChallengeHtmlTemplate").value;
+		challengeTextValues[activeChallengeTemplateProvider] = collectChallengeTextFieldValues();
+		challengeCspValues[activeChallengeTemplateProvider] = collectChallengeCspFieldValues();
 	}
 	activeChallengeTemplateProvider = providerName;
 	if (!(providerName in challengeTemplateValues)) {
@@ -2079,15 +2174,34 @@ function switchChallengeTemplateTab(providerName) {
 		challengeTemplateValues[providerName] = effective;
 		challengeTemplateOriginal[providerName] = effective;
 	}
+	if (!(providerName in challengeTextValues)) {
+		const texts = challengeProviderTexts(providerName);
+		const effective = {};
+		for (const text of texts) effective[text.key] = challengeEffectiveText(providerName, text.key, text.default);
+		challengeTextValues[providerName] = effective;
+		challengeTextOriginal[providerName] = { ...effective };
+	}
+	if (!(providerName in challengeCspValues)) {
+		const effective = {};
+		for (const field of Object.keys(CSP_FIELD_LABELS)) effective[field] = challengeEffectiveCsp(providerName, field);
+		challengeCspValues[providerName] = effective;
+		challengeCspOriginal[providerName] = { ...effective };
+	}
 	byId("siteChallengeHtmlTemplate").value = challengeTemplateValues[providerName];
 	renderChallengeTemplateTabs();
 	renderChallengePlaceholders(providerName);
+	renderChallengeTextFields(providerName);
+	renderChallengeCspFields(providerName);
 }
 
 function resetChallengeTemplateEditor(site) {
 	challengeTemplateSite = site;
 	challengeTemplateValues = {};
 	challengeTemplateOriginal = {};
+	challengeTextValues = {};
+	challengeTextOriginal = {};
+	challengeCspValues = {};
+	challengeCspOriginal = {};
 	activeChallengeTemplateProvider = null;
 	switchChallengeTemplateTab(challengeProviders[0]?.name ?? "pow-sha256");
 }
@@ -2101,6 +2215,48 @@ function collectChallengeHtmlTemplates() {
 		const value = challengeTemplateValues[provider.name];
 		if (value === undefined || value === challengeTemplateOriginal[provider.name]) continue;
 		result[provider.name] = value;
+	}
+	return result;
+}
+
+function collectChallengeTextOverrides() {
+	if (activeChallengeTemplateProvider) {
+		challengeTextValues[activeChallengeTemplateProvider] = collectChallengeTextFieldValues();
+	}
+	const result = {};
+	for (const provider of challengeProviders) {
+		const values = challengeTextValues[provider.name];
+		if (!values) continue;
+		const original = challengeTextOriginal[provider.name] ?? {};
+		const changed = {};
+		let hasChanged = false;
+		for (const [key, value] of Object.entries(values)) {
+			if (value === original[key]) continue;
+			changed[key] = value;
+			hasChanged = true;
+		}
+		if (hasChanged) result[provider.name] = changed;
+	}
+	return result;
+}
+
+function collectChallengeCspOverrides() {
+	if (activeChallengeTemplateProvider) {
+		challengeCspValues[activeChallengeTemplateProvider] = collectChallengeCspFieldValues();
+	}
+	const result = {};
+	for (const provider of challengeProviders) {
+		const values = challengeCspValues[provider.name];
+		if (!values) continue;
+		const original = challengeCspOriginal[provider.name] ?? {};
+		const changed = {};
+		let hasChanged = false;
+		for (const [field, value] of Object.entries(values)) {
+			if (value === (original[field] ?? "")) continue;
+			changed[field] = value;
+			hasChanged = true;
+		}
+		if (hasChanged) result[provider.name] = changed;
 	}
 	return result;
 }
@@ -2937,6 +3093,8 @@ async function loadSites() {
 	challengeDefaults = response.challengeDefaults ?? challengeDefaults;
 	challengeProviders = response.challengeProviders ?? challengeProviders;
 	renderChallengePlaceholders(activeChallengeTemplateProvider);
+	renderChallengeTextFields(activeChallengeTemplateProvider);
+	renderChallengeCspFields(activeChallengeTemplateProvider);
 	errorResponseOptionsLoaded = true;
 	if (firstErrorOptionsLoad && !editingSiteId) resetSiteForm();
 	else if (previousErrorJsonFields) setErrorJsonFields(previousErrorJsonFields);
@@ -3077,6 +3235,8 @@ async function saveSite(event) {
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
 		errorJsonFields,
 		challengeHtmlTemplates: collectChallengeHtmlTemplates(),
+		challengeTextOverrides: collectChallengeTextOverrides(),
+		challengeCspOverrides: collectChallengeCspOverrides(),
 		healthCheck: {
 			enabled: byId("siteHealthEnabled").checked,
 			path: byId("siteHealthPath").value.trim(),
@@ -6049,7 +6209,15 @@ function bindActions() {
 		const providerDefault = challengeProviderEntry(activeChallengeTemplateProvider)?.defaultHtmlTemplate ?? challengeDefaults.htmlTemplate ?? "";
 		challengeTemplateValues[activeChallengeTemplateProvider] = providerDefault;
 		byId("siteChallengeHtmlTemplate").value = providerDefault;
-		showToast("Default template restored for this challenge. Save the site to apply it.");
+		const defaultTexts = {};
+		for (const text of challengeProviderTexts(activeChallengeTemplateProvider)) defaultTexts[text.key] = text.default;
+		challengeTextValues[activeChallengeTemplateProvider] = defaultTexts;
+		renderChallengeTextFields(activeChallengeTemplateProvider);
+		const clearedCsp = {};
+		for (const field of Object.keys(CSP_FIELD_LABELS)) clearedCsp[field] = "";
+		challengeCspValues[activeChallengeTemplateProvider] = clearedCsp;
+		renderChallengeCspFields(activeChallengeTemplateProvider);
+		showToast("Defaults restored for this challenge. Save the site to apply them.");
 	});
 	byId("challengeTemplateTabs").addEventListener("click", (event) => {
 		const button = event.target.closest("[data-challenge-template-tab]");

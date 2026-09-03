@@ -31,7 +31,16 @@ import {
 	validateErrorResponseMode,
 	type ErrorJsonField,
 } from "./error-response-service.ts";
-import { DEFAULT_CHALLENGE_HTML_TEMPLATE, parseStoredChallengeTemplates, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
+import {
+	CSP_SOURCE_FIELDS,
+	DEFAULT_CHALLENGE_HTML_TEMPLATE,
+	parseCspSourceList,
+	parseStoredChallengeCsp,
+	parseStoredChallengeTemplates,
+	parseStoredChallengeTexts,
+	validateChallengeHtmlTemplate,
+} from "./challenge-page-service.ts";
+import type { ChallengeProviderCspSources } from "../challenges/types.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
 import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } from "./http-policy-service.ts";
@@ -61,6 +70,8 @@ export interface SiteInput {
 	errorHtmlTemplate?: unknown;
 	challengeHtmlTemplate?: unknown;
 	challengeHtmlTemplates?: unknown;
+	challengeTextOverrides?: unknown;
+	challengeCspOverrides?: unknown;
 	errorJsonFields?: unknown;
 	healthCheck?: unknown;
 	loadBalancer?: unknown;
@@ -100,7 +111,12 @@ export interface SiteView {
 		htmlTemplate: string;
 		jsonFields: ErrorJsonField[];
 	};
-	challengePage: { htmlTemplate: string; templates: Record<string, string> };
+	challengePage: {
+		htmlTemplate: string;
+		templates: Record<string, string>;
+		textOverrides: Record<string, Record<string, string>>;
+		cspOverrides: Record<string, ChallengeProviderCspSources>;
+	};
 	healthCheck: {
 		enabled: boolean;
 		path: string;
@@ -432,6 +448,66 @@ function parseChallengeHtmlTemplates(value: unknown, existing?: SiteRecord): Rec
 	return result;
 }
 
+/**
+ * Per-provider text overrides. Merges two levels deep onto the existing stored map: at the
+ * provider level (so saving one provider's text tab doesn't drop another provider's overrides,
+ * same reasoning as parseChallengeHtmlTemplates) and, within a touched provider, at the key level
+ * (so overriding one text key doesn't wipe that provider's other saved keys). A blank value for a
+ * key removes just that key, falling back to the provider/base default.
+ */
+function parseChallengeTextOverrides(value: unknown, existing?: SiteRecord): Record<string, Record<string, string>> {
+	const current = existing ? parseStoredChallengeTexts(existing.challenge_text_overrides_json) : {};
+	if (value === undefined) return current;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Challenge text overrides must be an object");
+	const result: Record<string, Record<string, string>> = {};
+	for (const [provider, keys] of Object.entries(current)) result[provider] = { ...keys };
+	for (const [provider, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Challenge text overrides for ${provider} must be an object`);
+		const keys = { ...(result[provider] ?? {}) };
+		for (const [key, text] of Object.entries(entry as Record<string, unknown>)) {
+			const trimmed = String(text ?? "").trim();
+			if (!trimmed) delete keys[key];
+			else keys[key] = trimmed;
+		}
+		if (Object.keys(keys).length > 0) result[provider] = keys;
+		else delete result[provider];
+	}
+	return result;
+}
+
+/**
+ * Per-provider Content-Security-Policy source overrides, layered on top of whatever a provider
+ * already widens internally (e.g. hCaptcha's own `https://*.hcaptcha.com`) - see
+ * resolveProviderCspSources in challenge-page-service.ts. Same two-level merge as
+ * parseChallengeTextOverrides (provider, then the five known CSP fields); each incoming leaf is a
+ * space-separated list of source expressions, validated with parseCspSourceList. A blank value for
+ * a field removes just that field.
+ */
+function parseChallengeCspOverrides(value: unknown, existing?: SiteRecord): Record<string, ChallengeProviderCspSources> {
+	const current = existing ? parseStoredChallengeCsp(existing.challenge_csp_overrides_json) : {};
+	if (value === undefined) return current;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Challenge CSP overrides must be an object");
+	const result: Record<string, ChallengeProviderCspSources> = {};
+	for (const [provider, fields] of Object.entries(current)) result[provider] = { ...fields };
+	for (const [provider, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Challenge CSP overrides for ${provider} must be an object`);
+		const fields: ChallengeProviderCspSources = { ...(result[provider] ?? {}) };
+		for (const [field, raw] of Object.entries(entry as Record<string, unknown>)) {
+			if (!(CSP_SOURCE_FIELDS as readonly string[]).includes(field)) throw new Error(`Unknown CSP field "${field}"`);
+			const key = field as keyof ChallengeProviderCspSources;
+			const text = String(raw ?? "").trim();
+			if (!text) {
+				delete fields[key];
+				continue;
+			}
+			fields[key] = parseCspSourceList(text);
+		}
+		if (Object.keys(fields).length > 0) result[provider] = fields;
+		else delete result[provider];
+	}
+	return result;
+}
+
 export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyStep[]): ChallengePolicyStep[] {
 	let parsed = value;
 	if (typeof parsed === "string") {
@@ -515,6 +591,8 @@ export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | nu
 		challengePage: {
 			htmlTemplate: site.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE,
 			templates: parseStoredChallengeTemplates(site.challenge_html_templates_json),
+			textOverrides: parseStoredChallengeTexts(site.challenge_text_overrides_json),
+			cspOverrides: parseStoredChallengeCsp(site.challenge_csp_overrides_json),
 		},
 		healthCheck: {
 			enabled: site.health_check_enabled === 1,
@@ -582,6 +660,8 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate),
 		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate),
 		challenge_html_templates_json: JSON.stringify(parseChallengeHtmlTemplates(input.challengeHtmlTemplates)),
+		challenge_text_overrides_json: JSON.stringify(parseChallengeTextOverrides(input.challengeTextOverrides)),
+		challenge_csp_overrides_json: JSON.stringify(parseChallengeCspOverrides(input.challengeCspOverrides)),
 		health_check_enabled: health.enabled ? 1 : 0,
 		health_check_path: health.path,
 		health_check_interval_seconds: health.intervalSeconds,
@@ -703,6 +783,8 @@ export async function updateSite(
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate, existing.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE),
 		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate, existing.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE),
 		challenge_html_templates_json: JSON.stringify(parseChallengeHtmlTemplates(input.challengeHtmlTemplates, existing)),
+		challenge_text_overrides_json: JSON.stringify(parseChallengeTextOverrides(input.challengeTextOverrides, existing)),
+		challenge_csp_overrides_json: JSON.stringify(parseChallengeCspOverrides(input.challengeCspOverrides, existing)),
 		health_check_enabled: health.enabled ? 1 : 0,
 		health_check_path: health.path,
 		health_check_interval_seconds: health.intervalSeconds,

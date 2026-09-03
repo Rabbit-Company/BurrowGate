@@ -5,12 +5,38 @@ import { challengePageCsp } from "../src/services/challenge-page-service.ts";
 import { powSha256Provider } from "../src/challenges/providers/pow-sha256.ts";
 import { isEncryptedSecret } from "../src/services/secret-encryption-service.ts";
 import type { ChallengeProvider, ChallengeVerifyContext } from "../src/challenges/types.ts";
+import type { SiteRecord } from "../src/types.ts";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
 });
+
+const baseSite: SiteRecord = {
+	id: "site-csp-test",
+	name: "CSP test",
+	public_host: "example.test",
+	origin_url: "http://127.0.0.1:3000",
+	origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+	ip_extraction_preset: "direct",
+	enabled: 1,
+	session_ttl_seconds: 3_600,
+	challenge_policy_json: "[]",
+	challenge_auto_ban_enabled: 0,
+	challenge_auto_ban_max_failures: 5,
+	challenge_auto_ban_seconds: 3_600,
+	default_access_mode: "challenge",
+	event_retention_days: 7,
+	default_ip_action: "inherit",
+	default_country_action: "inherit",
+	error_response_mode: "json",
+	error_html_template: "",
+	error_json_fields_json: '["error","status"]',
+	challenge_html_template: "",
+	created_at: Date.now(),
+	updated_at: Date.now(),
+};
 
 const verifyContext: ChallengeVerifyContext = {
 	flowId: "flow_1",
@@ -115,19 +141,19 @@ for (const [name, provider, siteverifyUrl] of providers) {
 
 describe("challengePageCsp", () => {
 	test("returns the default same-origin policy for a provider with no extra CSP sources", () => {
-		const csp = challengePageCsp(powSha256Provider);
+		const csp = challengePageCsp(baseSite, powSha256Provider);
 		expect(csp).toContain("script-src 'self' 'unsafe-inline'");
 		expect(csp).not.toContain("hcaptcha");
 	});
 
 	test("widens the policy to hCaptcha's hosts for the hcaptcha provider", () => {
-		const csp = challengePageCsp(hcaptchaProvider);
+		const csp = challengePageCsp(baseSite, hcaptchaProvider);
 		expect(csp).toContain("https://*.hcaptcha.com");
 		expect(csp).toContain("frame-src 'self' https://*.hcaptcha.com");
 	});
 
 	test("widens the policy to Cloudflare's host for the turnstile provider", () => {
-		const csp = challengePageCsp(turnstileProvider);
+		const csp = challengePageCsp(baseSite, turnstileProvider);
 		expect(csp).toContain("https://challenges.cloudflare.com");
 		expect(csp).toContain("frame-src 'self' https://challenges.cloudflare.com");
 	});

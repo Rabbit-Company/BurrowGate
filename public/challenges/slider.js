@@ -1,8 +1,21 @@
 (() => {
 	const challenge = window.__BURROWGATE_CHALLENGE__;
 	const status = document.getElementById("status");
+	const T = challenge.text || {};
+	function t(key, fallback) {
+		return T[key] ?? fallback;
+	}
+	function substitute(str, vars) {
+		return str.replace(/\{\{(\w+)\}\}/g, (_, name) => (name in vars ? String(vars[name]) : `{{${name}}}`));
+	}
 
 	const { trackWidth, pieceSize, targetX, tolerancePx } = challenge.publicData;
+	const pieceShape = challenge.publicData.pieceShape || "circle";
+	const pieceColor = challenge.publicData.pieceColor || "#7c3aed";
+	const targetColor = challenge.publicData.targetColor || "#22d3ee";
+	const trackColor = challenge.publicData.trackColor || "#94a3b8";
+	const backgroundColor = challenge.publicData.backgroundColor || "#0b1220";
+	const TRACK_WIDTH_PX = 6;
 	const MAX_SAMPLES = 500;
 	const CANVAS_HEIGHT = pieceSize + 24;
 	const CENTER_Y = CANVAS_HEIGHT / 2;
@@ -19,7 +32,7 @@
 
 		const hint = document.createElement("div");
 		hint.className = "bg-slider-hint";
-		hint.textContent = "Drag the circle into the outlined target";
+		hint.textContent = t("hint", "Drag the circle into the outlined target");
 		wrapper.appendChild(hint);
 
 		(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
@@ -30,10 +43,11 @@
 	const style = document.createElement("style");
 	style.textContent =
 		".bg-slider-wrapper{display:grid;gap:10px;justify-items:center;margin:18px 0}" +
-		".bg-slider-canvas{display:block;max-width:100%;background:#0b1220;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
+		".bg-slider-canvas{display:block;max-width:100%;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
 		".bg-slider-canvas.is-dragging{cursor:grabbing}" +
 		".bg-slider-hint{font-size:13px;color:#94a3b8}";
 	document.head.appendChild(style);
+	canvas.style.background = backgroundColor;
 
 	const context = canvas.getContext("2d");
 
@@ -49,26 +63,37 @@
 	}
 
 	function render() {
-		context.fillStyle = "#0b1220";
+		context.fillStyle = backgroundColor;
 		context.fillRect(0, 0, canvas.width, canvas.height);
 
-		context.strokeStyle = "rgba(148,163,184,.35)";
-		context.lineWidth = 2;
+		context.strokeStyle = trackColor;
+		context.lineWidth = TRACK_WIDTH_PX;
+		context.lineCap = "round";
 		context.beginPath();
 		context.moveTo(EDGE_PADDING + pieceSize / 2, CENTER_Y);
 		context.lineTo(EDGE_PADDING + trackWidth - pieceSize / 2, CENTER_Y);
 		context.stroke();
 
-		context.strokeStyle = "#22d3ee";
+		context.strokeStyle = targetColor;
 		context.lineWidth = 2;
 		context.beginPath();
-		context.arc(EDGE_PADDING + targetX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
-		context.stroke();
+		if (pieceShape === "square") {
+			const half = pieceSize / 2;
+			context.strokeRect(EDGE_PADDING + targetX, CENTER_Y - half, pieceSize, pieceSize);
+		} else {
+			context.arc(EDGE_PADDING + targetX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
+			context.stroke();
+		}
 
-		context.fillStyle = "#7c3aed";
+		context.fillStyle = pieceColor;
 		context.beginPath();
-		context.arc(EDGE_PADDING + pieceX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
-		context.fill();
+		if (pieceShape === "square") {
+			const half = pieceSize / 2;
+			context.fillRect(EDGE_PADDING + pieceX, CENTER_Y - half, pieceSize, pieceSize);
+		} else {
+			context.arc(EDGE_PADDING + pieceX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
+			context.fill();
+		}
 	}
 
 	function pointerPos(event) {
@@ -86,7 +111,7 @@
 	async function submit(finalX) {
 		if (finished) return;
 		finished = true;
-		if (status) status.textContent = "Verifying with BurrowGate...";
+		if (status) status.textContent = t("verifying", "Verifying with BurrowGate...");
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
@@ -99,12 +124,17 @@
 			const startedAt = Date.now();
 			const remainingMs = minimumDisplayMs;
 			if (remainingMs > 0) {
-				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(remainingMs / 1000)} seconds...`;
+				if (status)
+					status.textContent = substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), {
+						seconds: Math.ceil(remainingMs / 1000),
+					});
 				const countdown = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 					if (status)
 						status.textContent =
-							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+							left > 0
+								? substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), { seconds: Math.ceil(left / 1000) })
+								: t("redirecting", "Verification successful. Redirecting...");
 					if (left <= 0) clearInterval(countdown);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), remainingMs);
@@ -118,7 +148,7 @@
 			return;
 		}
 		finished = false;
-		if (status) status.textContent = result.reason || "Verification failed. Reloading...";
+		if (status) status.textContent = result.reason || t("verificationFailed", "Verification failed. Reloading...");
 		setTimeout(() => location.reload(), 1200);
 	}
 
@@ -162,7 +192,7 @@
 		if (Math.abs(pieceX - targetX) <= tolerancePx) {
 			void submit(pieceX);
 		} else {
-			if (status) status.textContent = "Not quite - try again.";
+			if (status) status.textContent = t("retry", "Not quite - try again.");
 			resetPiece();
 		}
 	}
@@ -170,6 +200,6 @@
 	canvas.addEventListener("pointerup", endDrag);
 	canvas.addEventListener("pointercancel", endDrag);
 
-	if (status) status.textContent = "Drag the circle into the outlined target to continue.";
+	if (status) status.textContent = t("statusReady", "Drag the circle into the outlined target to continue.");
 	render();
 })();

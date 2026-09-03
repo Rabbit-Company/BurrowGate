@@ -858,6 +858,10 @@ export function adminPage(): string {
 							<div class="section-heading compact-heading"><div><h4>HTML template</h4><p class="muted">Placeholder values are HTML escaped. {{challengeScript}} is required.</p></div><button id="resetChallengeHtmlTemplate" class="button secondary compact" type="button">Reset to default</button></div>
 							<textarea id="siteChallengeHtmlTemplate" class="input code-input error-template-input" rows="22" spellcheck="false"></textarea>
 							<div><strong>Available placeholders</strong><div id="challengePlaceholderList" class="placeholder-list"></div></div>
+							<div class="section-heading compact-heading"><div><h4>Text</h4><p class="muted">Override the text shown to visitors for this challenge - useful for translating it into your own language.</p></div></div>
+							<div id="challengeTextFields" class="site-form-grid"></div>
+							<div class="section-heading compact-heading"><div><h4>Content Security Policy</h4><p class="muted">Extra sources to allow for this challenge's page, layered on top of whatever it already allows by default (shown below each field). Space-separated, e.g. <code>https://cdn.example.com</code>.</p></div></div>
+							<div id="challengeCspFields" class="site-form-grid"></div>
 						</div>
 					</section>
           <div id="generatedSecretPanel" class="secret-panel hidden"><div><strong>Save this origin signing secret</strong><p class="muted">BurrowGate will not display it again. Configure it on the protected origin to verify signed headers.</p><code id="generatedSecretValue"></code></div><button id="copyGeneratedSecret" class="button secondary" type="button">Copy</button></div>

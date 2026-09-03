@@ -45,6 +45,12 @@ export const turnstileProvider: ChallengeProvider = {
 		frameSrc: ["https://challenges.cloudflare.com"],
 		connectSrc: ["https://challenges.cloudflare.com"],
 	},
+	defaultTexts: [
+		{ key: "widgetLoading", label: "Widget-loading message", default: "Loading Turnstile..." },
+		{ key: "completePrompt", label: "Prompt shown once the widget is ready", default: "Complete the challenge to continue." },
+		{ key: "loadFailed", label: "Widget-failed-to-load message", default: "Turnstile failed to load. Reloading..." },
+		{ key: "verificationFailed", label: "Generic failure message", default: "Verification failed. Try again." },
+	],
 
 	validateConfig(config) {
 		siteKey(config);

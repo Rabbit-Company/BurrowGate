@@ -35,7 +35,7 @@ export function registerChallengeRoutes(app: Web<any>): void {
 		const site = await repository.siteById(flow.site_id);
 		if (!site) return htmlResponse("This challenge expired. Return to the website and try again.", 410);
 		const provider = challengeRegistry.get(step.provider);
-		return htmlResponse(renderChallengePage(site, ctx.req, flow, step, provider), 200, undefined, challengePageCsp(provider));
+		return htmlResponse(renderChallengePage(site, ctx.req, flow, step, provider), 200, undefined, challengePageCsp(site, provider));
 	});
 
 	app.post("/_burrowgate/api/challenge/verify", async (ctx) => {

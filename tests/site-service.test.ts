@@ -281,3 +281,237 @@ describe("per-provider challenge templates", () => {
 		).rejects.toThrow("challengeScript");
 	});
 });
+
+describe("per-provider challenge text overrides", () => {
+	test("a fresh site has no text overrides", async () => {
+		const site = await makeSite("challenge-texts-fresh.test");
+		expect(siteView(site).challengePage.textOverrides).toEqual({});
+	});
+
+	test("setting one provider's text key does not affect others", async () => {
+		const site = await makeSite("challenge-texts-set.test");
+		const { site: updated } = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel" } },
+		});
+		expect(siteView(updated).challengePage.textOverrides).toEqual({ snake: { goal: "Iss Äpfel" } });
+	});
+
+	test("a second update touching a different provider merges rather than replacing the first", async () => {
+		const site = await makeSite("challenge-texts-merge-provider.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { password: { submitLabel: "Weiter" } },
+		});
+		expect(siteView(updated).challengePage.textOverrides).toEqual({
+			snake: { goal: "Iss Äpfel" },
+			password: { submitLabel: "Weiter" },
+		});
+	});
+
+	test("overriding one key within a provider does not wipe that provider's other saved keys", async () => {
+		const site = await makeSite("challenge-texts-merge-key.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel", wallHit: "Die Schlange traf eine Wand." } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { selfHit: "Die Schlange hat sich selbst getroffen." } },
+		});
+		expect(siteView(updated).challengePage.textOverrides).toEqual({
+			snake: {
+				goal: "Iss Äpfel",
+				wallHit: "Die Schlange traf eine Wand.",
+				selfHit: "Die Schlange hat sich selbst getroffen.",
+			},
+		});
+	});
+
+	test("a blank value removes just that key, leaving the provider's other keys intact", async () => {
+		const site = await makeSite("challenge-texts-clear-key.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel", wallHit: "Die Schlange traf eine Wand." } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { wallHit: "" } },
+		});
+		expect(siteView(updated).challengePage.textOverrides).toEqual({ snake: { goal: "Iss Äpfel" } });
+	});
+
+	test("clearing every key of a provider drops that provider entirely", async () => {
+		const site = await makeSite("challenge-texts-clear-provider.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel" }, password: { submitLabel: "Weiter" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "" } },
+		});
+		expect(siteView(updated).challengePage.textOverrides).toEqual({ password: { submitLabel: "Weiter" } });
+	});
+
+	test("omitting challengeTextOverrides entirely leaves existing overrides untouched", async () => {
+		const site = await makeSite("challenge-texts-omit.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeTextOverrides: { snake: { goal: "Iss Äpfel" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(siteView(updated).challengePage.textOverrides).toEqual({ snake: { goal: "Iss Äpfel" } });
+	});
+});
+
+describe("per-provider challenge CSP overrides", () => {
+	test("a fresh site has no CSP overrides", async () => {
+		const site = await makeSite("challenge-csp-fresh.test");
+		expect(siteView(site).challengePage.cspOverrides).toEqual({});
+	});
+
+	test("setting one provider's field does not affect others", async () => {
+		const site = await makeSite("challenge-csp-set.test");
+		const { site: updated } = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn.example.com" } },
+		});
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({ slider: { imgSrc: ["https://cdn.example.com"] } });
+	});
+
+	test("a second update touching a different provider merges rather than replacing the first", async () => {
+		const site = await makeSite("challenge-csp-merge-provider.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn.example.com" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { snake: { imgSrc: "https://other.example.com" } },
+		});
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({
+			slider: { imgSrc: ["https://cdn.example.com"] },
+			snake: { imgSrc: ["https://other.example.com"] },
+		});
+	});
+
+	test("overriding one field within a provider does not wipe that provider's other saved fields", async () => {
+		const site = await makeSite("challenge-csp-merge-field.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn.example.com", scriptSrc: "https://scripts.example.com" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { connectSrc: "https://api.example.com" } },
+		});
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({
+			slider: {
+				imgSrc: ["https://cdn.example.com"],
+				scriptSrc: ["https://scripts.example.com"],
+				connectSrc: ["https://api.example.com"],
+			},
+		});
+	});
+
+	test("a blank value removes just that field, leaving the provider's other fields intact", async () => {
+		const site = await makeSite("challenge-csp-clear-field.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn.example.com", scriptSrc: "https://scripts.example.com" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { scriptSrc: "" } },
+		});
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({ slider: { imgSrc: ["https://cdn.example.com"] } });
+	});
+
+	test("a multi-source field accepts several space-separated sources", async () => {
+		const site = await makeSite("challenge-csp-multi.test");
+		const { site: updated } = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn-a.example.com https://cdn-b.example.com" } },
+		});
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({
+			slider: { imgSrc: ["https://cdn-a.example.com", "https://cdn-b.example.com"] },
+		});
+	});
+
+	test("rejects an invalid CSP source expression", async () => {
+		const site = await makeSite("challenge-csp-invalid.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				challengeCspOverrides: { slider: { imgSrc: "*" } },
+			}),
+		).rejects.toThrow();
+	});
+
+	test("rejects an unknown CSP field name", async () => {
+		const site = await makeSite("challenge-csp-unknown-field.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				challengeCspOverrides: { slider: { bogusField: "https://cdn.example.com" } },
+			}),
+		).rejects.toThrow();
+	});
+
+	test("omitting challengeCspOverrides entirely leaves existing overrides untouched", async () => {
+		const site = await makeSite("challenge-csp-omit.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeCspOverrides: { slider: { imgSrc: "https://cdn.example.com" } },
+		});
+		const { site: updated } = await updateSite(first.site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(siteView(updated).challengePage.cspOverrides).toEqual({ slider: { imgSrc: ["https://cdn.example.com"] } });
+	});
+});

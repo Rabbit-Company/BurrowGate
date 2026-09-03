@@ -1,6 +1,13 @@
 (() => {
 	const challenge = window.__BURROWGATE_CHALLENGE__;
 	const status = document.getElementById("status");
+	const T = challenge.text || {};
+	function t(key, fallback) {
+		return T[key] ?? fallback;
+	}
+	function substitute(str, vars) {
+		return str.replace(/\{\{(\w+)\}\}/g, (_, name) => (name in vars ? String(vars[name]) : `{{${name}}}`));
+	}
 
 	let input = document.querySelector('[data-bg-password="input"]');
 	let submitButton = document.querySelector('[data-bg-password="submit"]');
@@ -14,13 +21,13 @@
 		input.type = "password";
 		input.name = "password";
 		input.autocomplete = "off";
-		input.placeholder = "Password";
+		input.placeholder = t("inputPlaceholder", "Password");
 		input.className = "bg-password-input";
 		form.appendChild(input);
 
 		submitButton = document.createElement("button");
 		submitButton.type = "submit";
-		submitButton.textContent = "Continue";
+		submitButton.textContent = t("submitLabel", "Continue");
 		submitButton.className = "bg-password-submit";
 		form.appendChild(submitButton);
 
@@ -47,7 +54,7 @@
 		if (!value) return;
 		finished = true;
 		if (submitButton) submitButton.disabled = true;
-		if (status) status.textContent = "Verifying with BurrowGate...";
+		if (status) status.textContent = t("verifying", "Verifying with BurrowGate...");
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
@@ -59,12 +66,17 @@
 			const minimumDisplayMs = Math.max(0, Number(challenge.minimumDisplayMs) || 0);
 			const startedAt = Date.now();
 			if (minimumDisplayMs > 0) {
-				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(minimumDisplayMs / 1000)} seconds...`;
+				if (status)
+					status.textContent = substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), {
+						seconds: Math.ceil(minimumDisplayMs / 1000),
+					});
 				const countdown = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 					if (status)
 						status.textContent =
-							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+							left > 0
+								? substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), { seconds: Math.ceil(left / 1000) })
+								: t("redirecting", "Verification successful. Redirecting...");
 					if (left <= 0) clearInterval(countdown);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), minimumDisplayMs);
@@ -81,7 +93,7 @@
 		if (submitButton) submitButton.disabled = false;
 		input.value = "";
 		input.focus();
-		if (status) status.textContent = result.reason || "Incorrect password. Try again.";
+		if (status) status.textContent = result.reason || t("incorrectPassword", "Incorrect password");
 	}
 
 	const ownForm = input.closest("form");
@@ -93,6 +105,6 @@
 		});
 	}
 
-	if (status) status.textContent = "Enter the password to continue.";
+	if (status) status.textContent = t("statusReady", "Enter the password to continue.");
 	input.focus();
 })();

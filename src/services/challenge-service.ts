@@ -6,6 +6,7 @@ import { randomId } from "../utils/crypto.ts";
 import { safeReturnPath } from "../utils/http.ts";
 import { createAccessSession } from "./session-service.ts";
 import { recordChallengeFailure, recordChallengeSuccess } from "./challenge-failure-ban-service.ts";
+import { resolveChallengeReasonText } from "./challenge-page-service.ts";
 
 export async function createFlow(
 	site: SiteRecord,
@@ -92,7 +93,8 @@ export async function verifyFlow(
 	if (!result.success) {
 		await repository.failStepAttempt(step.id);
 		recordChallengeFailure(site, flow.client_ip);
-		return { done: false, reason: result.reason ?? "Verification failed" };
+		const reason = result.reason ? resolveChallengeReasonText(site, provider, result.reason) : "Verification failed";
+		return { done: false, reason };
 	}
 	recordChallengeSuccess(site, flow.client_ip);
 	const consumedAt = Date.now();

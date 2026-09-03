@@ -100,6 +100,32 @@ describe("snakeProvider", () => {
 		expect(material.publicData.tickMs).toBe(150);
 	});
 
+	test("create defaults colors and carries through custom ones", async () => {
+		const context = { flowId: "flow_1", siteId: "site_1", clientIp: "203.0.113.10", userAgentHash: "ua", expiresAt: Date.now() + 60_000 };
+		const defaults = await snakeProvider.create(context, { gridSize: 20, applesRequired: 4 });
+		expect(defaults.publicData.backgroundColor).toBe("#0b1220");
+		expect(defaults.publicData.appleColor).toBe("#22d3ee");
+		expect(defaults.publicData.snakeColor).toBe("#7c3aed");
+		expect(defaults.publicData.snakeHeadColor).toBe("#a78bfa");
+
+		const custom = await snakeProvider.create(context, {
+			gridSize: 20,
+			applesRequired: 4,
+			backgroundColor: "#111111",
+			appleColor: "#222222",
+			snakeColor: "#333333",
+			snakeHeadColor: "#444444",
+		});
+		expect(custom.publicData.backgroundColor).toBe("#111111");
+		expect(custom.publicData.appleColor).toBe("#222222");
+		expect(custom.publicData.snakeColor).toBe("#333333");
+		expect(custom.publicData.snakeHeadColor).toBe("#444444");
+	});
+
+	test("validateConfig rejects a malformed hex color", () => {
+		expect(() => snakeProvider.validateConfig?.({ gridSize: 16, applesRequired: 5, appleColor: "red" })).toThrow();
+	});
+
 	test("verify accepts a winning transcript end-to-end", async () => {
 		const privateData = { seed: 42, gridSize: 12, applesRequired: 3 };
 		const moves = "RUUULLLLLLDDDDDD";
@@ -133,7 +159,7 @@ describe("snakeProvider", () => {
 		const instantContext = { ...verifyContext, createdAt: Date.now() };
 		const result = await snakeProvider.verify(instantContext, { tickMs: 150 }, privateData, { moves, timings: plausibleTimings(moves) });
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Snake challenge failed");
+		expect(result.reason).toBe("snakeChallengeFailed");
 	});
 
 	test("verify accepts the same transcript once enough real time has passed", async () => {
@@ -150,7 +176,7 @@ describe("snakeProvider", () => {
 		const plausibleContext = { ...verifyContext, createdAt: Date.now() - moves.length * 150 };
 		const result = await snakeProvider.verify(plausibleContext, { tickMs: 150 }, privateData, { moves });
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Snake challenge failed");
+		expect(result.reason).toBe("snakeChallengeFailed");
 	});
 
 	test("verify rejects timings whose length doesn't match the move string", async () => {
@@ -162,7 +188,7 @@ describe("snakeProvider", () => {
 			timings: plausibleTimings(moves).slice(0, -1),
 		});
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Snake challenge failed");
+		expect(result.reason).toBe("snakeChallengeFailed");
 	});
 
 	test("verify rejects a winning transcript where the total wait was padded but individual moves are near-instant", async () => {
@@ -174,7 +200,7 @@ describe("snakeProvider", () => {
 			timings: moves.split("").map(() => 1),
 		});
 		expect(result.success).toBe(false);
-		expect(result.reason).toBe("Snake challenge failed");
+		expect(result.reason).toBe("snakeChallengeFailed");
 	});
 
 	test("verify accepts naturally jittery per-move timings as long as every gap clears the floor", async () => {

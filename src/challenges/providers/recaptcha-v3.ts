@@ -49,6 +49,11 @@ export const recaptchaV3Provider: ChallengeProvider = {
 		connectSrc: ["https://www.google.com"],
 		styleSrc: ["https://www.gstatic.com"],
 	},
+	defaultTexts: [
+		{ key: "verifyingBrowser", label: "Initial status message", default: "Verifying your browser..." },
+		{ key: "loadFailed", label: "Script-failed-to-load message", default: "reCAPTCHA failed to load. Reloading..." },
+		{ key: "executionFailed", label: "Execution-failed message", default: "reCAPTCHA verification failed. Reloading..." },
+	],
 
 	validateConfig(config) {
 		siteKey(config);

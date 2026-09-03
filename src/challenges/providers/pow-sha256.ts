@@ -12,6 +12,10 @@ export const powSha256Provider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/pow-sha256.js",
 	title: "Verifying your browser",
 	description: "This website asks browsers to complete a small proof of work before continuing.",
+	defaultTexts: [
+		{ key: "provingWork", label: "In-progress message (use {{workerCount}})", default: "Using {{workerCount}} browser worker(s)..." },
+		{ key: "proofFound", label: "Proof-found message", default: "Proof found. Verifying with BurrowGate..." },
+	],
 
 	validateConfig(config) {
 		difficulty(config);

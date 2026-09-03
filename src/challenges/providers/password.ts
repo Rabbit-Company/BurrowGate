@@ -41,6 +41,12 @@ export const passwordProvider: ChallengeProvider = {
 	title: "Enter the password",
 	description: "This website asks visitors to enter a password before continuing.",
 	defaultHtmlTemplate: DEFAULT_TEMPLATE,
+	defaultTexts: [
+		{ key: "inputPlaceholder", label: "Password field placeholder", default: "Password" },
+		{ key: "submitLabel", label: "Submit button label", default: "Continue" },
+		{ key: "statusReady", label: "Initial status message", default: "Enter the password to continue." },
+		{ key: "incorrectPassword", label: "Wrong-password message", default: "Incorrect password" },
+	],
 
 	validateConfig(config) {
 		password(config);
@@ -58,10 +64,10 @@ export const passwordProvider: ChallengeProvider = {
 
 	async verify(_context, _config, privateData, answer) {
 		const submitted = answer && typeof answer === "object" ? String((answer as Record<string, unknown>).password ?? "") : "";
-		if (!submitted) return { success: false, reason: "Incorrect password" };
+		if (!submitted) return { success: false, reason: "incorrectPassword" };
 		const hash = String(privateData.passwordHash ?? "");
-		if (!hash) return { success: false, reason: "Incorrect password" };
+		if (!hash) return { success: false, reason: "incorrectPassword" };
 		const ok = await Bun.password.verify(submitted, hash);
-		return ok ? { success: true, metadata: { provider: "password" } } : { success: false, reason: "Incorrect password" };
+		return ok ? { success: true, metadata: { provider: "password" } } : { success: false, reason: "incorrectPassword" };
 	},
 };

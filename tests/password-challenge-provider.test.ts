@@ -57,7 +57,7 @@ describe("passwordProvider", () => {
 
 		const wrong = await passwordProvider.verify(verifyContext, config, material.privateData, { password: "wrong" });
 		expect(wrong.success).toBe(false);
-		expect(wrong.reason).toBe("Incorrect password");
+		expect(wrong.reason).toBe("incorrectPassword");
 	});
 
 	test("verify rejects a missing or malformed answer", async () => {

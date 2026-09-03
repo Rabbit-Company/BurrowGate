@@ -4,12 +4,38 @@ import { recaptchaV3Provider } from "../src/challenges/providers/recaptcha-v3.ts
 import { challengePageCsp } from "../src/services/challenge-page-service.ts";
 import { isEncryptedSecret } from "../src/services/secret-encryption-service.ts";
 import type { ChallengeVerifyContext } from "../src/challenges/types.ts";
+import type { SiteRecord } from "../src/types.ts";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
 });
+
+const baseSite: SiteRecord = {
+	id: "site-csp-test",
+	name: "CSP test",
+	public_host: "example.test",
+	origin_url: "http://127.0.0.1:3000",
+	origin_signing_secret: "test-signing-secret-that-is-at-least-32-characters",
+	ip_extraction_preset: "direct",
+	enabled: 1,
+	session_ttl_seconds: 3_600,
+	challenge_policy_json: "[]",
+	challenge_auto_ban_enabled: 0,
+	challenge_auto_ban_max_failures: 5,
+	challenge_auto_ban_seconds: 3_600,
+	default_access_mode: "challenge",
+	event_retention_days: 7,
+	default_ip_action: "inherit",
+	default_country_action: "inherit",
+	error_response_mode: "json",
+	error_html_template: "",
+	error_json_fields_json: '["error","status"]',
+	challenge_html_template: "",
+	created_at: Date.now(),
+	updated_at: Date.now(),
+};
 
 const verifyContext: ChallengeVerifyContext = {
 	flowId: "flow_1",
@@ -167,14 +193,14 @@ describe("recaptcha-v3", () => {
 
 describe("challengePageCsp", () => {
 	test("widens the policy to Google's hosts for recaptcha-v2", () => {
-		const csp = challengePageCsp(recaptchaV2Provider);
+		const csp = challengePageCsp(baseSite, recaptchaV2Provider);
 		expect(csp).toContain("https://www.google.com");
 		expect(csp).toContain("https://www.gstatic.com");
 		expect(csp).toContain("frame-src 'self' https://www.google.com");
 	});
 
 	test("widens the policy to Google's hosts for recaptcha-v3, including a frame-src for its hidden verification iframe", () => {
-		const csp = challengePageCsp(recaptchaV3Provider);
+		const csp = challengePageCsp(baseSite, recaptchaV3Provider);
 		expect(csp).toContain("https://www.google.com");
 		expect(csp).toContain("frame-src 'self' https://www.google.com");
 	});

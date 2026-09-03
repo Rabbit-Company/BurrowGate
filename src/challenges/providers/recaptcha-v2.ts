@@ -46,6 +46,12 @@ export const recaptchaV2Provider: ChallengeProvider = {
 		connectSrc: ["https://www.google.com"],
 		styleSrc: ["https://www.gstatic.com"],
 	},
+	defaultTexts: [
+		{ key: "widgetLoading", label: "Widget-loading message", default: "Loading reCAPTCHA..." },
+		{ key: "completePrompt", label: "Prompt shown once the widget is ready", default: "Complete the challenge to continue." },
+		{ key: "loadFailed", label: "Widget-failed-to-load message", default: "reCAPTCHA failed to load. Reloading..." },
+		{ key: "verificationFailed", label: "Generic failure message", default: "Verification failed. Try again." },
+	],
 
 	validateConfig(config) {
 		siteKey(config);

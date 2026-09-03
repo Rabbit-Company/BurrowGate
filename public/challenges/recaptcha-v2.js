@@ -3,6 +3,13 @@
 	const status = document.getElementById("status");
 	const startedAt = Date.now();
 	let finished = false;
+	const T = challenge.text || {};
+	function t(key, fallback) {
+		return T[key] ?? fallback;
+	}
+	function substitute(str, vars) {
+		return str.replace(/\{\{(\w+)\}\}/g, (_, name) => (name in vars ? String(vars[name]) : `{{${name}}}`));
+	}
 
 	let container = document.querySelector('[data-bg-recaptcha-v2="widget"]');
 	if (!container) {
@@ -15,7 +22,7 @@
 	async function submit(token) {
 		if (finished) return;
 		finished = true;
-		if (status) status.textContent = "Verifying with BurrowGate...";
+		if (status) status.textContent = t("verifying", "Verifying with BurrowGate...");
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
 			method: "POST",
@@ -27,12 +34,17 @@
 			const minimumDisplayMs = Math.max(0, Number(challenge.minimumDisplayMs) || 0);
 			const remainingMs = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 			if (remainingMs > 0) {
-				if (status) status.textContent = `Verification successful. Redirecting in ${Math.ceil(remainingMs / 1000)} seconds...`;
+				if (status)
+					status.textContent = substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), {
+						seconds: Math.ceil(remainingMs / 1000),
+					});
 				const timer = setInterval(() => {
 					const left = Math.max(0, minimumDisplayMs - (Date.now() - startedAt));
 					if (status)
 						status.textContent =
-							left > 0 ? `Verification successful. Redirecting in ${Math.ceil(left / 1000)} seconds...` : "Verification successful. Redirecting...";
+							left > 0
+								? substitute(t("redirectingIn", "Verification successful. Redirecting in {{seconds}} seconds..."), { seconds: Math.ceil(left / 1000) })
+								: t("redirecting", "Verification successful. Redirecting...");
 					if (left <= 0) clearInterval(timer);
 				}, 250);
 				setTimeout(() => location.replace(result.redirect || "/"), remainingMs);
@@ -46,7 +58,7 @@
 			return;
 		}
 		finished = false;
-		if (status) status.textContent = result.reason || "Verification failed. Try again.";
+		if (status) status.textContent = result.reason || t("verificationFailed", "Verification failed. Try again.");
 		if (window.grecaptcha && widgetId !== undefined) {
 			window.grecaptcha.reset(widgetId);
 			retryIfInvisible();
@@ -67,7 +79,7 @@
 			size: challenge.publicData.size,
 			callback: submit,
 			"error-callback": () => {
-				if (status) status.textContent = "reCAPTCHA failed to load. Reloading...";
+				if (status) status.textContent = t("loadFailed", "reCAPTCHA failed to load. Reloading...");
 				setTimeout(() => location.reload(), 1200);
 			},
 			"expired-callback": () => {
@@ -75,7 +87,7 @@
 				retryIfInvisible();
 			},
 		});
-		if (status) status.textContent = "Complete the challenge to continue.";
+		if (status) status.textContent = t("completePrompt", "Complete the challenge to continue.");
 		retryIfInvisible();
 	};
 
@@ -85,5 +97,5 @@
 	script.defer = true;
 	document.head.appendChild(script);
 
-	if (status) status.textContent = "Loading reCAPTCHA...";
+	if (status) status.textContent = t("widgetLoading", "Loading reCAPTCHA...");
 })();

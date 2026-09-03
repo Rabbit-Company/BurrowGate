@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_CHALLENGE_HTML_TEMPLATE,
+	challengePageCsp,
+	parseCspSourceList,
+	parseStoredChallengeCsp,
 	parseStoredChallengeTemplates,
+	parseStoredChallengeTexts,
 	renderChallengePage,
+	resolveChallengeReasonText,
+	resolveProviderCspSources,
+	resolveProviderTexts,
 	validateChallengeHtmlTemplate,
 } from "../src/services/challenge-page-service.ts";
 import { powSha256Provider } from "../src/challenges/providers/pow-sha256.ts";
@@ -19,6 +26,11 @@ const fakeProvider: ChallengeProvider = {
 	extraTemplateContext(publicData) {
 		return { widgetCount: String(publicData.widgetCount ?? "") };
 	},
+	defaultTexts: [
+		{ key: "verifying", label: "Verifying status message", default: "Fake provider verifying..." },
+		{ key: "fakeChallengeFailed", label: "Generic failure message", default: "Fake challenge failed" },
+	],
+	cspSources: { imgSrc: ["https://vendor.example.com"] },
 	async create() {
 		return { publicData: {}, privateData: {} };
 	},
@@ -199,5 +211,131 @@ describe("parseStoredChallengeTemplates", () => {
 	test("drops non-string and blank entries but keeps valid ones", () => {
 		const stored = JSON.stringify({ snake: "<html>ok</html>", trace: "", password: 42 });
 		expect(parseStoredChallengeTemplates(stored)).toEqual({ snake: "<html>ok</html>" });
+	});
+});
+
+describe("parseStoredChallengeTexts", () => {
+	test("returns an empty object for null, empty, or malformed JSON", () => {
+		expect(parseStoredChallengeTexts(null)).toEqual({});
+		expect(parseStoredChallengeTexts(undefined)).toEqual({});
+		expect(parseStoredChallengeTexts("")).toEqual({});
+		expect(parseStoredChallengeTexts("not json")).toEqual({});
+		expect(parseStoredChallengeTexts("[]")).toEqual({});
+	});
+
+	test("drops non-string/blank keys and providers left with no valid keys", () => {
+		const stored = JSON.stringify({
+			snake: { goal: "Eet applez", wallHit: "" },
+			password: { inputPlaceholder: 42 },
+			trace: "not an object",
+		});
+		expect(parseStoredChallengeTexts(stored)).toEqual({ snake: { goal: "Eet applez" } });
+	});
+});
+
+describe("resolveProviderTexts / resolveChallengeReasonText", () => {
+	test("falls back to BASE_CHALLENGE_TEXTS when nothing is overridden", () => {
+		const texts = resolveProviderTexts(site(), fakeProvider);
+		expect(texts.redirecting).toBe("Verification successful. Redirecting...");
+	});
+
+	test("a provider's own defaultTexts overrides a base key's default", () => {
+		const texts = resolveProviderTexts(site(), fakeProvider);
+		expect(texts.verifying).toBe("Fake provider verifying...");
+		expect(texts.fakeChallengeFailed).toBe("Fake challenge failed");
+	});
+
+	test("a site's per-provider text override wins over the provider default", () => {
+		const withOverride = site({ challenge_text_overrides_json: JSON.stringify({ "fake-provider": { verifying: "Attendere prego..." } }) });
+		const texts = resolveProviderTexts(withOverride, fakeProvider);
+		expect(texts.verifying).toBe("Attendere prego...");
+		expect(texts.fakeChallengeFailed).toBe("Fake challenge failed");
+		expect(texts.redirecting).toBe("Verification successful. Redirecting...");
+	});
+
+	test("resolveChallengeReasonText resolves a registered key but passes an unregistered one through unchanged", () => {
+		const withOverride = site({ challenge_text_overrides_json: JSON.stringify({ "fake-provider": { fakeChallengeFailed: "La verifica è fallita" } }) });
+		expect(resolveChallengeReasonText(withOverride, fakeProvider, "fakeChallengeFailed")).toBe("La verifica è fallita");
+		expect(resolveChallengeReasonText(site(), fakeProvider, "fakeChallengeFailed")).toBe("Fake challenge failed");
+		expect(resolveChallengeReasonText(site(), fakeProvider, "Some raw diagnostic string")).toBe("Some raw diagnostic string");
+	});
+
+	test("renderChallengePage embeds the resolved text object in the bootstrap JSON", () => {
+		const withOverride = site({ challenge_text_overrides_json: JSON.stringify({ "fake-provider": { verifying: "Attendere prego..." } }) });
+		const html = renderChallengePage(withOverride, new Request("https://example.test/"), flow, fakeStep, fakeProvider);
+		expect(html).toContain('"verifying":"Attendere prego..."');
+	});
+});
+
+describe("parseCspSourceList", () => {
+	test("accepts keywords, data:/blob:, and scheme://host expressions, including wildcard subdomains", () => {
+		expect(parseCspSourceList("'self' 'none' data: blob: https://cdn.example.com https://*.example.com https:")).toEqual([
+			"'self'",
+			"'none'",
+			"data:",
+			"blob:",
+			"https://cdn.example.com",
+			"https://*.example.com",
+			"https:",
+		]);
+	});
+
+	test("returns an empty array for blank input", () => {
+		expect(parseCspSourceList("")).toEqual([]);
+		expect(parseCspSourceList("   ")).toEqual([]);
+	});
+
+	test("rejects a bare wildcard and anything carrying a directive-breakout character", () => {
+		expect(() => parseCspSourceList("*")).toThrow();
+		expect(() => parseCspSourceList("https://evil.test; script-src 'unsafe-inline'")).toThrow();
+		expect(() => parseCspSourceList("not-a-source")).toThrow();
+	});
+});
+
+describe("parseStoredChallengeCsp", () => {
+	test("returns an empty object for null, empty, or malformed JSON", () => {
+		expect(parseStoredChallengeCsp(null)).toEqual({});
+		expect(parseStoredChallengeCsp(undefined)).toEqual({});
+		expect(parseStoredChallengeCsp("")).toEqual({});
+		expect(parseStoredChallengeCsp("not json")).toEqual({});
+	});
+
+	test("drops unknown fields and providers left with no valid fields", () => {
+		const stored = JSON.stringify({
+			slider: { imgSrc: ["https://cdn.example.com"], bogusField: ["https://x.test"] },
+			password: { imgSrc: [] },
+		});
+		expect(parseStoredChallengeCsp(stored)).toEqual({ slider: { imgSrc: ["https://cdn.example.com"] } });
+	});
+});
+
+describe("resolveProviderCspSources / challengePageCsp", () => {
+	test("a provider with no site override keeps just its own built-in sources", () => {
+		expect(resolveProviderCspSources(site(), fakeProvider)).toEqual({ imgSrc: ["https://vendor.example.com"] });
+	});
+
+	test("a site override is unioned onto the provider's own built-in sources, not replacing them", () => {
+		const withOverride = site({ challenge_csp_overrides_json: JSON.stringify({ "fake-provider": { imgSrc: ["https://cdn.example.com"] } }) });
+		expect(resolveProviderCspSources(withOverride, fakeProvider)).toEqual({
+			imgSrc: ["https://vendor.example.com", "https://cdn.example.com"],
+		});
+	});
+
+	test("challengePageCsp reflects the merged image sources in the img-src directive", () => {
+		const withOverride = site({ challenge_csp_overrides_json: JSON.stringify({ "fake-provider": { imgSrc: ["https://cdn.example.com"] } }) });
+		const csp = challengePageCsp(withOverride, fakeProvider);
+		expect(csp).toContain("img-src 'self' data: https://vendor.example.com https://cdn.example.com");
+	});
+
+	test("a provider with no built-in sources at all can still be widened purely by a site override", () => {
+		const withOverride = site({ challenge_csp_overrides_json: JSON.stringify({ "pow-sha256": { imgSrc: ["https://cdn.example.com"] } }) });
+		const csp = challengePageCsp(withOverride, powSha256Provider);
+		expect(csp).toContain("img-src 'self' data: https://cdn.example.com");
+	});
+
+	test("an untouched provider gets the short default-policy string, unaffected by another provider's override", () => {
+		const withOverride = site({ challenge_csp_overrides_json: JSON.stringify({ "fake-provider": { imgSrc: ["https://cdn.example.com"] } }) });
+		const csp = challengePageCsp(withOverride, powSha256Provider);
+		expect(csp).not.toContain("cdn.example.com");
 	});
 });
