@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS sites (
   enabled INTEGER NOT NULL DEFAULT 1,
   session_ttl_seconds INTEGER NOT NULL,
   challenge_policy_json TEXT NOT NULL,
+  challenge_auto_ban_enabled INTEGER NOT NULL DEFAULT 0,
+  challenge_auto_ban_max_failures INTEGER NOT NULL DEFAULT 5,
+  challenge_auto_ban_seconds INTEGER NOT NULL DEFAULT 3600,
   default_access_mode VARCHAR(32) NOT NULL DEFAULT 'challenge',
   event_retention_days INTEGER NOT NULL DEFAULT 7,
   default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit',
@@ -959,6 +962,9 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN network_privacy_policy_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN notification_event_types_json TEXT NULL",
 		"ALTER TABLE sites ADD COLUMN origin_type VARCHAR(16) NOT NULL DEFAULT 'proxy'",
+		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_enabled INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_max_failures INTEGER NOT NULL DEFAULT 5",
+		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_seconds INTEGER NOT NULL DEFAULT 3600",
 	];
 	for (const statement of statements) {
 		try {

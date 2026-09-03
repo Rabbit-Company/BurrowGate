@@ -5,6 +5,7 @@ import type { ChallengeFlowRecord, ChallengePolicyStep, ChallengeStepRecord, Sit
 import { randomId } from "../utils/crypto.ts";
 import { safeReturnPath } from "../utils/http.ts";
 import { createAccessSession } from "./session-service.ts";
+import { recordChallengeFailure, recordChallengeSuccess } from "./challenge-failure-ban-service.ts";
 
 export async function createFlow(
 	site: SiteRecord,
@@ -69,6 +70,8 @@ export async function verifyFlow(
 ): Promise<{ done: boolean; redirect?: string; cookie?: string; next?: ChallengeStepRecord; reason?: string }> {
 	const flow = await repository.flow(flowId);
 	if (!flow || flow.status !== "pending" || flow.expires_at <= Date.now()) return { done: false, reason: "Challenge expired" };
+	const site = await repository.siteById(flow.site_id);
+	if (!site) return { done: false, reason: "Site no longer exists" };
 	const step = await currentStep(flow);
 	if (step.attempts >= config.maxChallengeAttempts) return { done: false, reason: "Too many attempts" };
 	const provider = challengeRegistry.get(step.provider);
@@ -88,8 +91,10 @@ export async function verifyFlow(
 	);
 	if (!result.success) {
 		await repository.failStepAttempt(step.id);
+		recordChallengeFailure(site, flow.client_ip);
 		return { done: false, reason: result.reason ?? "Verification failed" };
 	}
+	recordChallengeSuccess(site, flow.client_ip);
 	const consumedAt = Date.now();
 	if (!(await repository.consumeStep(step.id, consumedAt))) return { done: false, reason: "This proof was already consumed" };
 	await repository.completeStep(step.id, consumedAt);
@@ -99,8 +104,6 @@ export async function verifyFlow(
 		const updated = { ...flow, current_step: flow.current_step + 1 };
 		return { done: false, next: await currentStep(updated) };
 	}
-	const site = await repository.siteById(flow.site_id);
-	if (!site) return { done: false, reason: "Site no longer exists" };
 	await repository.completeFlow(flow.id, Date.now());
 	const session = await createAccessSession(request, site, flow.client_ip, flow.user_agent_hash, { providers: policy.map((p) => p.provider) });
 	return { done: true, redirect: flow.return_path, cookie: session.cookie };

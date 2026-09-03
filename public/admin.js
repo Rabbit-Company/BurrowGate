@@ -512,6 +512,10 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 			{ key: "pathWidth", label: "Path width (px)", type: "number", min: 28, max: 56, default: 36, required: true },
 		],
 	},
+	password: {
+		label: "Shared password",
+		fields: [{ key: "password", label: "Password", type: "password", required: true, maxLength: 256 }],
+	},
 	snake: {
 		label: "Snake game",
 		fields: [
@@ -527,6 +531,10 @@ function looksLikeEncryptedSecret(value) {
 	return /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(String(value ?? ""));
 }
 
+function looksLikeArgon2Hash(value) {
+	return /^\$argon2id\$/.test(String(value ?? ""));
+}
+
 function challengeStepFieldHtml(field, value) {
 	if (field.type === "select") {
 		const current = value ?? field.default;
@@ -539,6 +547,12 @@ function challengeStepFieldHtml(field, value) {
 		const encrypted = looksLikeEncryptedSecret(value);
 		const placeholder = encrypted ? "Leave blank to keep the current secret key" : field.label;
 		const original = encrypted ? escapeHtml(String(value)) : "";
+		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
+	}
+	if (field.type === "password") {
+		const hashed = looksLikeArgon2Hash(value);
+		const placeholder = hashed ? "Leave blank to keep the current password" : field.label;
+		const original = hashed ? escapeHtml(String(value)) : "";
 		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
 	}
 	if (field.type === "number") {
@@ -632,7 +646,7 @@ function collectChallengeSteps(scope) {
 				if (input.value !== "") config[field.key] = input.value;
 				continue;
 			}
-			if (field.type === "secret") {
+			if (field.type === "secret" || field.type === "password") {
 				const value = input.value.trim() || input.dataset.originalSecret || "";
 				if (field.required && !value) throw new Error(`Step ${index + 1}: ${field.label} is required.`);
 				if (value) config[field.key] = value;
@@ -2709,6 +2723,9 @@ function resetSiteForm() {
 	applySiteHealthStatus({ state: "disabled" }, []);
 	updateHealthControls();
 	renderChallengeSteps("site", defaultChallengePolicy());
+	byId("siteChallengeAutoBanEnabled").checked = false;
+	byId("siteChallengeAutoBanMaxFailures").value = "5";
+	byId("siteChallengeAutoBanSeconds").value = "3600";
 	byId("siteErrorResponseMode").value = errorResponseDefaults.mode ?? "json";
 	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(errorResponseDefaults.jsonFields ?? []);
@@ -2780,6 +2797,10 @@ function editSite(id) {
 	applySiteHealthStatus(site.originHealth ?? { state: health.enabled ? "unknown" : "disabled" }, []);
 	byId("siteSigningSecret").value = "";
 	renderChallengeSteps("site", site.challengePolicy?.length ? site.challengePolicy : defaultChallengePolicy());
+	const challengeAutoBan = site.challengeAutoBan ?? {};
+	byId("siteChallengeAutoBanEnabled").checked = Boolean(challengeAutoBan.enabled);
+	byId("siteChallengeAutoBanMaxFailures").value = String(challengeAutoBan.maxFailures ?? 5);
+	byId("siteChallengeAutoBanSeconds").value = String(challengeAutoBan.banSeconds ?? 3600);
 	byId("siteErrorResponseMode").value = site.errorResponse?.mode ?? "json";
 	byId("siteErrorHtmlTemplate").value = site.errorResponse?.htmlTemplate ?? errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(site.errorResponse?.jsonFields ?? errorResponseDefaults.jsonFields ?? []);
@@ -2977,6 +2998,11 @@ async function saveSite(event) {
 		sessionTtlSeconds: Number(byId("siteSessionTtl").value),
 		eventRetentionDays: Number(byId("siteEventRetentionDays").value),
 		challengePolicy,
+		challengeAutoBan: {
+			enabled: byId("siteChallengeAutoBanEnabled").checked,
+			maxFailures: Number(byId("siteChallengeAutoBanMaxFailures").value),
+			banSeconds: Number(byId("siteChallengeAutoBanSeconds").value),
+		},
 		botPolicy: { blockedBots: selectedBlockedBots("site") },
 		networkPrivacyPolicy: readNetworkPrivacyPolicy("siteNetworkPrivacy"),
 		originSigningSecret: byId("siteSigningSecret").value.trim(),

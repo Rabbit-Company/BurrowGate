@@ -41,6 +41,7 @@ import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./ut
 import { Logger } from "./logger.ts";
 import { meteredBody, recordBandwidth, startBandwidthMetrics } from "./services/bandwidth-service.ts";
 import { recordBandwidthLimitBytes, startBandwidthLimitCleanup } from "./services/bandwidth-limit-service.ts";
+import { startChallengeFailureBanCleanup } from "./services/challenge-failure-ban-service.ts";
 import { startStreamMonitoring } from "./services/stream-monitoring-service.ts";
 import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
@@ -149,6 +150,7 @@ await haMeshService.start();
 haElectionService.start();
 startBandwidthMetrics();
 startBandwidthLimitCleanup();
+startChallengeFailureBanCleanup();
 startStreamMonitoring();
 registerPendingChangeApplier("site", applyPendingSiteChange);
 registerPendingChangeApplier("stream", applyPendingStreamChange);

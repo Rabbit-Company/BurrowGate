@@ -258,6 +258,18 @@ export async function banIpForBandwidthLimit(
 	return rule;
 }
 
+export async function banIpForChallengeFailures(site: SiteRecord, ip: string, failureCount: number, banSeconds: number): Promise<IpRuleRecord | null> {
+	if (ip === "unknown" || !banSeconds || banSeconds <= 0) return null;
+	const existing = await evaluateIp(site, ip);
+	if (existing.source === "ip-rule" && existing.action === "block") return null;
+	const reason = `Auto-banned for ${humanizeDurationSeconds(banSeconds)} after ${failureCount} consecutive failed challenge attempts.`;
+	const expiresAt = Date.now() + banSeconds * 1_000;
+	const rule = await addIpRule(site.id, ip, "block", reason, expiresAt);
+	const summary = `IP ${ip} auto-banned for ${humanizeDurationSeconds(banSeconds)} after ${failureCount} consecutive failed challenge attempts.`;
+	await notificationService.recordSiteEvent(site, "ip_banned", "warning", summary, { ip, reason, expiresAt }, Date.now());
+	return rule;
+}
+
 export async function addCountryRule(
 	siteId: string,
 	countryCodeInput: string,

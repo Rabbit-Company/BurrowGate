@@ -105,6 +105,9 @@ export interface SiteRecord {
 	enabled: number;
 	session_ttl_seconds: number;
 	challenge_policy_json: string;
+	challenge_auto_ban_enabled: number;
+	challenge_auto_ban_max_failures: number;
+	challenge_auto_ban_seconds: number;
 	default_access_mode: SiteAccessMode;
 	event_retention_days: number;
 	default_ip_action: DefaultNetworkAction;

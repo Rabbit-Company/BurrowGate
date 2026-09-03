@@ -117,6 +117,13 @@ export function registerChallengeRoutes(app: Web<any>): void {
 			}),
 	);
 	app.get(
+		"/_burrowgate/static/challenges/password.js",
+		() =>
+			new Response(Bun.file("public/challenges/password.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
+	app.get(
 		"/_burrowgate/static/challenges/recaptcha-v2.js",
 		() =>
 			new Response(Bun.file("public/challenges/recaptcha-v2.js"), {

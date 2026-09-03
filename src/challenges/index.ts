@@ -5,6 +5,7 @@ import { turnstileProvider } from "./providers/turnstile.ts";
 import { snakeProvider } from "./providers/snake.ts";
 import { sliderProvider } from "./providers/slider.ts";
 import { traceProvider } from "./providers/trace.ts";
+import { passwordProvider } from "./providers/password.ts";
 import { recaptchaV2Provider } from "./providers/recaptcha-v2.ts";
 import { recaptchaV3Provider } from "./providers/recaptcha-v3.ts";
 export const challengeRegistry = new ChallengeRegistry()
@@ -14,5 +15,6 @@ export const challengeRegistry = new ChallengeRegistry()
 	.register(snakeProvider)
 	.register(sliderProvider)
 	.register(traceProvider)
+	.register(passwordProvider)
 	.register(recaptchaV2Provider)
 	.register(recaptchaV3Provider);

@@ -51,6 +51,7 @@ export interface SiteInput {
 	enabled?: unknown;
 	sessionTtlSeconds?: unknown;
 	challengePolicy?: unknown;
+	challengeAutoBan?: unknown;
 	originSigningSecret?: unknown;
 	defaultAccessMode?: unknown;
 	eventRetentionDays?: unknown;
@@ -84,6 +85,11 @@ export interface SiteView {
 	enabled: boolean;
 	sessionTtlSeconds: number;
 	challengePolicy: ChallengePolicyStep[];
+	challengeAutoBan: {
+		enabled: boolean;
+		maxFailures: number;
+		banSeconds: number;
+	};
 	defaultAccessMode: SiteAccessMode;
 	eventRetentionDays: number;
 	defaultIpAction: DefaultNetworkAction;
@@ -375,6 +381,32 @@ function parseHealthCheck(value: unknown, existing?: SiteRecord): ParsedHealthCh
 	};
 }
 
+const MAX_CHALLENGE_AUTO_BAN_SECONDS = 2_592_000; // 30 days
+
+interface ParsedChallengeAutoBan {
+	enabled: boolean;
+	maxFailures: number;
+	banSeconds: number;
+}
+
+function parseChallengeAutoBan(value: unknown, existing?: SiteRecord): ParsedChallengeAutoBan {
+	if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+		throw new Error("Challenge auto-ban settings must be an object");
+	}
+	const input = (value ?? {}) as Record<string, unknown>;
+	return {
+		enabled: enabledValue(input.enabled, existing?.challenge_auto_ban_enabled === 1),
+		maxFailures: boundedInteger(input.maxFailures, existing?.challenge_auto_ban_max_failures ?? 5, "Challenge auto-ban max failures", 1, 1_000),
+		banSeconds: boundedInteger(
+			input.banSeconds,
+			existing?.challenge_auto_ban_seconds ?? 3_600,
+			"Challenge auto-ban duration",
+			1,
+			MAX_CHALLENGE_AUTO_BAN_SECONDS,
+		),
+	};
+}
+
 export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyStep[]): ChallengePolicyStep[] {
 	let parsed = value;
 	if (typeof parsed === "string") {
@@ -441,6 +473,11 @@ export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | nu
 		enabled: site.enabled === 1,
 		sessionTtlSeconds: Number(site.session_ttl_seconds),
 		challengePolicy: policyFromRecord(site),
+		challengeAutoBan: {
+			enabled: site.challenge_auto_ban_enabled === 1,
+			maxFailures: Number(site.challenge_auto_ban_max_failures ?? 5),
+			banSeconds: Number(site.challenge_auto_ban_seconds ?? 3_600),
+		},
 		defaultAccessMode: site.default_access_mode ?? "challenge",
 		eventRetentionDays: Number(site.event_retention_days ?? config.eventRetentionDays),
 		defaultIpAction: site.default_ip_action ?? "inherit",
@@ -489,6 +526,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 	const generatedSigningSecret = providedSecret ? null : randomToken(48);
 	const now = Date.now();
 	const health = parseHealthCheck(input.healthCheck);
+	const challengeAutoBan = parseChallengeAutoBan(input.challengeAutoBan);
 	const loadBalancer = loadBalancerSettings(input.loadBalancer);
 	if (health.alertEnabled && !health.webhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
 	const originFields = resolveSiteOriginFields(input);
@@ -507,6 +545,9 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 				parseChallengePolicy(input.challengePolicy, [{ provider: "pow-sha256", config: { difficulty: config.defaultSite.powDifficulty } }]),
 			),
 		),
+		challenge_auto_ban_enabled: challengeAutoBan.enabled ? 1 : 0,
+		challenge_auto_ban_max_failures: challengeAutoBan.maxFailures,
+		challenge_auto_ban_seconds: challengeAutoBan.banSeconds,
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, config.defaultSite.accessMode),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, config.eventRetentionDays),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, "inherit"),
@@ -608,6 +649,7 @@ export async function updateSite(
 	if (conflict && conflict.id !== id) throw new Error("A site with this public host already exists");
 	const existingPolicy = policyFromRecord(existing);
 	const health = parseHealthCheck(input.healthCheck, existing);
+	const challengeAutoBan = parseChallengeAutoBan(input.challengeAutoBan, existing);
 	const loadBalancer = loadBalancerSettings(input.loadBalancer, existing);
 	const encryptedWebhookUrl = health.clearWebhook ? null : health.webhookUrl ? await encryptSecret(health.webhookUrl) : existing.health_alert_webhook_url;
 	if (health.alertEnabled && !encryptedWebhookUrl) throw new Error("A webhook URL is required when health alerts are enabled");
@@ -623,6 +665,9 @@ export async function updateSite(
 		enabled: enabledValue(input.enabled, existing.enabled === 1) ? 1 : 0,
 		session_ttl_seconds: sessionTtl(input.sessionTtlSeconds, existing.session_ttl_seconds),
 		challenge_policy_json: JSON.stringify(await normalizeChallengePolicyForStorage(parseChallengePolicy(input.challengePolicy, existingPolicy))),
+		challenge_auto_ban_enabled: challengeAutoBan.enabled ? 1 : 0,
+		challenge_auto_ban_max_failures: challengeAutoBan.maxFailures,
+		challenge_auto_ban_seconds: challengeAutoBan.banSeconds,
 		default_access_mode: defaultAccessMode(input.defaultAccessMode, existing.default_access_mode ?? "challenge"),
 		event_retention_days: eventRetentionDays(input.eventRetentionDays, existing.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: parseDefaultNetworkAction(input.defaultIpAction, existing.default_ip_action ?? "inherit"),

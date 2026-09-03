@@ -747,6 +747,12 @@ export function adminPage(): string {
             <label><span>Origin signing secret</span><div class="secret-row"><input id="siteSigningSecret" class="input" name="originSigningSecret" type="password" autocomplete="new-password" placeholder="Generated automatically for new sites"><button id="generateSiteSecret" class="button secondary" type="button">Generate</button></div><small id="siteSecretHelp" class="muted">Leave blank to generate a secure secret. The generated value is shown once after creation.</small></label>
             <div class="section-heading compact-heading"><div><h4>Challenge policy</h4><p class="muted">Each step is completed in order before the visitor receives a session.</p></div><button class="button secondary compact" type="button" data-challenge-add="site">Add challenge step</button></div>
             <div id="siteChallengeSteps" class="challenge-step-list"></div>
+            <div class="section-heading compact-heading"><div><h4>Challenge failure auto-ban</h4><p class="muted">Ban an IP after too many consecutive failed challenge attempts on this site. Resets as soon as the IP passes a challenge.</p></div></div>
+            <label class="check-row"><input id="siteChallengeAutoBanEnabled" type="checkbox"><span><strong>Enable challenge failure auto-ban</strong><small class="muted">Recommended for all challenges.</small></span></label>
+            <div class="site-form-grid">
+              <label><span>Max consecutive failures</span><input id="siteChallengeAutoBanMaxFailures" class="input" type="number" min="1" max="1000" step="1" required></label>
+              <label><span>Ban duration (seconds)</span><input id="siteChallengeAutoBanSeconds" class="input" type="number" min="1" max="2592000" step="1" required></label>
+            </div>
           </section>
           <section class="error-response-editor hidden" data-site-editor-panel="origins">
             <div class="section-heading error-response-heading"><div><h3>Load balancing</h3><p class="muted">Choose how BurrowGate selects from healthy origins.</p></div></div>
