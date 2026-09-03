@@ -48,7 +48,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Per-origin health checks, automatic unhealthy-origin removal, and optional 503 maintenance mode
 - Unified notification system for sites and Streams: origin health, internet-connectivity, system-resource-threshold, and IP auto-ban webhooks to ntfy, Slack, Discord, or signed generic JSON, with per-event-type subscriptions, durable ordered retries, and a searchable delivery log
 - Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller, local nftables, OVH's per-IP edge firewall, or an AWS VPC Network ACL, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
-- Per-site customizable HTML challenge pages
+- Customizable HTML challenge pages, per challenge type as well as per site - each provider ships its own tailored default and documented `data-*` hooks so controls (like Snake's arrow keys) can be restyled or remapped without forking the whole page
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
 - In-dashboard update notifications, checking GitHub Releases hourly for a newer stable version
 - SQLite by default with PostgreSQL, MySQL, and MariaDB support

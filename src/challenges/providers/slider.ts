@@ -1,4 +1,14 @@
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
+
+// [data-bg-slider="canvas"] - an owner-supplied canvas is reused as-is (see slider.js).
+const DEFAULT_TEMPLATE = buildChallengeTemplate({
+	bodyExtra:
+		'<div class="bg-slider-wrapper">' +
+		'<canvas class="bg-slider-canvas" data-bg-slider="canvas"></canvas>' +
+		'<div class="bg-slider-hint">Drag the circle into the outlined target</div>' +
+		"</div>",
+});
 
 const MIN_TRACK_WIDTH = 220;
 const MAX_TRACK_WIDTH = 400;
@@ -63,6 +73,7 @@ export const sliderProvider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/slider.js",
 	title: "Drag to verify",
 	description: "This website asks visitors to drag a slider into place before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
 
 	validateConfig(config) {
 		trackWidth(config);

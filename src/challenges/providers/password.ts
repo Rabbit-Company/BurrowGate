@@ -2,6 +2,33 @@ import type { ChallengeProvider } from "../types.ts";
 
 const ARGON2ID_PREFIX = /^\$argon2id\$/;
 
+const DEFAULT_TEMPLATE = `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#111827">
+	<title>{{title}} - {{siteName}}</title>
+	<link rel="icon" type="image/svg+xml" href="/_burrowgate/static/favicon.svg">
+	<link rel="stylesheet" href="/_burrowgate/static/burrowgate.css">
+</head>
+<body>
+	<main class="shell challenge">
+		<section class="card pad auth-card">
+			<div class="brand"><span class="mark"></span> BurrowGate</div>
+			<h1 class="auth-title">{{title}}</h1>
+			<p id="status" class="muted">Starting challenge...</p>
+			<form class="grid" data-bg-password="form" autocomplete="off">
+				<label>Password<input class="input" data-bg-password="input" type="password" name="password" autocomplete="off" placeholder="Password"></label>
+				<button class="button" data-bg-password="submit" type="submit">Continue</button>
+			</form>
+			<noscript><p class="muted">JavaScript is required to complete this challenge. Enable it and reload to continue.</p></noscript>
+		</section>
+	</main>
+	{{challengeScript}}
+</body>
+</html>`;
+
 function password(config: Record<string, unknown>): string {
 	const value = config.password;
 	if (typeof value !== "string" || !value.trim() || value.length > 256) throw new Error("A password is required");
@@ -13,6 +40,7 @@ export const passwordProvider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/password.js",
 	title: "Enter the password",
 	description: "This website asks visitors to enter a password before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
 
 	validateConfig(config) {
 		password(config);

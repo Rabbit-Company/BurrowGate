@@ -308,7 +308,13 @@ async function requireSiteAccess(id: string, user: AuthenticatedAdmin, need: "vi
 function providerViews() {
 	return challengeRegistry.names().map((name) => {
 		const provider = challengeRegistry.get(name);
-		return { name: provider.name, title: provider.title, description: provider.description };
+		return {
+			name: provider.name,
+			title: provider.title,
+			description: provider.description,
+			defaultHtmlTemplate: provider.defaultHtmlTemplate ?? DEFAULT_CHALLENGE_HTML_TEMPLATE,
+			extraPlaceholders: provider.extraPlaceholders ?? [],
+		};
 	});
 }
 

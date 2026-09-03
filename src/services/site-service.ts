@@ -31,7 +31,7 @@ import {
 	validateErrorResponseMode,
 	type ErrorJsonField,
 } from "./error-response-service.ts";
-import { DEFAULT_CHALLENGE_HTML_TEMPLATE, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
+import { DEFAULT_CHALLENGE_HTML_TEMPLATE, parseStoredChallengeTemplates, validateChallengeHtmlTemplate } from "./challenge-page-service.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { serializeSiteWebSocketPolicy, siteWebSocketPolicyView, type SiteWebSocketPolicyView } from "./websocket-policy-service.ts";
 import { serializeSiteHttpPolicy, siteHttpPolicyView, type SiteHttpPolicyView } from "./http-policy-service.ts";
@@ -60,6 +60,7 @@ export interface SiteInput {
 	errorResponseMode?: unknown;
 	errorHtmlTemplate?: unknown;
 	challengeHtmlTemplate?: unknown;
+	challengeHtmlTemplates?: unknown;
 	errorJsonFields?: unknown;
 	healthCheck?: unknown;
 	loadBalancer?: unknown;
@@ -99,7 +100,7 @@ export interface SiteView {
 		htmlTemplate: string;
 		jsonFields: ErrorJsonField[];
 	};
-	challengePage: { htmlTemplate: string };
+	challengePage: { htmlTemplate: string; templates: Record<string, string> };
 	healthCheck: {
 		enabled: boolean;
 		path: string;
@@ -407,6 +408,30 @@ function parseChallengeAutoBan(value: unknown, existing?: SiteRecord): ParsedCha
 	};
 }
 
+/**
+ * Per-provider template overrides. Merges onto the existing stored map (like serializeSiteHttpPolicy's
+ * bandwidthLimit spread) rather than replacing it outright - the admin UI only sends the providers the
+ * user actually touched in this edit session, so a full replace would silently wipe out every other
+ * provider's saved override. A present key is validated with the same rules as the legacy single
+ * template; a blank value removes that provider's override (falls back to the next layer in
+ * renderChallengePage's resolution chain) rather than being stored as an invalid empty template.
+ */
+function parseChallengeHtmlTemplates(value: unknown, existing?: SiteRecord): Record<string, string> {
+	const current = existing ? parseStoredChallengeTemplates(existing.challenge_html_templates_json) : {};
+	if (value === undefined) return current;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Challenge page templates must be an object");
+	const result = { ...current };
+	for (const [provider, entry] of Object.entries(value as Record<string, unknown>)) {
+		const template = String(entry ?? "").trim();
+		if (!template) {
+			delete result[provider];
+			continue;
+		}
+		result[provider] = validateChallengeHtmlTemplate(template);
+	}
+	return result;
+}
+
 export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyStep[]): ChallengePolicyStep[] {
 	let parsed = value;
 	if (typeof parsed === "string") {
@@ -489,6 +514,7 @@ export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | nu
 		},
 		challengePage: {
 			htmlTemplate: site.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE,
+			templates: parseStoredChallengeTemplates(site.challenge_html_templates_json),
 		},
 		healthCheck: {
 			enabled: site.health_check_enabled === 1,
@@ -555,6 +581,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		error_response_mode: validateErrorResponseMode(input.errorResponseMode, "json"),
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate),
 		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate),
+		challenge_html_templates_json: JSON.stringify(parseChallengeHtmlTemplates(input.challengeHtmlTemplates)),
 		health_check_enabled: health.enabled ? 1 : 0,
 		health_check_path: health.path,
 		health_check_interval_seconds: health.intervalSeconds,
@@ -675,6 +702,7 @@ export async function updateSite(
 		error_response_mode: validateErrorResponseMode(input.errorResponseMode, existing.error_response_mode ?? "json"),
 		error_html_template: validateErrorHtmlTemplate(input.errorHtmlTemplate, existing.error_html_template || DEFAULT_ERROR_HTML_TEMPLATE),
 		challenge_html_template: validateChallengeHtmlTemplate(input.challengeHtmlTemplate, existing.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE),
+		challenge_html_templates_json: JSON.stringify(parseChallengeHtmlTemplates(input.challengeHtmlTemplates, existing)),
 		health_check_enabled: health.enabled ? 1 : 0,
 		health_check_path: health.path,
 		health_check_interval_seconds: health.intervalSeconds,

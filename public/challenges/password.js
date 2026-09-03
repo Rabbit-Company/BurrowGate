@@ -2,25 +2,30 @@
 	const challenge = window.__BURROWGATE_CHALLENGE__;
 	const status = document.getElementById("status");
 
-	const form = document.createElement("form");
-	form.className = "bg-password-form";
-	form.autocomplete = "off";
+	let input = document.querySelector('[data-bg-password="input"]');
+	let submitButton = document.querySelector('[data-bg-password="submit"]');
 
-	const input = document.createElement("input");
-	input.type = "password";
-	input.name = "password";
-	input.autocomplete = "off";
-	input.placeholder = "Password";
-	input.className = "bg-password-input";
-	form.appendChild(input);
+	if (!input) {
+		const form = document.createElement("form");
+		form.className = "bg-password-form";
+		form.autocomplete = "off";
 
-	const button = document.createElement("button");
-	button.type = "submit";
-	button.textContent = "Continue";
-	button.className = "bg-password-submit";
-	form.appendChild(button);
+		input = document.createElement("input");
+		input.type = "password";
+		input.name = "password";
+		input.autocomplete = "off";
+		input.placeholder = "Password";
+		input.className = "bg-password-input";
+		form.appendChild(input);
 
-	(status ? status.parentNode : document.body).insertBefore(form, status ? status.nextSibling : null);
+		submitButton = document.createElement("button");
+		submitButton.type = "submit";
+		submitButton.textContent = "Continue";
+		submitButton.className = "bg-password-submit";
+		form.appendChild(submitButton);
+
+		(status ? status.parentNode : document.body).insertBefore(form, status ? status.nextSibling : null);
+	}
 
 	const style = document.createElement("style");
 	style.textContent =
@@ -35,13 +40,13 @@
 
 	let finished = false;
 
-	form.addEventListener("submit", async (event) => {
-		event.preventDefault();
+	async function trySubmit(event) {
+		if (event) event.preventDefault();
 		if (finished) return;
 		const value = input.value;
 		if (!value) return;
 		finished = true;
-		button.disabled = true;
+		if (submitButton) submitButton.disabled = true;
 		if (status) status.textContent = "Verifying with BurrowGate...";
 
 		const response = await fetch("/_burrowgate/api/challenge/verify", {
@@ -73,11 +78,20 @@
 			return;
 		}
 		finished = false;
-		button.disabled = false;
+		if (submitButton) submitButton.disabled = false;
 		input.value = "";
 		input.focus();
 		if (status) status.textContent = result.reason || "Incorrect password. Try again.";
-	});
+	}
+
+	const ownForm = input.closest("form");
+	if (ownForm) ownForm.addEventListener("submit", trySubmit);
+	if (submitButton) submitButton.addEventListener("click", trySubmit);
+	if (!ownForm) {
+		input.addEventListener("keydown", (event) => {
+			if (event.key === "Enter") trySubmit(event);
+		});
+	}
 
 	if (status) status.textContent = "Enter the password to continue.";
 	input.focus();

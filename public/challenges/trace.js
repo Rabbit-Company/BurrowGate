@@ -5,11 +5,11 @@
 	// Shared engine: MUST match src/challenges/providers/trace-engine.ts exactly. Same PRNG, same
 	// track-shape generators, same point-to-segment distance/wall-metrics math. If you change one,
 	// change the other and update both algorithm comments together.
-	const CANVAS_WIDTH = 700;
-	const CANVAS_HEIGHT = 450;
+	const CANVAS_WIDTH = 460;
+	const CANVAS_HEIGHT = 300;
 	const CANVAS_MARGIN = 40;
 	const BALL_RADIUS = 10;
-	const MIN_EFFECTIVE_WIDTH = BALL_RADIUS * 2 + 8;
+	const MIN_EFFECTIVE_WIDTH = BALL_RADIUS * 2 + 28;
 
 	function seededRandom(seed) {
 		let state = seed % 2147483647;
@@ -123,25 +123,36 @@
 	const { shape, pathWidth, seed, ballRadius, endRadius } = challenge.publicData;
 	const track = generatePathPoints(shape, seed, pathWidth);
 
-	const wrapper = document.createElement("div");
-	wrapper.className = "bg-trace-wrapper";
+	// Element contract: a template may supply [data-bg-trace="canvas"] and/or ["metrics"] - each is
+	// reused as-is independently if found; a default wrapper/hint is only created for whichever piece
+	// is missing (see trace.js's default template for the usual layout, which supplies both).
+	let canvas = document.querySelector('[data-bg-trace="canvas"]');
+	let metricsEl = document.querySelector('[data-bg-trace="metrics"]');
+	if (!canvas || !metricsEl) {
+		const wrapper = document.createElement("div");
+		wrapper.className = "bg-trace-wrapper";
 
-	const canvas = document.createElement("canvas");
+		if (!canvas) {
+			canvas = document.createElement("canvas");
+			canvas.className = "bg-trace-canvas";
+			wrapper.appendChild(canvas);
+		}
+
+		if (!metricsEl) {
+			metricsEl = document.createElement("div");
+			metricsEl.className = "bg-trace-metrics";
+			wrapper.appendChild(metricsEl);
+		}
+
+		const hint = document.createElement("div");
+		hint.className = "bg-trace-hint";
+		hint.textContent = "Drag the ball along the path to the target without touching the walls";
+		wrapper.appendChild(hint);
+
+		(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
+	}
 	canvas.width = CANVAS_WIDTH;
 	canvas.height = CANVAS_HEIGHT;
-	canvas.className = "bg-trace-canvas";
-	wrapper.appendChild(canvas);
-
-	const metricsEl = document.createElement("div");
-	metricsEl.className = "bg-trace-metrics";
-	wrapper.appendChild(metricsEl);
-
-	const hint = document.createElement("div");
-	hint.className = "bg-trace-hint";
-	hint.textContent = "Drag the ball along the path to the target without touching the walls";
-	wrapper.appendChild(hint);
-
-	(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
 
 	const style = document.createElement("style");
 	style.textContent =
@@ -163,7 +174,7 @@
 	let finished = false;
 
 	function updateMetrics() {
-		metricsEl.textContent = `Wall touches: ${hitCount} | Max excursion: ${maxExcursion.toFixed(1)}px`;
+		if (metricsEl) metricsEl.textContent = `Wall touches: ${hitCount} | Max excursion: ${maxExcursion.toFixed(1)}px`;
 	}
 
 	function draw() {

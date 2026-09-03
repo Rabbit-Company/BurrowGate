@@ -1,5 +1,10 @@
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../../services/secret-encryption-service.ts";
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
+
+const DEFAULT_TEMPLATE = buildChallengeTemplate({
+	bodyExtra: '<div data-bg-hcaptcha="widget" style="margin:18px 0"></div>',
+});
 
 const SITEVERIFY_URL = "https://hcaptcha.com/siteverify";
 const THEMES = new Set(["light", "dark", "auto"]);
@@ -34,6 +39,7 @@ export const hcaptchaProvider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/hcaptcha.js",
 	title: "Confirm you are human",
 	description: "This website asks visitors to complete an hCaptcha challenge before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
 	cspSources: {
 		scriptSrc: ["https://*.hcaptcha.com"],
 		frameSrc: ["https://*.hcaptcha.com"],

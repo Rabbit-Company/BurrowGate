@@ -1,5 +1,9 @@
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../../services/secret-encryption-service.ts";
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
+
+// No visible widget - the client calls grecaptcha.execute() automatically, so no widget-container hook is needed.
+const DEFAULT_TEMPLATE = buildChallengeTemplate();
 
 const SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 const ACTION_PATTERN = /^[A-Za-z0-9_/]{1,100}$/u;
@@ -38,6 +42,7 @@ export const recaptchaV3Provider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/recaptcha-v3.js",
 	title: "Verifying your browser",
 	description: "This website uses reCAPTCHA to score visitor traffic before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
 	cspSources: {
 		scriptSrc: ["https://www.google.com", "https://www.gstatic.com"],
 		frameSrc: ["https://www.google.com"],

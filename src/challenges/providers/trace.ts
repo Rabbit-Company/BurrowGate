@@ -1,9 +1,23 @@
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
 import { BALL_RADIUS, TARGET_RADIUS, generatePathPoints, pathLength, trackMetrics, type TraceShape } from "./trace-engine.ts";
 
+// [data-bg-trace="canvas"] - an owner-supplied canvas is reused as-is (see trace.js). The 460px-wide
+// canvas already fits the shared template's default ~488px desktop content width with no CSS
+// downscaling, so no custom mainMaxWidth is needed here (unlike before the engine's canvas was shrunk).
+const DEFAULT_TEMPLATE = buildChallengeTemplate({
+	bodyExtra:
+		'<div class="bg-trace-wrapper">' +
+		'<canvas class="bg-trace-canvas" data-bg-trace="canvas"></canvas>' +
+		'<div class="bg-trace-metrics" data-bg-trace="metrics"></div>' +
+		'<div class="bg-trace-hint">Drag the ball along the path to the target without touching the walls</div>' +
+		"</div>",
+});
+
 const SHAPES: TraceShape[] = ["chokepoint", "bezier", "zigzag", "loop"];
-const MIN_PATH_WIDTH = 28;
-const MAX_PATH_WIDTH = 56;
+// Floor matches trace-engine.ts's MIN_EFFECTIVE_WIDTH (BALL_RADIUS*2 + 28, sized for touch precision).
+const MIN_PATH_WIDTH = 48;
+const MAX_PATH_WIDTH = 96;
 const MIN_SAMPLES = 40;
 const MAX_SAMPLES = 1200;
 const MIN_DURATION_BASE_MS = 200;
@@ -64,6 +78,11 @@ export const traceProvider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/trace.js",
 	title: "Trace the path",
 	description: "This website asks visitors to trace a path without straying off it before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
+	extraPlaceholders: [{ name: "shape", description: 'Track shape for this Trace challenge (e.g. "chokepoint").' }],
+	extraTemplateContext(publicData) {
+		return { shape: String(publicData.shape ?? "") };
+	},
 
 	validateConfig(config) {
 		shapeConfig(config);

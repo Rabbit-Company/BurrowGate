@@ -852,9 +852,10 @@ export function adminPage(): string {
             </div>
           </section>
 					<section class="error-response-editor hidden" data-site-editor-panel="responses">
-						<div class="section-heading error-response-heading"><div><h3>Challenge page</h3><p class="muted">Customize the browser-verification page shown before a visitor receives a session.</p></div></div>
+						<div class="section-heading error-response-heading"><div><h3>Challenge page</h3><p class="muted">Customize the browser-verification page shown before a visitor receives a session. Each challenge type has its own template - pick one below.</p></div></div>
+						<nav id="challengeTemplateTabs" class="site-editor-tabs" aria-label="Challenge page template" role="tablist"></nav>
 						<div class="error-response-settings">
-							<div class="section-heading compact-heading"><div><h4>HTML template</h4><p class="muted">Placeholder values are HTML escaped. {{challengeScript}} is required.</p></div><button id="resetChallengeHtmlTemplate" class="button secondary compact" type="button">Reset template</button></div>
+							<div class="section-heading compact-heading"><div><h4>HTML template</h4><p class="muted">Placeholder values are HTML escaped. {{challengeScript}} is required.</p></div><button id="resetChallengeHtmlTemplate" class="button secondary compact" type="button">Reset to default</button></div>
 							<textarea id="siteChallengeHtmlTemplate" class="input code-input error-template-input" rows="22" spellcheck="false"></textarea>
 							<div><strong>Available placeholders</strong><div id="challengePlaceholderList" class="placeholder-list"></div></div>
 						</div>

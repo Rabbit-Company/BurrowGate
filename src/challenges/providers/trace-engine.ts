@@ -7,12 +7,15 @@
 
 export type TraceShape = "chokepoint" | "bezier" | "zigzag" | "loop";
 
-export const CANVAS_WIDTH = 700;
-export const CANVAS_HEIGHT = 450;
+// Sized to fit its own default template's ~488px desktop content width with no CSS downscaling at all,
+// and to minimize the physical-to-logical amplification factor on a small phone viewport (~339px
+// available there regardless of template) - see docs/CHALLENGE_PAGES.md's Trace section for the math.
+export const CANVAS_WIDTH = 460;
+export const CANVAS_HEIGHT = 300;
 const CANVAS_MARGIN = 40;
 export const BALL_RADIUS = 10;
 export const TARGET_RADIUS = 16;
-const MIN_EFFECTIVE_WIDTH = BALL_RADIUS * 2 + 8;
+const MIN_EFFECTIVE_WIDTH = BALL_RADIUS * 2 + 28;
 
 export interface Point {
 	x: number;

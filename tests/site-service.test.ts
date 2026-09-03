@@ -200,3 +200,84 @@ describe("seedDefaultSite", () => {
 		expect((await repository.allSites()).length).toBe(countBefore);
 	});
 });
+
+describe("per-provider challenge templates", () => {
+	const validTemplate = (label: string) => `<html><body>${label}{{challengeScript}}</body></html>`;
+
+	test("a fresh site has no per-provider overrides", async () => {
+		const site = await makeSite("challenge-templates-fresh.test");
+		expect(siteView(site).challengePage.templates).toEqual({});
+	});
+
+	test("setting one provider's template does not affect others", async () => {
+		const site = await makeSite("challenge-templates-set.test");
+		const { site: updated } = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { snake: validTemplate("snake") },
+		});
+		expect(siteView(updated).challengePage.templates).toEqual({ snake: validTemplate("snake") });
+	});
+
+	test("a second update touching a different provider merges rather than replacing the first", async () => {
+		const site = await makeSite("challenge-templates-merge.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { snake: validTemplate("snake") },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { password: validTemplate("password") },
+		});
+		expect(siteView(updated).challengePage.templates).toEqual({
+			snake: validTemplate("snake"),
+			password: validTemplate("password"),
+		});
+	});
+
+	test("a blank value removes just that provider's override", async () => {
+		const site = await makeSite("challenge-templates-clear.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { snake: validTemplate("snake"), password: validTemplate("password") },
+		});
+		const { site: updated } = await updateSite(first.site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { snake: "" },
+		});
+		expect(siteView(updated).challengePage.templates).toEqual({ password: validTemplate("password") });
+	});
+
+	test("omitting challengeHtmlTemplates entirely leaves existing overrides untouched", async () => {
+		const site = await makeSite("challenge-templates-omit.test");
+		const first = await updateSite(site.id, {
+			name: site.name,
+			publicHost: site.public_host,
+			originUrl: site.origin_url,
+			challengeHtmlTemplates: { snake: validTemplate("snake") },
+		});
+		const { site: updated } = await updateSite(first.site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(siteView(updated).challengePage.templates).toEqual({ snake: validTemplate("snake") });
+	});
+
+	test("rejects a per-provider template missing the required challengeScript placeholder", async () => {
+		const site = await makeSite("challenge-templates-invalid.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				challengeHtmlTemplates: { snake: "<html><body>no placeholder</body></html>" },
+			}),
+		).rejects.toThrow("challengeScript");
+	});
+});

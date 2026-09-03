@@ -6,27 +6,31 @@
 	const MAX_SAMPLES = 500;
 	const CANVAS_HEIGHT = pieceSize + 24;
 	const CENTER_Y = CANVAS_HEIGHT / 2;
+	const EDGE_PADDING = 10;
 
-	const wrapper = document.createElement("div");
-	wrapper.className = "bg-slider-wrapper";
+	let canvas = document.querySelector('[data-bg-slider="canvas"]');
+	if (!canvas) {
+		const wrapper = document.createElement("div");
+		wrapper.className = "bg-slider-wrapper";
 
-	const canvas = document.createElement("canvas");
-	canvas.width = trackWidth;
+		canvas = document.createElement("canvas");
+		canvas.className = "bg-slider-canvas";
+		wrapper.appendChild(canvas);
+
+		const hint = document.createElement("div");
+		hint.className = "bg-slider-hint";
+		hint.textContent = "Drag the circle into the outlined target";
+		wrapper.appendChild(hint);
+
+		(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
+	}
+	canvas.width = trackWidth + EDGE_PADDING * 2;
 	canvas.height = CANVAS_HEIGHT;
-	canvas.className = "bg-slider-canvas";
-	wrapper.appendChild(canvas);
-
-	const hint = document.createElement("div");
-	hint.className = "bg-slider-hint";
-	hint.textContent = "Drag the circle into the outlined target";
-	wrapper.appendChild(hint);
-
-	(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
 
 	const style = document.createElement("style");
 	style.textContent =
 		".bg-slider-wrapper{display:grid;gap:10px;justify-items:center;margin:18px 0}" +
-		".bg-slider-canvas{display:block;background:#0b1220;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
+		".bg-slider-canvas{display:block;max-width:100%;background:#0b1220;border:1px solid rgba(148,163,184,.35);border-radius:10px;touch-action:none;cursor:grab}" +
 		".bg-slider-canvas.is-dragging{cursor:grabbing}" +
 		".bg-slider-hint{font-size:13px;color:#94a3b8}";
 	document.head.appendChild(style);
@@ -51,25 +55,27 @@
 		context.strokeStyle = "rgba(148,163,184,.35)";
 		context.lineWidth = 2;
 		context.beginPath();
-		context.moveTo(pieceSize / 2, CENTER_Y);
-		context.lineTo(trackWidth - pieceSize / 2, CENTER_Y);
+		context.moveTo(EDGE_PADDING + pieceSize / 2, CENTER_Y);
+		context.lineTo(EDGE_PADDING + trackWidth - pieceSize / 2, CENTER_Y);
 		context.stroke();
 
 		context.strokeStyle = "#22d3ee";
 		context.lineWidth = 2;
 		context.beginPath();
-		context.arc(targetX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
+		context.arc(EDGE_PADDING + targetX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
 		context.stroke();
 
 		context.fillStyle = "#7c3aed";
 		context.beginPath();
-		context.arc(pieceX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
+		context.arc(EDGE_PADDING + pieceX + pieceSize / 2, CENTER_Y, pieceSize / 2, 0, Math.PI * 2);
 		context.fill();
 	}
 
 	function pointerPos(event) {
 		const rect = canvas.getBoundingClientRect();
-		return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+		const scaleX = canvas.width / rect.width;
+		const scaleY = canvas.height / rect.height;
+		return { x: (event.clientX - rect.left) * scaleX - EDGE_PADDING, y: (event.clientY - rect.top) * scaleY };
 	}
 
 	function pushSample(x, y) {

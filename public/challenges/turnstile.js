@@ -4,10 +4,13 @@
 	const startedAt = Date.now();
 	let finished = false;
 
-	const container = document.createElement("div");
-	container.id = "bg-turnstile";
-	container.style.margin = "18px 0";
-	(status ? status.parentNode : document.body).insertBefore(container, status ? status.nextSibling : null);
+	let container = document.querySelector('[data-bg-turnstile="widget"]');
+	if (!container) {
+		container = document.createElement("div");
+		container.id = "bg-turnstile";
+		container.style.margin = "18px 0";
+		(status ? status.parentNode : document.body).insertBefore(container, status ? status.nextSibling : null);
+	}
 
 	async function submit(token) {
 		if (finished) return;

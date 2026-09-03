@@ -116,6 +116,7 @@ export interface SiteRecord {
 	error_html_template: string;
 	error_json_fields_json: string;
 	challenge_html_template: string;
+	challenge_html_templates_json?: string | null;
 	health_check_enabled?: number;
 	health_check_path?: string;
 	health_check_interval_seconds?: number;

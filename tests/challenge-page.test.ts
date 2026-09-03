@@ -1,7 +1,46 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_CHALLENGE_HTML_TEMPLATE, renderChallengePage, validateChallengeHtmlTemplate } from "../src/services/challenge-page-service.ts";
+import {
+	DEFAULT_CHALLENGE_HTML_TEMPLATE,
+	parseStoredChallengeTemplates,
+	renderChallengePage,
+	validateChallengeHtmlTemplate,
+} from "../src/services/challenge-page-service.ts";
 import { powSha256Provider } from "../src/challenges/providers/pow-sha256.ts";
+import type { ChallengeProvider } from "../src/challenges/types.ts";
 import type { ChallengeFlowRecord, ChallengeStepRecord, SiteRecord } from "../src/types.ts";
+
+const fakeProvider: ChallengeProvider = {
+	name: "fake-provider",
+	clientScript: "/_burrowgate/static/challenges/fake-provider.js",
+	title: "Fake challenge",
+	description: "A test-only provider.",
+	defaultHtmlTemplate: "<html><body>fake provider default{{challengeScript}}</body></html>",
+	extraPlaceholders: [{ name: "widgetCount", description: "Test placeholder." }],
+	extraTemplateContext(publicData) {
+		return { widgetCount: String(publicData.widgetCount ?? "") };
+	},
+	async create() {
+		return { publicData: {}, privateData: {} };
+	},
+	async verify() {
+		return { success: true };
+	},
+};
+
+const fakeStep: ChallengeStepRecord = {
+	id: "step_fake",
+	flow_id: "flow_123",
+	step_index: 0,
+	provider: "fake-provider",
+	config_json: "{}",
+	private_data_json: "{}",
+	public_data_json: '{"widgetCount":3}',
+	status: "pending",
+	attempts: 0,
+	created_at: Date.now(),
+	expires_at: Date.now() + 60_000,
+	completed_at: null,
+};
 
 function site(overrides: Partial<SiteRecord> = {}): SiteRecord {
 	return {
@@ -96,5 +135,69 @@ describe("custom site challenge pages", () => {
 		expect(() => validateChallengeHtmlTemplate("<h1>{{title}}</h1>")).toThrow();
 		expect(validateChallengeHtmlTemplate("<h1>{{title}}</h1>{{challengeScript}}")).toContain("{{challengeScript}}");
 		expect(validateChallengeHtmlTemplate(undefined)).toBe(DEFAULT_CHALLENGE_HTML_TEMPLATE);
+	});
+});
+
+describe("per-provider template resolution", () => {
+	test("an untouched site uses the active provider's own default template, not the generic one", () => {
+		const html = renderChallengePage(site(), new Request("https://example.test/"), flow, fakeStep, fakeProvider);
+		expect(html).toContain("fake provider default");
+	});
+
+	test("a provider with no default template falls back to the generic one", () => {
+		const html = renderChallengePage(site(), new Request("https://example.test/"), flow, step, powSha256Provider);
+		expect(html).toContain('id="attempts"'); // only present in DEFAULT_CHALLENGE_HTML_TEMPLATE
+	});
+
+	test("a site's genuinely customized legacy template wins over the provider's own default", () => {
+		const customLegacy = "<html><body>legacy site customization{{challengeScript}}</body></html>";
+		const html = renderChallengePage(site({ challenge_html_template: customLegacy }), new Request("https://example.test/"), flow, fakeStep, fakeProvider);
+		expect(html).toContain("legacy site customization");
+		expect(html).not.toContain("fake provider default");
+	});
+
+	test("an explicit per-provider override wins over both the legacy template and the provider default", () => {
+		const customLegacy = "<html><body>legacy site customization{{challengeScript}}</body></html>";
+		const perProviderOverride = "<html><body>per-provider override{{challengeScript}}</body></html>";
+		const html = renderChallengePage(
+			site({
+				challenge_html_template: customLegacy,
+				challenge_html_templates_json: JSON.stringify({ "fake-provider": perProviderOverride }),
+			}),
+			new Request("https://example.test/"),
+			flow,
+			fakeStep,
+			fakeProvider,
+		);
+		expect(html).toContain("per-provider override");
+		expect(html).not.toContain("legacy site customization");
+		expect(html).not.toContain("fake provider default");
+	});
+
+	test("extraTemplateContext placeholders are substituted the same way as the generic ones", () => {
+		const templateWithPlaceholder = "<html><body>widgets: {{widgetCount}}{{challengeScript}}</body></html>";
+		const html = renderChallengePage(
+			site({ challenge_html_templates_json: JSON.stringify({ "fake-provider": templateWithPlaceholder }) }),
+			new Request("https://example.test/"),
+			flow,
+			fakeStep,
+			fakeProvider,
+		);
+		expect(html).toContain("widgets: 3");
+	});
+});
+
+describe("parseStoredChallengeTemplates", () => {
+	test("returns an empty object for null, empty, or malformed JSON", () => {
+		expect(parseStoredChallengeTemplates(null)).toEqual({});
+		expect(parseStoredChallengeTemplates(undefined)).toEqual({});
+		expect(parseStoredChallengeTemplates("")).toEqual({});
+		expect(parseStoredChallengeTemplates("not json")).toEqual({});
+		expect(parseStoredChallengeTemplates("[]")).toEqual({});
+	});
+
+	test("drops non-string and blank entries but keeps valid ones", () => {
+		const stored = JSON.stringify({ snake: "<html>ok</html>", trace: "", password: 42 });
+		expect(parseStoredChallengeTemplates(stored)).toEqual({ snake: "<html>ok</html>" });
 	});
 });

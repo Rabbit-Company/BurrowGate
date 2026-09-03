@@ -1,5 +1,33 @@
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
 import { simulateSnake } from "./snake-engine.ts";
+
+// Element contract (see docs/CHALLENGE_PAGES.md): [data-bg-snake="canvas"|"score"|"restart"|"overlay"] and
+// [data-bg-snake-move="up"|"down"|"left"|"right"] on any element. These carry the same bg-snake-* classes
+// snake.js would create by default, so this default template renders identically to the old
+// programmatically-built UI - an owner can freely rearrange, restyle, or drop any piece.
+const DEFAULT_TEMPLATE = buildChallengeTemplate({
+	showTitle: false,
+	extraStyle: ".status{min-height:3.3em}",
+	bodyExtra:
+		'<div class="bg-snake-wrapper">' +
+		'<div class="bg-snake-score" data-bg-snake="score"></div>' +
+		'<div class="bg-snake-canvas-wrap">' +
+		'<canvas class="bg-snake-canvas" data-bg-snake="canvas"></canvas>' +
+		'<div class="bg-snake-overlay" data-bg-snake="overlay">' +
+		'<button type="button" class="bg-snake-restart" data-bg-snake="restart">Start</button>' +
+		"</div>" +
+		"</div>" +
+		'<div class="bg-snake-controls">' +
+		'<div class="bg-snake-dpad">' +
+		'<button type="button" data-bg-snake-move="up" aria-label="Up">▲</button>' +
+		'<div class="bg-snake-dpad-row">' +
+		'<button type="button" data-bg-snake-move="left" aria-label="Left">◀</button>' +
+		'<button type="button" data-bg-snake-move="down" aria-label="Down">▼</button>' +
+		'<button type="button" data-bg-snake-move="right" aria-label="Right">▶</button>' +
+		"</div></div>" +
+		"</div>",
+});
 
 const MIN_GRID_SIZE = 10;
 const MAX_GRID_SIZE = 40;
@@ -48,6 +76,14 @@ export const snakeProvider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/snake.js",
 	title: "Eat some apples",
 	description: "This website asks visitors to play a short game of Snake before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
+	extraPlaceholders: [
+		{ name: "applesRequired", description: "Apples required to complete this Snake challenge." },
+		{ name: "gridSize", description: "Snake grid size (cells per side)." },
+	],
+	extraTemplateContext(publicData) {
+		return { applesRequired: String(publicData.applesRequired ?? ""), gridSize: String(publicData.gridSize ?? "") };
+	},
 
 	validateConfig(config) {
 		gridSize(config);

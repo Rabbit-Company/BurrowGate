@@ -1017,6 +1017,20 @@ form.grid label {
 		padding-top: 16px;
 		padding-bottom: 16px;
 	}
+	.shell.challenge {
+		padding: 0;
+	}
+	.auth-card {
+		min-height: 100svh;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
+		background: transparent;
+		padding: 24px 18px;
+	}
 	.stats {
 		grid-template-columns: 1fr;
 	}

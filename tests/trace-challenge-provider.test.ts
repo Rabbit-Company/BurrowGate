@@ -15,7 +15,7 @@ const verifyContext: ChallengeVerifyContext = {
 
 const SEED = 1337;
 const SHAPE = "chokepoint";
-const PATH_WIDTH = 36;
+const PATH_WIDTH = 60;
 const privateData = { shape: SHAPE, pathWidth: PATH_WIDTH, seed: SEED };
 
 function buildRun(track: Track, options: { sampleCount?: number; offsetPx?: number; jitter?: boolean } = {}) {
@@ -62,36 +62,36 @@ describe("seededRandom / generatePathPoints", () => {
 		expect(rng()).toBeCloseTo(0.24431577440753185, 12);
 	});
 
-	test("chokepoint track is pinned for seed 1337 / pathWidth 36", () => {
-		const track = generatePathPoints("chokepoint", 1337, 36);
+	test("chokepoint track is pinned for seed 1337 / pathWidth 60", () => {
+		const track = generatePathPoints("chokepoint", 1337, 60);
 		expect(track.points.length).toBe(151);
-		expect(track.start).toEqual({ x: 40, y: 43.87162643845345 });
-		expect(track.end).toEqual({ x: 660, y: 360.4284165198248 });
-		expect(track.points[75]).toEqual({ x: 350, y: 181.41817880860984, width: 28.138631103846045 });
-		expect(track.points[0]!.width).toBe(36);
-		expect(track.points[150]!.width).toBe(36);
+		expect(track.start).toEqual({ x: 40, y: 42.30204815259394 });
+		expect(track.end).toEqual({ x: 420, y: 230.52500441719312 });
+		expect(track.points[75]).toEqual({ x: 230, y: 115.68168361436423, width: 48.22017881199078 });
+		expect(track.points[0]!.width).toBe(56);
+		expect(track.points[150]!.width).toBe(56);
 	});
 
-	test("bezier track is pinned for seed 42 / pathWidth 36", () => {
-		const track = generatePathPoints("bezier", 42, 36);
-		expect(track.start).toEqual({ x: 40, y: 40.12162160605343 });
-		expect(track.end).toEqual({ x: 660, y: 234.09722766289232 });
-		expect(pathLength(track.points)).toBeCloseTo(687.5090187273545, 6);
+	test("bezier track is pinned for seed 42 / pathWidth 60", () => {
+		const track = generatePathPoints("bezier", 42, 60);
+		expect(track.start).toEqual({ x: 40, y: 40.07231554954529 });
+		expect(track.end).toEqual({ x: 420, y: 155.4091623941522 });
+		expect(pathLength(track.points)).toBeCloseTo(420.37650646609796, 6);
 	});
 
-	test("no track point is ever narrower than the ball's diameter plus slack, across every shape", () => {
+	test("no track point is ever narrower than the ball's diameter plus touch slack, across every shape", () => {
 		for (const shape of ["chokepoint", "bezier", "zigzag", "loop"] as const) {
-			for (const pathWidth of [28, 36, 56]) {
+			for (const pathWidth of [48, 60, 96]) {
 				const track = generatePathPoints(shape, 7, pathWidth);
 				for (const point of track.points) {
-					expect(point.width).toBeGreaterThanOrEqual(28);
+					expect(point.width).toBeGreaterThanOrEqual(48);
 				}
 			}
 		}
 	});
 
 	test("trackMetrics reports no wall hit exactly on the centerline, and a hit far off it", () => {
-		const track = generatePathPoints("chokepoint", 1337, 36);
+		const track = generatePathPoints("chokepoint", 1337, 60);
 		expect(trackMetrics(track.start, track.points).isWallHit).toBe(false);
 		expect(trackMetrics({ x: 0, y: 0 }, track.points).isWallHit).toBe(true);
 	});
@@ -99,29 +99,29 @@ describe("seededRandom / generatePathPoints", () => {
 
 describe("traceProvider", () => {
 	test("validateConfig accepts a valid config", () => {
-		expect(() => traceProvider.validateConfig?.({ shape: "chokepoint", pathWidth: 36 })).not.toThrow();
+		expect(() => traceProvider.validateConfig?.({ shape: "chokepoint", pathWidth: 60 })).not.toThrow();
 	});
 
 	test("validateConfig rejects an invalid or missing shape", () => {
-		expect(() => traceProvider.validateConfig?.({ shape: "spiral", pathWidth: 36 })).toThrow();
-		expect(() => traceProvider.validateConfig?.({ pathWidth: 36 })).toThrow();
+		expect(() => traceProvider.validateConfig?.({ shape: "spiral", pathWidth: 60 })).toThrow();
+		expect(() => traceProvider.validateConfig?.({ pathWidth: 60 })).toThrow();
 	});
 
 	test("validateConfig rejects an out-of-range or missing pathWidth", () => {
-		expect(() => traceProvider.validateConfig?.({ shape: "bezier", pathWidth: 27 })).toThrow();
-		expect(() => traceProvider.validateConfig?.({ shape: "bezier", pathWidth: 57 })).toThrow();
+		expect(() => traceProvider.validateConfig?.({ shape: "bezier", pathWidth: 47 })).toThrow();
+		expect(() => traceProvider.validateConfig?.({ shape: "bezier", pathWidth: 97 })).toThrow();
 		expect(() => traceProvider.validateConfig?.({ shape: "bezier" })).toThrow();
 	});
 
 	test("create returns matching public/private data with a numeric seed", async () => {
 		const material = await traceProvider.create(
 			{ flowId: "flow_1", siteId: "site_1", clientIp: "203.0.113.10", userAgentHash: "ua", expiresAt: Date.now() + 60_000 },
-			{ shape: "zigzag", pathWidth: 40 },
+			{ shape: "zigzag", pathWidth: 70 },
 		);
 		expect(material.publicData).toEqual(material.privateData);
 		expect(material.publicData.kind).toBe("trace");
 		expect(material.publicData.shape).toBe("zigzag");
-		expect(material.publicData.pathWidth).toBe(40);
+		expect(material.publicData.pathWidth).toBe(70);
 		expect(material.publicData.ballRadius).toBe(10);
 		expect(material.publicData.endRadius).toBe(16);
 		expect(typeof material.publicData.seed).toBe("number");

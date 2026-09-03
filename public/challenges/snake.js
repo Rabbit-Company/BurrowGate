@@ -105,47 +105,82 @@
 	let timer = null;
 	const startedAt = Date.now();
 
+	// Element contract: a template may supply any of [data-bg-snake="canvas"], ["score"], ["restart"],
+	// ["overlay"], and [data-bg-snake-move="up"|"down"|"left"|"right"] on any element (a button, an
+	// image, a div - whatever). Each hook is used independently if present; anything missing falls back
+	// to the same programmatically-created default as before, so a template with no hooks at all (every
+	// existing custom template included) behaves exactly as it always has.
+	let canvas = document.querySelector('[data-bg-snake="canvas"]');
+	let scoreEl = document.querySelector('[data-bg-snake="score"]');
+	let restartButton = document.querySelector('[data-bg-snake="restart"]');
+	let overlay = document.querySelector('[data-bg-snake="overlay"]');
+	const moveButtons = {
+		U: document.querySelector('[data-bg-snake-move="up"]'),
+		D: document.querySelector('[data-bg-snake-move="down"]'),
+		L: document.querySelector('[data-bg-snake-move="left"]'),
+		R: document.querySelector('[data-bg-snake-move="right"]'),
+	};
+
 	const availableWidth = Math.min(360, Math.max(200, (window.innerWidth || 360) - 48));
 	const CELL_PX = Math.max(8, Math.min(22, Math.floor(availableWidth / gridSize)));
+
 	const wrapper = document.createElement("div");
 	wrapper.className = "bg-snake-wrapper";
 
-	const scoreEl = document.createElement("div");
-	scoreEl.className = "bg-snake-score";
-	wrapper.appendChild(scoreEl);
+	if (!scoreEl) {
+		scoreEl = document.createElement("div");
+		scoreEl.className = "bg-snake-score";
+		wrapper.appendChild(scoreEl);
+	}
 
-	const canvasWrap = document.createElement("div");
-	canvasWrap.className = "bg-snake-canvas-wrap";
-
-	const canvas = document.createElement("canvas");
+	let canvasWrap = null;
+	if (!canvas) {
+		canvasWrap = document.createElement("div");
+		canvasWrap.className = "bg-snake-canvas-wrap";
+		canvas = document.createElement("canvas");
+		canvas.className = "bg-snake-canvas";
+		canvasWrap.appendChild(canvas);
+	}
 	canvas.width = gridSize * CELL_PX;
 	canvas.height = gridSize * CELL_PX;
-	canvas.className = "bg-snake-canvas";
-	canvasWrap.appendChild(canvas);
 
-	const overlay = document.createElement("div");
-	overlay.className = "bg-snake-overlay";
-	const restartButton = document.createElement("button");
-	restartButton.type = "button";
-	restartButton.textContent = "Restart";
-	restartButton.className = "bg-snake-restart";
-	overlay.appendChild(restartButton);
-	canvasWrap.appendChild(overlay);
-	wrapper.appendChild(canvasWrap);
+	if (!restartButton) {
+		overlay = overlay || document.createElement("div");
+		overlay.className = overlay.className || "bg-snake-overlay";
+		restartButton = document.createElement("button");
+		restartButton.type = "button";
+		restartButton.textContent = "Start";
+		restartButton.className = "bg-snake-restart";
+		overlay.appendChild(restartButton);
+		if (canvasWrap) canvasWrap.appendChild(overlay);
+		else wrapper.appendChild(overlay);
+	} else if (!overlay) {
+		overlay = document.createElement("div");
+	}
+	if (canvasWrap) wrapper.appendChild(canvasWrap);
 
-	const controls = document.createElement("div");
-	controls.className = "bg-snake-controls";
-	controls.innerHTML =
-		'<div class="bg-snake-dpad">' +
-		'<button type="button" data-dir="U" aria-label="Up">▲</button>' +
-		'<div class="bg-snake-dpad-row">' +
-		'<button type="button" data-dir="L" aria-label="Left">◀</button>' +
-		'<button type="button" data-dir="D" aria-label="Down">▼</button>' +
-		'<button type="button" data-dir="R" aria-label="Right">▶</button>' +
-		"</div></div>";
-	wrapper.appendChild(controls);
+	const needsDefaultDpad = Object.values(moveButtons).every((button) => !button);
+	if (needsDefaultDpad) {
+		const controls = document.createElement("div");
+		controls.className = "bg-snake-controls";
+		controls.innerHTML =
+			'<div class="bg-snake-dpad">' +
+			'<button type="button" data-bg-snake-move="up" aria-label="Up">▲</button>' +
+			'<div class="bg-snake-dpad-row">' +
+			'<button type="button" data-bg-snake-move="left" aria-label="Left">◀</button>' +
+			'<button type="button" data-bg-snake-move="down" aria-label="Down">▼</button>' +
+			'<button type="button" data-bg-snake-move="right" aria-label="Right">▶</button>' +
+			"</div></div>";
+		wrapper.appendChild(controls);
+		moveButtons.U = controls.querySelector('[data-bg-snake-move="up"]');
+		moveButtons.D = controls.querySelector('[data-bg-snake-move="down"]');
+		moveButtons.L = controls.querySelector('[data-bg-snake-move="left"]');
+		moveButtons.R = controls.querySelector('[data-bg-snake-move="right"]');
+	}
 
-	(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
+	if (wrapper.childElementCount > 0) {
+		(status ? status.parentNode : document.body).insertBefore(wrapper, status ? status.nextSibling : null);
+	}
 
 	const style = document.createElement("style");
 	style.textContent =
@@ -157,15 +192,17 @@
 		".bg-snake-overlay.is-visible{opacity:1;pointer-events:auto}" +
 		".bg-snake-dpad{display:grid;justify-items:center;gap:6px}" +
 		".bg-snake-dpad-row{display:flex;gap:6px}" +
-		".bg-snake-dpad button,.bg-snake-restart{min-width:44px;min-height:44px;border-radius:8px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.9);color:#e5e7eb;font-size:18px;cursor:pointer}" +
+		".bg-snake-dpad button,.bg-snake-restart{min-height:44px;border-radius:8px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.9);color:#e5e7eb;font-size:18px;cursor:pointer}" +
+		".bg-snake-dpad button{min-width:44px}" +
+		".bg-snake-restart{padding:10px 28px}" +
 		".bg-snake-dpad button:active,.bg-snake-restart:active{background:rgba(139,92,246,.35)}" +
-		"@media (max-width:520px){.bg-snake-dpad button,.bg-snake-restart{min-width:64px;min-height:64px;font-size:26px}.bg-snake-dpad,.bg-snake-dpad-row{gap:10px}}";
+		"@media (max-width:520px){.bg-snake-dpad button,.bg-snake-restart{min-height:64px;font-size:26px}.bg-snake-dpad button{min-width:64px}.bg-snake-restart{padding:14px 36px}.bg-snake-dpad,.bg-snake-dpad-row{gap:10px}}";
 	document.head.appendChild(style);
 
 	const context = canvas.getContext("2d");
 
 	function render() {
-		scoreEl.textContent = `${state.applesEaten} / ${applesRequired}`;
+		if (scoreEl) scoreEl.textContent = `${state.applesEaten} / ${applesRequired}`;
 		context.fillStyle = "#0b1220";
 		context.fillRect(0, 0, canvas.width, canvas.height);
 		const appleX = state.applePos % gridSize;
@@ -184,9 +221,9 @@
 		desiredDirection = direction;
 	}
 
-	controls.querySelectorAll("button[data-dir]").forEach((button) => {
-		button.addEventListener("click", () => setDirection(button.dataset.dir));
-	});
+	for (const [direction, button] of Object.entries(moveButtons)) {
+		if (button) button.addEventListener("click", () => setDirection(direction));
+	}
 
 	const ARROW_KEYS = { ArrowUp: "U", ArrowDown: "D", ArrowLeft: "L", ArrowRight: "R" };
 	const LETTER_KEYS = { w: "U", s: "D", a: "L", d: "R" };
@@ -286,5 +323,5 @@
 
 	render();
 	if (status) status.textContent = statusMessage();
-	timer = setInterval(tick, TICK_MS);
+	overlay.classList.add("is-visible");
 })();

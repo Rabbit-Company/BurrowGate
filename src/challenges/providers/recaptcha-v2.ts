@@ -1,5 +1,10 @@
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../../services/secret-encryption-service.ts";
+import { buildChallengeTemplate } from "../../services/challenge-page-service.ts";
 import type { ChallengeProvider } from "../types.ts";
+
+const DEFAULT_TEMPLATE = buildChallengeTemplate({
+	bodyExtra: '<div data-bg-recaptcha-v2="widget" style="margin:18px 0"></div>',
+});
 
 const SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 const THEMES = new Set(["light", "dark"]);
@@ -34,6 +39,7 @@ export const recaptchaV2Provider: ChallengeProvider = {
 	clientScript: "/_burrowgate/static/challenges/recaptcha-v2.js",
 	title: "Confirm you are human",
 	description: "This website asks visitors to complete a reCAPTCHA challenge before continuing.",
+	defaultHtmlTemplate: DEFAULT_TEMPLATE,
 	cspSources: {
 		scriptSrc: ["https://www.google.com", "https://www.gstatic.com"],
 		frameSrc: ["https://www.google.com"],

@@ -4,10 +4,13 @@
 	const startedAt = Date.now();
 	let finished = false;
 
-	const container = document.createElement("div");
-	container.id = "bg-recaptcha-v2";
-	container.style.margin = "18px 0";
-	(status ? status.parentNode : document.body).insertBefore(container, status ? status.nextSibling : null);
+	let container = document.querySelector('[data-bg-recaptcha-v2="widget"]');
+	if (!container) {
+		container = document.createElement("div");
+		container.id = "bg-recaptcha-v2";
+		container.style.margin = "18px 0";
+		(status ? status.parentNode : document.body).insertBefore(container, status ? status.nextSibling : null);
+	}
 
 	async function submit(token) {
 		if (finished) return;

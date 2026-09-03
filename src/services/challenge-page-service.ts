@@ -82,6 +82,70 @@ export const DEFAULT_CHALLENGE_HTML_TEMPLATE = `<!doctype html>
 </body>
 </html>`;
 
+export interface ChallengeTemplateOptions {
+	/** CSS width for <main> (before the min(...,100%) wrapper) - e.g. "560px" (default) or wider for a canvas game. */
+	mainMaxWidth?: string;
+	/** Markup inserted directly after <p id="status">, before the closing </main> - a provider's widget/canvas/form container, optionally carrying documented data-bg-<provider>-* hooks a site owner can restyle or remap. */
+	bodyExtra?: string;
+	/** Extra CSS rules appended inside the shared <style> block. */
+	extraStyle?: string;
+	/** Set false to omit the <h1>{{title}}</h1> heading entirely - for a provider whose eyebrow description already says the same thing, and where the vertical space matters more (a canvas game on a short mobile viewport). Default true. */
+	showTitle?: boolean;
+}
+
+/**
+ * Shared shell for a provider's own default template - the same head/brand/eyebrow/status/noscript
+ * boilerplate DEFAULT_CHALLENGE_HTML_TEMPLATE has, minus the progress bar and attempts footnote (only
+ * pow-sha256 uses those, and it keeps using DEFAULT_CHALLENGE_HTML_TEMPLATE directly via the resolution
+ * chain's fallback rather than needing its own copy). A provider supplies its own bodyExtra/mainMaxWidth
+ * instead of a client script reaching back into a shared template to add or remove elements at runtime.
+ */
+export function buildChallengeTemplate(options: ChallengeTemplateOptions = {}): string {
+	const mainMaxWidth = options.mainMaxWidth ?? "560px";
+	const bodyExtra = options.bodyExtra ?? "";
+	const extraStyle = options.extraStyle ?? "";
+	const titleMarkup = options.showTitle === false ? "" : "<h1>{{title}}</h1>";
+	return `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="color-scheme" content="dark">
+	<meta name="theme-color" content="#111827">
+	<title>{{title}} - {{siteName}}</title>
+	<link rel="icon" type="image/svg+xml" href="/_burrowgate/static/favicon.svg">
+	<style>
+		:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+		* { box-sizing: border-box; }
+		body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #e5e7eb; background: radial-gradient(circle at top, #312e81 0, #111827 42%, #030712 100%); }
+		main { width: min(${mainMaxWidth}, 100%); padding: 36px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 20px; background: rgba(15, 23, 42, .9); box-shadow: 0 24px 80px rgba(0, 0, 0, .4); }
+		.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; font-weight: 700; }
+		.logo { width: 42px; height: 42px; flex: none; background: url("${LOGO_DATA_URI}") center / contain no-repeat; }
+		.eyebrow { margin: 0 0 10px; color: #94a3b8; font-size: 14px; line-height: 1.6; }
+		h1 { margin: 0 0 22px; font-size: clamp(24px, 5vw, 34px); }
+		.status { margin: 0; color: #cbd5e1; line-height: 1.65; min-height: 1.65em; }
+		noscript { display: block; margin-top: 20px; padding: 12px 14px; border-radius: 10px; background: rgba(190, 18, 60, .16); color: #fda4af; font-size: 13px; }
+		@media (max-width: 520px) {
+			body { padding: 0; }
+			main { width: 100%; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; border: 0; border-radius: 0; box-shadow: none; padding: 24px 18px; }
+		}
+		${extraStyle}
+	</style>
+</head>
+<body>
+	<main>
+		<div class="brand"><span class="logo"></span><span>BurrowGate</span></div>
+		<p class="eyebrow">{{description}}</p>
+		${titleMarkup}
+		<p id="status" class="status">Starting challenge...</p>
+		${bodyExtra}
+		<noscript>JavaScript is required to complete this challenge. Enable it and reload to continue.</noscript>
+	</main>
+	{{challengeScript}}
+</body>
+</html>`;
+}
+
 interface ChallengeContext {
 	title: string;
 	description: string;
@@ -114,13 +178,13 @@ function contextFor(site: SiteRecord, request: Request, provider: ChallengeProvi
 	};
 }
 
-function challengeScript(flow: ChallengeFlowRecord, step: ChallengeStepRecord, provider: ChallengeProvider): string {
+function challengeScript(flow: ChallengeFlowRecord, provider: ChallengeProvider, publicData: unknown): string {
 	// Server-generated markup: never HTML-escaped. The bootstrap JSON is neutralized against
 	// "</script>" breakout the same way the previous hard-coded page did.
 	const bootstrap = JSON.stringify({
 		flowId: flow.id,
 		provider: provider.name,
-		publicData: JSON.parse(step.public_data_json),
+		publicData,
 		minimumDisplayMs: config.challengeMinDisplayMs,
 	}).replaceAll("<", "\\u003c");
 	return `<script>window.__BURROWGATE_CHALLENGE__=${bootstrap};</script><script src="${escapeHtml(provider.clientScript)}"></script>`;
@@ -135,6 +199,39 @@ export function validateChallengeHtmlTemplate(value: unknown, fallback = DEFAULT
 	return template;
 }
 
+/** Parses `sites.challenge_html_templates_json` - only non-empty string entries survive, everything else (malformed JSON, wrong shape, blank values) is silently dropped so a resolution never throws over stored template data. */
+export function parseStoredChallengeTemplates(json: string | null | undefined): Record<string, string> {
+	if (!json) return {};
+	try {
+		const parsed: unknown = JSON.parse(json);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const result: Record<string, string> = {};
+		for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+			if (typeof value === "string" && value) result[key] = value;
+		}
+		return result;
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Most-specific first: an explicit per-provider override, then the site's own legacy general
+ * template (but only if it was actually edited - createSite persists the literal
+ * DEFAULT_CHALLENGE_HTML_TEMPLATE text for a site that never touched the field, so an untouched
+ * site must fall through to the provider's own default rather than getting stuck on that copy),
+ * then the provider's own default, then the generic default for a provider that doesn't have one.
+ */
+function resolveChallengeTemplate(site: SiteRecord, provider: ChallengeProvider): string {
+	const overrides = parseStoredChallengeTemplates(site.challenge_html_templates_json);
+	const perProviderOverride = overrides[provider.name];
+	if (perProviderOverride) return perProviderOverride;
+	if (site.challenge_html_template && site.challenge_html_template !== DEFAULT_CHALLENGE_HTML_TEMPLATE) {
+		return site.challenge_html_template;
+	}
+	return provider.defaultHtmlTemplate ?? DEFAULT_CHALLENGE_HTML_TEMPLATE;
+}
+
 export function renderChallengePage(
 	site: SiteRecord,
 	request: Request,
@@ -143,12 +240,17 @@ export function renderChallengePage(
 	provider: ChallengeProvider,
 ): string {
 	const context = contextFor(site, request, provider);
-	const template = site.challenge_html_template || DEFAULT_CHALLENGE_HTML_TEMPLATE;
+	const publicData = JSON.parse(step.public_data_json) as Record<string, unknown>;
+	const extraContext = provider.extraTemplateContext?.(publicData) ?? {};
+	const template = resolveChallengeTemplate(site, provider);
 	let result = template;
 	for (const placeholder of CHALLENGE_TEMPLATE_PLACEHOLDERS) {
 		if (placeholder.name === "challengeScript") continue;
 		result = result.replaceAll(`{{${placeholder.name}}}`, escapeHtml(context[placeholder.name as keyof ChallengeContext]));
 	}
+	for (const [name, value] of Object.entries(extraContext)) {
+		result = result.replaceAll(`{{${name}}}`, escapeHtml(value));
+	}
 	// Injected last, unescaped, so template values can never smuggle markup into the script region.
-	return result.replaceAll("{{challengeScript}}", challengeScript(flow, step, provider));
+	return result.replaceAll("{{challengeScript}}", challengeScript(flow, provider, publicData));
 }

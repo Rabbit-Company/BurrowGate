@@ -226,6 +226,11 @@ let editingPermissionsUserId = null;
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
 let challengeDefaults = { htmlTemplate: "", placeholders: [] };
+let challengeProviders = [];
+let challengeTemplateSite = null;
+let challengeTemplateValues = {};
+let challengeTemplateOriginal = {};
+let activeChallengeTemplateProvider = null;
 let botCatalog = [];
 let networkPrivacyCategories = [];
 let websocketDefaults = {
@@ -509,7 +514,7 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 				options: ["chokepoint", "bezier", "zigzag", "loop"],
 				default: "chokepoint",
 			},
-			{ key: "pathWidth", label: "Path width (px)", type: "number", min: 28, max: 56, default: 36, required: true },
+			{ key: "pathWidth", label: "Path width (px)", type: "number", min: 48, max: 96, default: 60, required: true },
 		],
 	},
 	password: {
@@ -2030,13 +2035,74 @@ function renderErrorResponseOptions() {
 		.join("");
 }
 
-function renderChallengePlaceholders() {
-	byId("challengePlaceholderList").innerHTML = (challengeDefaults.placeholders ?? [])
+function challengeProviderEntry(providerName) {
+	return challengeProviders.find((provider) => provider.name === providerName);
+}
+
+function renderChallengePlaceholders(providerName) {
+	const extra = challengeProviderEntry(providerName)?.extraPlaceholders ?? [];
+	byId("challengePlaceholderList").innerHTML = [...(challengeDefaults.placeholders ?? []), ...extra]
 		.map(
 			(placeholder) =>
 				`<div class="placeholder-item"><code>&#123;&#123;${escapeHtml(placeholder.name)}&#125;&#125;</code><small>${escapeHtml(placeholder.description)}</small></div>`,
 		)
 		.join("");
+}
+
+function challengeInheritedTemplate(providerName) {
+	const legacy = challengeTemplateSite?.challengePage?.htmlTemplate;
+	if (legacy && legacy !== challengeDefaults.htmlTemplate) return legacy;
+	return challengeProviderEntry(providerName)?.defaultHtmlTemplate ?? challengeDefaults.htmlTemplate ?? "";
+}
+
+function challengeEffectiveTemplate(providerName) {
+	return challengeTemplateSite?.challengePage?.templates?.[providerName] ?? challengeInheritedTemplate(providerName);
+}
+
+function renderChallengeTemplateTabs() {
+	byId("challengeTemplateTabs").innerHTML = challengeProviders
+		.map((provider) => {
+			const active = provider.name === activeChallengeTemplateProvider;
+			const label = CHALLENGE_PROVIDER_SCHEMAS[provider.name]?.label ?? provider.name;
+			return `<button class="site-editor-tab${active ? " active" : ""}" role="tab" type="button" data-challenge-template-tab="${escapeHtml(provider.name)}" aria-selected="${active}">${escapeHtml(label)}</button>`;
+		})
+		.join("");
+}
+
+function switchChallengeTemplateTab(providerName) {
+	if (activeChallengeTemplateProvider) {
+		challengeTemplateValues[activeChallengeTemplateProvider] = byId("siteChallengeHtmlTemplate").value;
+	}
+	activeChallengeTemplateProvider = providerName;
+	if (!(providerName in challengeTemplateValues)) {
+		const effective = challengeEffectiveTemplate(providerName);
+		challengeTemplateValues[providerName] = effective;
+		challengeTemplateOriginal[providerName] = effective;
+	}
+	byId("siteChallengeHtmlTemplate").value = challengeTemplateValues[providerName];
+	renderChallengeTemplateTabs();
+	renderChallengePlaceholders(providerName);
+}
+
+function resetChallengeTemplateEditor(site) {
+	challengeTemplateSite = site;
+	challengeTemplateValues = {};
+	challengeTemplateOriginal = {};
+	activeChallengeTemplateProvider = null;
+	switchChallengeTemplateTab(challengeProviders[0]?.name ?? "pow-sha256");
+}
+
+function collectChallengeHtmlTemplates() {
+	if (activeChallengeTemplateProvider) {
+		challengeTemplateValues[activeChallengeTemplateProvider] = byId("siteChallengeHtmlTemplate").value;
+	}
+	const result = {};
+	for (const provider of challengeProviders) {
+		const value = challengeTemplateValues[provider.name];
+		if (value === undefined || value === challengeTemplateOriginal[provider.name]) continue;
+		result[provider.name] = value;
+	}
+	return result;
 }
 
 function selectedErrorJsonFields() {
@@ -2730,7 +2796,7 @@ function resetSiteForm() {
 	byId("siteErrorHtmlTemplate").value = errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(errorResponseDefaults.jsonFields ?? []);
 	updateErrorResponseControls();
-	byId("siteChallengeHtmlTemplate").value = challengeDefaults.htmlTemplate ?? "";
+	resetChallengeTemplateEditor(null);
 	byId("siteSigningSecret").value = "";
 	byId("siteSigningSecret").type = "password";
 	byId("siteFormTitle").textContent = "Create site";
@@ -2805,7 +2871,7 @@ function editSite(id) {
 	byId("siteErrorHtmlTemplate").value = site.errorResponse?.htmlTemplate ?? errorResponseDefaults.htmlTemplate ?? "";
 	setErrorJsonFields(site.errorResponse?.jsonFields ?? errorResponseDefaults.jsonFields ?? []);
 	updateErrorResponseControls();
-	byId("siteChallengeHtmlTemplate").value = site.challengePage?.htmlTemplate ?? challengeDefaults.htmlTemplate ?? "";
+	resetChallengeTemplateEditor(site);
 	byId("siteFormTitle").textContent = `Edit ${site.name}`;
 	byId("siteFormSubtitle").textContent = "Changes apply to new requests immediately. Existing session expiration timestamps are unchanged.";
 	byId("siteSecretHelp").textContent = "Leave blank to keep the current secret, or enter a new value to rotate it.";
@@ -2869,7 +2935,8 @@ async function loadSites() {
 	errorResponseDefaults = response.errorResponseDefaults ?? errorResponseDefaults;
 	renderErrorResponseOptions();
 	challengeDefaults = response.challengeDefaults ?? challengeDefaults;
-	renderChallengePlaceholders();
+	challengeProviders = response.challengeProviders ?? challengeProviders;
+	renderChallengePlaceholders(activeChallengeTemplateProvider);
 	errorResponseOptionsLoaded = true;
 	if (firstErrorOptionsLoad && !editingSiteId) resetSiteForm();
 	else if (previousErrorJsonFields) setErrorJsonFields(previousErrorJsonFields);
@@ -3009,7 +3076,7 @@ async function saveSite(event) {
 		errorResponseMode,
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
 		errorJsonFields,
-		challengeHtmlTemplate: byId("siteChallengeHtmlTemplate").value,
+		challengeHtmlTemplates: collectChallengeHtmlTemplates(),
 		healthCheck: {
 			enabled: byId("siteHealthEnabled").checked,
 			path: byId("siteHealthPath").value.trim(),
@@ -5978,8 +6045,15 @@ function bindActions() {
 		showToast("Default HTML error template restored. Save the site to apply it.");
 	});
 	byId("resetChallengeHtmlTemplate").addEventListener("click", () => {
-		byId("siteChallengeHtmlTemplate").value = challengeDefaults.htmlTemplate ?? "";
-		showToast("Default challenge template restored. Save the site to apply it.");
+		if (!activeChallengeTemplateProvider) return;
+		const providerDefault = challengeProviderEntry(activeChallengeTemplateProvider)?.defaultHtmlTemplate ?? challengeDefaults.htmlTemplate ?? "";
+		challengeTemplateValues[activeChallengeTemplateProvider] = providerDefault;
+		byId("siteChallengeHtmlTemplate").value = providerDefault;
+		showToast("Default template restored for this challenge. Save the site to apply it.");
+	});
+	byId("challengeTemplateTabs").addEventListener("click", (event) => {
+		const button = event.target.closest("[data-challenge-template-tab]");
+		if (button) switchChallengeTemplateTab(button.dataset.challengeTemplateTab);
 	});
 	byId("tlsSettingsForm").addEventListener("submit", (event) => void saveTlsSettings(event).catch((error) => showToast(error.message, "bad")));
 	byId("acmeForm").addEventListener("submit", (event) => void requestAcmeCertificate(event).catch((error) => showToast(error.message, "bad")));
