@@ -305,67 +305,68 @@ BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPD
 
 ## Configuration
 
-| Variable                                  | Default                              | Description                                                                                |
-| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `BG_ENV`                                  | `production`                         | Runtime environment                                                                        |
-| `BG_HOST`                                 | `0.0.0.0`                            | Listener address                                                                           |
-| `BG_HTTP_ENABLED`                         | `true`                               | Enable the HTTP listener                                                                   |
-| `BG_HTTP_PORT`                            | `80`                                 | Internal HTTP port                                                                         |
-| `BG_HTTP_PUBLIC_PORT`                     | `80`                                 | Public HTTP port used in redirects and ACME validation                                     |
-| `BG_HTTPS_ENABLED`                        | `true`                               | Enable the HTTPS listener                                                                  |
-| `BG_HTTPS_PORT`                           | `443`                                | Internal HTTPS port                                                                        |
-| `BG_HTTPS_PUBLIC_PORT`                    | `443`                                | Public HTTPS port used in redirects                                                        |
-| `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`        | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload |
-| `BG_HTTP3_ENABLED`                        | `false`                              | (Experimental) Add a UDP HTTP/3 listener next to HTTPS; see `docs/TLS.md`                  |
-| `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                       |
-| `BG_ADMIN_USERNAME`                       | `admin`                              | Dashboard username                                                                         |
-| `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                         |
-| `BG_COOKIE_SECURE`                        | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                   |
-| `BG_MASTER_KEY`                           | generated                            | Encrypts certificate and ACME private keys                                                 |
-| `BG_FILE_LOGGING_ENABLED`                 | `false`                              | Store structured application logs in node-local daily text files                           |
-| `BG_LOG_LEVEL`                            | `info`                               | Console and file threshold: error, warn, audit, info, http, debug, verbose, or silly       |
-| `BG_LOG_DIRECTORY`                        | `./data/logs`                        | Directory for daily log files, compressed archives, and node-local logging settings        |
-| `BG_LOG_COMPRESS_AFTER_DAYS`              | `1`                                  | Compress plain-text daily logs after this many calendar days                               |
-| `BG_LOG_RETENTION_DAYS`                   | `30`                                 | Delete daily logs and compressed archives after this many calendar days                    |
-| `BG_EVENT_RETENTION_DAYS`                 | `7`                                  | Default monitoring retention assigned to new sites and streams                             |
-| `BG_BANDWIDTH_FLUSH_INTERVAL_MS`          | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                        |
-| `BG_BANDWIDTH_MAX_PENDING_KEYS`           | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets    |
-| `BG_HTTP_CACHE_MAX_ENTRIES`               | `2048`                               | Maximum static-asset cache entries held by one BurrowGate process                          |
-| `BG_HTTP_CACHE_MAX_BYTES`                 | `268435456`                          | Maximum total in-memory static-asset cache size                                            |
-| `BG_HTTP_CACHE_MAX_OBJECT_BYTES`          | `33554432`                           | Instance ceiling for one cacheable response body                                           |
-| `BG_BODY_CAPTURE_MAX_BYTES_CEILING`       | `1048576`                            | Instance ceiling for one captured request or response body                                 |
-| `BG_ACCESS_LOGIN_MAX_FAILURE_KEYS`        | `50000`                              | Maximum access-login failure keys retained in memory                                       |
-| `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` | `300`                                | Lifetime of short-lived assertions used for cross-site session introspection               |
-| `BG_MAINTENANCE_INTERVAL_SECONDS`         | `3600`                               | Interval between GeoIP and certificate housekeeping runs                                   |
-| `BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS` | `60`                                 | Interval between short incremental retention-cleanup runs                                  |
-| `BG_MAINTENANCE_CLEANUP_BATCH_SIZE`       | `250`                                | Maximum rows removed by one cleanup write                                                  |
-| `BG_MAINTENANCE_CLEANUP_PAUSE_MS`         | `25`                                 | Event-loop pause between cleanup writes                                                    |
-| `BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS`   | `5000`                               | Maximum incremental-cleanup time per maintenance run                                       |
-| `BG_PENDING_CHANGE_POLL_INTERVAL_SECONDS` | `15`                                 | Interval between checks for due scheduled Site/Stream changes                              |
-| `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                      |
-| `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                |
-| `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP/ASN reader cache entries                                                     |
-| `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when a MMDB file is not available yet                                       |
-| `BG_GEOIP_ASN_ENABLED`                    | same as `BG_GEOIP_ENABLED`           | Enable ASN enrichment                                                                      |
-| `BG_GEOIP_ASN_DATABASE_PATH`              | `./data/geoip/GeoLite2-ASN.mmdb`     | Local MaxMind ASN database path                                                            |
-| `BG_OPENMETRICS_ENABLED`                  | `false`                              | Expose `/_burrowgate/metrics` for Prometheus-compatible scraping                           |
-| `BG_OPENMETRICS_TOKEN`                    | empty                                | Optional bearer token protecting the OpenMetrics endpoint                                  |
-| `BG_UPDATE_CHECK_ENABLED`                 | `true`                               | Check GitHub Releases for a newer version and show a dashboard badge                       |
-| `BG_UPDATE_CHECK_INTERVAL_HOURS`          | `1`                                  | How often to check for a newer version                                                     |
-| `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                       |
-| `BG_WEBSOCKET_ENABLED`                    | `true`                               | Enable WebSocket proxying                                                                  |
-| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS`       | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                              |
-| `BG_STREAM_IDLE_TIMEOUT_SECONDS`          | `300`                                | Idle timeout for established TCP streams                                                   |
-| `BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS` | `60`                                 | Inactivity interval used to close a synthetic UDP peer session                             |
-| `BG_STREAM_MAX_BUFFERED_BYTES`            | `1048576`                            | Maximum queued TCP data per proxied connection                                             |
-| `BG_STREAM_MAX_UDP_PEERS`                 | `10000`                              | Maximum tracked UDP peers per configured stream                                            |
-| `BG_STREAM_MAX_PENDING_EVENTS`            | `100000`                             | Maximum queued Stream lifecycle events during a database outage                            |
-| `BG_ACME_DIRECTORY_URL`                   | Let's Encrypt production             | ACME directory URL                                                                         |
-| `BG_ACME_EMAIL`                           | empty                                | Default ACME contact email                                                                 |
-| `BG_HA_PORT`                              | `7443`                               | Port for the replication link to other BurrowGate nodes (see `docs/HIGH_AVAILABILITY.md`)  |
-| `BG_HA_CHANGELOG_RETENTION_DAYS`          | `30`                                 | How long replication changelog history is kept before pruning                              |
-| `BG_HA_DISCONNECTED_READY_GRACE_SECONDS`  | `60`                                 | How long a replica stays "ready" behind the load balancer after losing the primary link    |
-| `BG_HA_MAX_SYNC_STALENESS_SECONDS`        | `30`                                 | Maximum replication lag before a replica marks itself not ready                            |
+| Variable                                  | Default                              | Description                                                                                     |
+| ----------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `BG_ENV`                                  | `production`                         | Runtime environment                                                                             |
+| `BG_HOST`                                 | `0.0.0.0`                            | Listener address                                                                                |
+| `BG_HTTP_ENABLED`                         | `true`                               | Enable the HTTP listener                                                                        |
+| `BG_HTTP_PORT`                            | `80`                                 | Internal HTTP port                                                                              |
+| `BG_HTTP_PUBLIC_PORT`                     | `80`                                 | Public HTTP port used in redirects and ACME validation                                          |
+| `BG_HTTPS_ENABLED`                        | `true`                               | Enable the HTTPS listener                                                                       |
+| `BG_HTTPS_PORT`                           | `443`                                | Internal HTTPS port                                                                             |
+| `BG_HTTPS_PUBLIC_PORT`                    | `443`                                | Public HTTPS port used in redirects                                                             |
+| `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`        | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload      |
+| `BG_HTTP2_ENABLED`                        | `false`                              | (Experimental) Serve HTTP/2 over the same HTTPS port/connection via TLS ALPN; see `docs/TLS.md` |
+| `BG_HTTP3_ENABLED`                        | `false`                              | (Experimental) Add a UDP HTTP/3 listener next to HTTPS; see `docs/TLS.md`                       |
+| `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                            |
+| `BG_ADMIN_USERNAME`                       | `admin`                              | Dashboard username                                                                              |
+| `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                              |
+| `BG_COOKIE_SECURE`                        | `auto`                               | Use secure cookies on HTTPS and ordinary cookies on HTTP                                        |
+| `BG_MASTER_KEY`                           | generated                            | Encrypts certificate and ACME private keys                                                      |
+| `BG_FILE_LOGGING_ENABLED`                 | `false`                              | Store structured application logs in node-local daily text files                                |
+| `BG_LOG_LEVEL`                            | `info`                               | Console and file threshold: error, warn, audit, info, http, debug, verbose, or silly            |
+| `BG_LOG_DIRECTORY`                        | `./data/logs`                        | Directory for daily log files, compressed archives, and node-local logging settings             |
+| `BG_LOG_COMPRESS_AFTER_DAYS`              | `1`                                  | Compress plain-text daily logs after this many calendar days                                    |
+| `BG_LOG_RETENTION_DAYS`                   | `30`                                 | Delete daily logs and compressed archives after this many calendar days                         |
+| `BG_EVENT_RETENTION_DAYS`                 | `7`                                  | Default monitoring retention assigned to new sites and streams                                  |
+| `BG_BANDWIDTH_FLUSH_INTERVAL_MS`          | `10000`                              | Interval for flushing aggregated bandwidth counters to the database                             |
+| `BG_BANDWIDTH_MAX_PENDING_KEYS`           | `50000`                              | Maximum exact in-memory site/IP/minute keys before new IPs use country overflow buckets         |
+| `BG_HTTP_CACHE_MAX_ENTRIES`               | `2048`                               | Maximum static-asset cache entries held by one BurrowGate process                               |
+| `BG_HTTP_CACHE_MAX_BYTES`                 | `268435456`                          | Maximum total in-memory static-asset cache size                                                 |
+| `BG_HTTP_CACHE_MAX_OBJECT_BYTES`          | `33554432`                           | Instance ceiling for one cacheable response body                                                |
+| `BG_BODY_CAPTURE_MAX_BYTES_CEILING`       | `1048576`                            | Instance ceiling for one captured request or response body                                      |
+| `BG_ACCESS_LOGIN_MAX_FAILURE_KEYS`        | `50000`                              | Maximum access-login failure keys retained in memory                                            |
+| `BG_ACCESS_SESSION_ASSERTION_TTL_SECONDS` | `300`                                | Lifetime of short-lived assertions used for cross-site session introspection                    |
+| `BG_MAINTENANCE_INTERVAL_SECONDS`         | `3600`                               | Interval between GeoIP and certificate housekeeping runs                                        |
+| `BG_MAINTENANCE_CLEANUP_INTERVAL_SECONDS` | `60`                                 | Interval between short incremental retention-cleanup runs                                       |
+| `BG_MAINTENANCE_CLEANUP_BATCH_SIZE`       | `250`                                | Maximum rows removed by one cleanup write                                                       |
+| `BG_MAINTENANCE_CLEANUP_PAUSE_MS`         | `25`                                 | Event-loop pause between cleanup writes                                                         |
+| `BG_MAINTENANCE_CLEANUP_TIME_BUDGET_MS`   | `5000`                               | Maximum incremental-cleanup time per maintenance run                                            |
+| `BG_PENDING_CHANGE_POLL_INTERVAL_SECONDS` | `15`                                 | Interval between checks for due scheduled Site/Stream changes                                   |
+| `BG_GEOIP_ENABLED`                        | `true`                               | Enable country-level GeoIP enrichment                                                           |
+| `BG_GEOIP_DATABASE_PATH`                  | `./data/geoip/GeoLite2-Country.mmdb` | Local MaxMind database path                                                                     |
+| `BG_GEOIP_CACHE_ENTRIES`                  | `4096`                               | Maximum GeoIP/ASN reader cache entries                                                          |
+| `BG_GEOIP_RETRY_SECONDS`                  | `30`                                 | Retry interval when a MMDB file is not available yet                                            |
+| `BG_GEOIP_ASN_ENABLED`                    | same as `BG_GEOIP_ENABLED`           | Enable ASN enrichment                                                                           |
+| `BG_GEOIP_ASN_DATABASE_PATH`              | `./data/geoip/GeoLite2-ASN.mmdb`     | Local MaxMind ASN database path                                                                 |
+| `BG_OPENMETRICS_ENABLED`                  | `false`                              | Expose `/_burrowgate/metrics` for Prometheus-compatible scraping                                |
+| `BG_OPENMETRICS_TOKEN`                    | empty                                | Optional bearer token protecting the OpenMetrics endpoint                                       |
+| `BG_UPDATE_CHECK_ENABLED`                 | `true`                               | Check GitHub Releases for a newer version and show a dashboard badge                            |
+| `BG_UPDATE_CHECK_INTERVAL_HOURS`          | `1`                                  | How often to check for a newer version                                                          |
+| `BG_DEFAULT_POW_DIFFICULTY`               | `18`                                 | Default SHA-256 challenge difficulty                                                            |
+| `BG_WEBSOCKET_ENABLED`                    | `true`                               | Enable WebSocket proxying                                                                       |
+| `BG_WEBSOCKET_IDLE_TIMEOUT_SECONDS`       | `120`                                | WebSocket idle timeout from 10 to 960 seconds                                                   |
+| `BG_STREAM_IDLE_TIMEOUT_SECONDS`          | `300`                                | Idle timeout for established TCP streams                                                        |
+| `BG_STREAM_UDP_PEER_IDLE_TIMEOUT_SECONDS` | `60`                                 | Inactivity interval used to close a synthetic UDP peer session                                  |
+| `BG_STREAM_MAX_BUFFERED_BYTES`            | `1048576`                            | Maximum queued TCP data per proxied connection                                                  |
+| `BG_STREAM_MAX_UDP_PEERS`                 | `10000`                              | Maximum tracked UDP peers per configured stream                                                 |
+| `BG_STREAM_MAX_PENDING_EVENTS`            | `100000`                             | Maximum queued Stream lifecycle events during a database outage                                 |
+| `BG_ACME_DIRECTORY_URL`                   | Let's Encrypt production             | ACME directory URL                                                                              |
+| `BG_ACME_EMAIL`                           | empty                                | Default ACME contact email                                                                      |
+| `BG_HA_PORT`                              | `7443`                               | Port for the replication link to other BurrowGate nodes (see `docs/HIGH_AVAILABILITY.md`)       |
+| `BG_HA_CHANGELOG_RETENTION_DAYS`          | `30`                                 | How long replication changelog history is kept before pruning                                   |
+| `BG_HA_DISCONNECTED_READY_GRACE_SECONDS`  | `60`                                 | How long a replica stays "ready" behind the load balancer after losing the primary link         |
+| `BG_HA_MAX_SYNC_STALENESS_SECONDS`        | `30`                                 | Maximum replication lag before a replica marks itself not ready                                 |
 
 See [`.env.example`](.env.example) for every available setting.
 

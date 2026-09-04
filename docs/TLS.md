@@ -108,6 +108,18 @@ If the nameserver rejects an update, the certificate event log shows the DNS RCO
 
 BurrowGate stores `next_renewal_at` for ACME-managed certificates. Maintenance checks due certificates automatically. A failed renewal does not overwrite the currently active certificate. Errors and issuance activity appear in the site's TLS panel.
 
+## HTTP/2 (experimental)
+
+BurrowGate can serve HTTP/2 (`h2`) over the same HTTPS listener, port, and TLS connection as HTTP/1.1 - unlike HTTP/3 below, this needs no separate listener or client-visible upgrade step, since the protocol is negotiated during the TLS handshake itself (ALPN). It's off by default and gated behind:
+
+```toml
+BG_HTTP2_ENABLED=true
+```
+
+When enabled, a client that offers `h2` in its TLS handshake gets served over HTTP/2. A client that doesn't (or that isn't using TLS) keeps getting HTTP/1.1 unchanged. This is an instance-wide toggle applying to every site, since all sites share the one HTTPS listener - there is no per-site setting. It's unrelated to the per-site "Outbound connection protocol" setting, which controls BurrowGate -> origin connections, not client -> BurrowGate ones.
+
+Leave this off unless you specifically want to experiment with it.
+
 ## HTTP/3 (experimental)
 
 BurrowGate can add a UDP HTTP/3 listener next to the existing HTTPS TCP listener. It's off by default and gated behind:
@@ -116,7 +128,7 @@ BurrowGate can add a UDP HTTP/3 listener next to the existing HTTPS TCP listener
 BG_HTTP3_ENABLED=true
 ```
 
-When enabled, BurrowGate advertises HTTP/3 via the `Alt-Svc` response header and lets clients upgrade on their own - HTTP/1.1 keeps working over TCP unchanged, and this instance-wide toggle applies to every site since all sites share the one HTTPS listener (there is no per-site HTTP/3 setting).
+When enabled, BurrowGate advertises HTTP/3 via the `Alt-Svc` response header and lets clients upgrade on their own - HTTP/1.1 keeps working over TCP unchanged, and this instance-wide toggle applies to every site since all sites share the one HTTPS listener (there is no per-site HTTP/3 setting). `BG_HTTP2_ENABLED` and `BG_HTTP3_ENABLED` are independent and can both be on at once.
 
 Leave this off unless you specifically want to experiment with it.
 

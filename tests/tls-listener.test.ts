@@ -81,4 +81,49 @@ describe("HTTPS listener replacement", () => {
 		}
 		expect(seen).toEqual([undefined, true]);
 	});
+
+	test("only passes http2 to the HTTPS listener when BG_HTTP2_ENABLED is on", async () => {
+		const seen: Array<boolean | undefined> = [];
+		const manager = new TlsListenerManager({} as any, {
+			serve(options) {
+				seen.push((options as { http2?: boolean }).http2);
+				return fakeServer([], "server");
+			},
+			managedCertificates: async () => [certificate()],
+			bootstrapCertificate: async () => null,
+		});
+
+		await manager.reloadHttps();
+		expect(seen).toEqual([undefined]);
+
+		config.https.http2Enabled = true;
+		try {
+			await manager.reloadHttps();
+		} finally {
+			config.https.http2Enabled = false;
+		}
+		expect(seen).toEqual([undefined, true]);
+	});
+
+	test("http2 and http3 can both be enabled on the same HTTPS listener", async () => {
+		const seen: Array<{ http2?: boolean; http3?: boolean }> = [];
+		const manager = new TlsListenerManager({} as any, {
+			serve(options) {
+				seen.push({ http2: (options as { http2?: boolean }).http2, http3: (options as { http3?: boolean }).http3 });
+				return fakeServer([], "server");
+			},
+			managedCertificates: async () => [certificate()],
+			bootstrapCertificate: async () => null,
+		});
+
+		config.https.http2Enabled = true;
+		config.https.http3Enabled = true;
+		try {
+			await manager.reloadHttps();
+		} finally {
+			config.https.http2Enabled = false;
+			config.https.http3Enabled = false;
+		}
+		expect(seen).toEqual([{ http2: true, http3: true }]);
+	});
 });
