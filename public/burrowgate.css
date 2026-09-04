@@ -1212,6 +1212,9 @@ form.grid label {
 .site-origin-field {
 	grid-column: span 2;
 }
+.site-form-grid .field-full {
+	grid-column: 1 / -1;
+}
 .site-form small {
 	line-height: 1.45;
 }
@@ -1326,6 +1329,43 @@ form.grid label {
 	min-width: 160px;
 }
 .challenge-step-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+.quiz-questions-field {
+	display: grid;
+	gap: 7px;
+	color: #94a3b8;
+	font-size: 12px;
+}
+.quiz-question-list {
+	display: grid;
+	gap: 12px;
+}
+.quiz-question-item {
+	display: grid;
+	gap: 10px;
+	padding: 13px 14px;
+	border: 1px solid #2b3648;
+	border-radius: 12px;
+	background: rgba(15, 23, 42, 0.66);
+}
+.quiz-question-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	justify-content: space-between;
+}
+.quiz-question-order {
+	font-weight: 700;
+	color: #94a3b8;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.quiz-question-actions {
 	display: flex;
 	gap: 8px;
 	flex-wrap: wrap;

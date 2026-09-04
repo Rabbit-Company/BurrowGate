@@ -508,7 +508,7 @@ function parseChallengeCspOverrides(value: unknown, existing?: SiteRecord): Reco
 	return result;
 }
 
-export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyStep[]): ChallengePolicyStep[] {
+export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyStep[], strict = true): ChallengePolicyStep[] {
 	let parsed = value;
 	if (typeof parsed === "string") {
 		try {
@@ -527,12 +527,12 @@ export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyS
 		}
 		const record = item as Record<string, unknown>;
 		const providerName = requiredString(record.provider, `Challenge step ${index + 1} provider`, 128);
-		const provider = challengeRegistry.get(providerName);
+		const provider = strict ? challengeRegistry.get(providerName) : challengeRegistry.tryGet(providerName);
 		const providerConfig = record.config === undefined ? {} : record.config;
 		if (!providerConfig || typeof providerConfig !== "object" || Array.isArray(providerConfig)) {
 			throw new Error(`Challenge step ${index + 1} config must be an object`);
 		}
-		provider.validateConfig?.(providerConfig as Record<string, unknown>);
+		if (strict) provider?.validateConfig?.(providerConfig as Record<string, unknown>);
 		return { provider: providerName, config: providerConfig as Record<string, unknown> };
 	});
 }
@@ -540,15 +540,15 @@ export function parseChallengePolicy(value: unknown, fallback?: ChallengePolicyS
 export async function normalizeChallengePolicyForStorage(steps: ChallengePolicyStep[]): Promise<ChallengePolicyStep[]> {
 	const result: ChallengePolicyStep[] = [];
 	for (const step of steps) {
-		const provider = challengeRegistry.get(step.provider);
-		const normalizedConfig = provider.normalizeConfigForStorage ? await provider.normalizeConfigForStorage(step.config) : step.config;
+		const provider = challengeRegistry.tryGet(step.provider);
+		const normalizedConfig = provider?.normalizeConfigForStorage ? await provider.normalizeConfigForStorage(step.config) : step.config;
 		result.push({ provider: step.provider, config: normalizedConfig });
 	}
 	return result;
 }
 
 function policyFromRecord(site: SiteRecord): ChallengePolicyStep[] {
-	return parseChallengePolicy(site.challenge_policy_json);
+	return parseChallengePolicy(site.challenge_policy_json, undefined, false);
 }
 
 function errorJsonFieldsFromRecord(site: SiteRecord): ErrorJsonField[] {

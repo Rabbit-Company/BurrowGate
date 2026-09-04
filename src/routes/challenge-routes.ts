@@ -137,4 +137,11 @@ export function registerChallengeRoutes(app: Web<any>): void {
 				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
 			}),
 	);
+	app.get(
+		"/_burrowgate/static/challenges/quiz.js",
+		() =>
+			new Response(Bun.file("public/challenges/quiz.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" },
+			}),
+	);
 }

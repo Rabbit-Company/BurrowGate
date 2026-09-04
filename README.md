@@ -21,7 +21,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Fixed-window, sliding-window, and token-bucket rate limits
 - Safe bounded static-asset caching with per-site/route controls, metrics, and scoped purge
 - Pluggable challenge providers and ordered challenge chains
-- SHA-256 browser proof of work, hCaptcha, Cloudflare Turnstile, Google reCAPTCHA (v2 and v3), interactive Snake, drag-slider, and path-trace game challenges, and a shared-password challenge, with optional per-site auto-ban after repeated challenge failures from the same IP
+- SHA-256 browser proof of work, hCaptcha, Cloudflare Turnstile, Google reCAPTCHA (v2 and v3), interactive Snake, drag-slider, and path-trace game challenges, a shared-password challenge, and a configurable multiple-choice quiz challenge (admin-authored question pool, adjustable questions-per-round and pass threshold), with optional per-site auto-ban after repeated challenge failures from the same IP
 - Opaque and revocable visitor sessions
 - TOTP and WebAuthn (security key) two-factor authentication for dashboard and access-list accounts, with per-site WebAuthn credential scoping
 - IPv4, IPv6, CIDR, ASN, and country pass, bypass, block, and challenge rules

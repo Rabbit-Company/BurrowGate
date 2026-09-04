@@ -535,6 +535,43 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 		label: "Shared password",
 		fields: [{ key: "password", label: "Password", type: "password", required: true, maxLength: 256 }],
 	},
+	quiz: {
+		label: "Quiz questions",
+		fields: [
+			{
+				key: "questionCount",
+				label: "Questions per round",
+				type: "number",
+				min: 1,
+				max: 20,
+				default: 3,
+				required: true,
+				hint: "How many distinct random questions are drawn from the pool below each round.",
+			},
+			{
+				key: "passPercent",
+				label: "Pass threshold (%)",
+				type: "number",
+				min: 1,
+				max: 100,
+				default: 100,
+				required: true,
+				hint: "Visitor needs at least this percentage of the round's questions correct (rounded up) to pass. 100 requires every question correct.",
+			},
+			{ key: "optionColor", label: "Option button color", type: "color", default: "#0f172a" },
+			{ key: "optionBorderColor", label: "Option border color", type: "color", default: "#202d4b" },
+			{ key: "optionTextColor", label: "Option text color", type: "color", default: "#e5e7eb" },
+			{ key: "accentColor", label: "Accent color (hover/focus)", type: "color", default: "#7c3aed" },
+			{
+				key: "questions",
+				label: "Questions",
+				type: "qa-repeater",
+				required: true,
+				fullWidth: true,
+				hint: "Each question keeps its own correct answer and wrong answers, so options are always relevant to what's asked. Order doesn't matter - a random set is drawn each round. Up to 50 questions.",
+			},
+		],
+	},
 	snake: {
 		label: "Snake game",
 		fields: [
@@ -549,6 +586,7 @@ const CHALLENGE_PROVIDER_SCHEMAS = {
 	},
 };
 const CHALLENGE_STEP_MAX = 16;
+const QUIZ_QUESTION_MAX = 50;
 
 function looksLikeEncryptedSecret(value) {
 	return /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(String(value ?? ""));
@@ -559,35 +597,117 @@ function looksLikeArgon2Hash(value) {
 }
 
 function challengeStepFieldHtml(field, value) {
+	const labelOpen = field.fullWidth ? '<label class="field-full">' : "<label>";
 	if (field.type === "select") {
 		const current = value ?? field.default;
 		const options = field.options
 			.map((option) => `<option value="${escapeHtml(option)}"${current === option ? " selected" : ""}>${escapeHtml(option || "Default")}</option>`)
 			.join("");
-		return `<label><span>${escapeHtml(field.label)}</span><select class="select" data-challenge-field="${escapeHtml(field.key)}">${options}</select></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><select class="select" data-challenge-field="${escapeHtml(field.key)}">${options}</select></label>`;
 	}
 	if (field.type === "secret") {
 		const encrypted = looksLikeEncryptedSecret(value);
 		const placeholder = encrypted ? "Leave blank to keep the current secret key" : field.label;
 		const original = encrypted ? escapeHtml(String(value)) : "";
-		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
 	}
 	if (field.type === "password") {
 		const hashed = looksLikeArgon2Hash(value);
 		const placeholder = hashed ? "Leave blank to keep the current password" : field.label;
 		const original = hashed ? escapeHtml(String(value)) : "";
-		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input" type="password" autocomplete="new-password" data-challenge-field="${escapeHtml(field.key)}" data-original-secret="${original}" maxlength="${field.maxLength}" placeholder="${escapeHtml(placeholder)}"></label>`;
 	}
 	if (field.type === "color") {
-		return `<label><span>${escapeHtml(field.label)}</span><input class="input color-input" type="color" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input color-input" type="color" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
 	}
 	if (field.type === "number") {
-		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input" type="number" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}">${field.hint ? `<small class="muted">${escapeHtml(field.hint)}</small>` : ""}</label>`;
 	}
 	if (field.type === "decimal") {
-		return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="number" step="${field.step ?? 0.01}" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input" type="number" step="${field.step ?? 0.01}" min="${field.min}" max="${field.max}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(String(value ?? field.default))}"></label>`;
 	}
-	return `<label><span>${escapeHtml(field.label)}</span><input class="input" type="text" maxlength="${field.maxLength}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(value ?? "")}"></label>`;
+	if (field.type === "textlist") {
+		const lines = Array.isArray(value) ? value.join("\n") : "";
+		return `${labelOpen}<span>${escapeHtml(field.label)}</span><textarea class="input code-input" rows="4" data-challenge-field="${escapeHtml(field.key)}" placeholder="${escapeHtml(field.placeholder ?? "One per line")}">${escapeHtml(lines)}</textarea>${field.hint ? `<small class="muted">${escapeHtml(field.hint)}</small>` : ""}</label>`;
+	}
+	if (field.type === "qa-repeater") {
+		return quizQuestionsFieldHtml(field, value);
+	}
+	return `${labelOpen}<span>${escapeHtml(field.label)}</span><input class="input" type="text" maxlength="${field.maxLength}" data-challenge-field="${escapeHtml(field.key)}" value="${escapeHtml(value ?? "")}"></label>`;
+}
+
+function quizQuestionCardHtml(entry) {
+	const question = entry?.question ?? "";
+	const correctAnswers = Array.isArray(entry?.correctAnswers) ? entry.correctAnswers.join("\n") : "";
+	const wrongAnswers = Array.isArray(entry?.wrongAnswers) ? entry.wrongAnswers.join("\n") : "";
+	return (
+		'<div class="quiz-question-item">' +
+		'<div class="quiz-question-header">' +
+		'<span class="quiz-question-order"></span>' +
+		'<div class="quiz-question-actions">' +
+		'<button class="button secondary compact" type="button" data-quiz-question-up>Move up</button>' +
+		'<button class="button secondary compact" type="button" data-quiz-question-down>Move down</button>' +
+		'<button class="button danger compact" type="button" data-quiz-question-remove>Remove</button>' +
+		"</div></div>" +
+		`<label><span>Question</span><input class="input" type="text" maxlength="300" data-quiz-field="question" value="${escapeHtml(question)}"></label>` +
+		`<label><span>Correct answers</span><textarea class="input" rows="3" placeholder="One per line" data-quiz-field="correctAnswers">${escapeHtml(correctAnswers)}</textarea><small class="muted">One per line - accepted alternate phrasings of the same answer. A random one is shown each round.</small></label>` +
+		`<label><span>Wrong answers</span><textarea class="input" rows="3" placeholder="One per line" data-quiz-field="wrongAnswers">${escapeHtml(wrongAnswers)}</textarea><small class="muted">One per line. Up to 3 random ones are shown alongside the correct answer.</small></label>` +
+		"</div>"
+	);
+}
+
+function quizQuestionsFieldHtml(field, value) {
+	const entries = Array.isArray(value) && value.length > 0 ? value : [null];
+	const cards = entries.map(quizQuestionCardHtml).join("");
+	return (
+		`<div class="quiz-questions-field field-full" data-challenge-field="${escapeHtml(field.key)}">` +
+		`<span>${escapeHtml(field.label)}</span>` +
+		`<div class="quiz-question-list" data-quiz-question-list>${cards}</div>` +
+		'<button class="button secondary compact" type="button" data-quiz-question-add>Add question</button>' +
+		(field.hint ? `<small class="muted">${escapeHtml(field.hint)}</small>` : "") +
+		"</div>"
+	);
+}
+
+function renumberQuizQuestions(listEl) {
+	const items = [...listEl.querySelectorAll(".quiz-question-item")];
+	items.forEach((item, index) => {
+		item.querySelector(".quiz-question-order").textContent = `Question ${index + 1}`;
+		item.querySelector("[data-quiz-question-up]").disabled = index === 0;
+		item.querySelector("[data-quiz-question-down]").disabled = index === items.length - 1;
+		item.querySelector("[data-quiz-question-remove]").disabled = items.length <= 1;
+	});
+	const addButton = listEl.closest(".quiz-questions-field")?.querySelector("[data-quiz-question-add]");
+	if (addButton) addButton.disabled = items.length >= QUIZ_QUESTION_MAX;
+}
+
+function addQuizQuestion(listEl) {
+	if (listEl.querySelectorAll(".quiz-question-item").length >= QUIZ_QUESTION_MAX) return;
+	listEl.insertAdjacentHTML("beforeend", quizQuestionCardHtml(null));
+	renumberQuizQuestions(listEl);
+}
+
+function moveQuizQuestion(cardEl, direction) {
+	const listEl = cardEl.closest("[data-quiz-question-list]");
+	if (direction === "up") {
+		const previous = cardEl.previousElementSibling;
+		if (previous) listEl.insertBefore(cardEl, previous);
+	} else {
+		const next = cardEl.nextElementSibling;
+		if (next) listEl.insertBefore(next, cardEl);
+	}
+	renumberQuizQuestions(listEl);
+}
+
+function removeQuizQuestion(cardEl) {
+	const listEl = cardEl.closest("[data-quiz-question-list]");
+	if (listEl.querySelectorAll(".quiz-question-item").length <= 1) return;
+	cardEl.remove();
+	renumberQuizQuestions(listEl);
+}
+
+function initQuizQuestionLists(root) {
+	for (const listEl of root.querySelectorAll("[data-quiz-question-list]")) renumberQuizQuestions(listEl);
 }
 
 function challengeStepFieldsHtml(provider, config) {
@@ -618,6 +738,7 @@ function renderChallengeSteps(scope, steps) {
 	const container = byId(`${scope}ChallengeSteps`);
 	container.innerHTML = (steps ?? []).map((step) => challengeStepCardHtml(step)).join("");
 	syncColorInputSwatches(container);
+	initQuizQuestionLists(container);
 	renumberChallengeSteps(scope);
 }
 
@@ -639,6 +760,7 @@ function addChallengeStep(scope) {
 	if (container.querySelectorAll(".challenge-step-item").length >= CHALLENGE_STEP_MAX) return;
 	container.insertAdjacentHTML("beforeend", challengeStepCardHtml(defaultChallengePolicy()[0]));
 	syncColorInputSwatches(container);
+	initQuizQuestionLists(container);
 	renumberChallengeSteps(scope);
 }
 
@@ -666,6 +788,7 @@ function onChallengeStepProviderChange(selectEl) {
 	const card = selectEl.closest(".challenge-step-item");
 	card.querySelector(".challenge-step-fields").outerHTML = challengeStepFieldsHtml(selectEl.value, {});
 	syncColorInputSwatches(card);
+	initQuizQuestionLists(card);
 }
 
 function collectChallengeSteps(scope) {
@@ -703,6 +826,32 @@ function collectChallengeSteps(scope) {
 					throw new Error(`Step ${index + 1}: ${field.label} must be a number from ${field.min} to ${field.max}.`);
 				}
 				config[field.key] = decimalValue;
+				continue;
+			}
+			if (field.type === "textlist") {
+				const lines = input.value
+					.split("\n")
+					.map((line) => line.trim())
+					.filter(Boolean);
+				if (field.required && lines.length === 0) throw new Error(`Step ${index + 1}: ${field.label} needs at least one line.`);
+				if (lines.length > 0) config[field.key] = lines;
+				continue;
+			}
+			if (field.type === "qa-repeater") {
+				const splitLines = (value) =>
+					value
+						.split("\n")
+						.map((line) => line.trim())
+						.filter(Boolean);
+				const entries = [...input.querySelectorAll(".quiz-question-item")]
+					.map((card) => ({
+						question: card.querySelector('[data-quiz-field="question"]').value.trim(),
+						correctAnswers: splitLines(card.querySelector('[data-quiz-field="correctAnswers"]').value),
+						wrongAnswers: splitLines(card.querySelector('[data-quiz-field="wrongAnswers"]').value),
+					}))
+					.filter((entry) => entry.question && entry.correctAnswers.length > 0 && entry.wrongAnswers.length > 0);
+				if (field.required && entries.length === 0) throw new Error(`Step ${index + 1}: ${field.label} needs at least one complete question.`);
+				if (entries.length > 0) config[field.key] = entries;
 				continue;
 			}
 			const textValue = input.value.trim();
@@ -5501,6 +5650,26 @@ async function handleBodyClick(event) {
 	const challengeStepRemoveButton = event.target.closest("button[data-challenge-step-remove]");
 	if (challengeStepRemoveButton) {
 		removeChallengeStep(challengeStepRemoveButton.closest(".challenge-step-item"));
+		return;
+	}
+	const quizQuestionAddButton = event.target.closest("button[data-quiz-question-add]");
+	if (quizQuestionAddButton) {
+		addQuizQuestion(quizQuestionAddButton.closest(".quiz-questions-field").querySelector("[data-quiz-question-list]"));
+		return;
+	}
+	const quizQuestionUpButton = event.target.closest("button[data-quiz-question-up]");
+	if (quizQuestionUpButton) {
+		moveQuizQuestion(quizQuestionUpButton.closest(".quiz-question-item"), "up");
+		return;
+	}
+	const quizQuestionDownButton = event.target.closest("button[data-quiz-question-down]");
+	if (quizQuestionDownButton) {
+		moveQuizQuestion(quizQuestionDownButton.closest(".quiz-question-item"), "down");
+		return;
+	}
+	const quizQuestionRemoveButton = event.target.closest("button[data-quiz-question-remove]");
+	if (quizQuestionRemoveButton) {
+		removeQuizQuestion(quizQuestionRemoveButton.closest(".quiz-question-item"));
 		return;
 	}
 	const eventRow = event.target.closest("tr[data-event-id]");

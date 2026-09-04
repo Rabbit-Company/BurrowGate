@@ -8,6 +8,7 @@ import { traceProvider } from "./providers/trace.ts";
 import { passwordProvider } from "./providers/password.ts";
 import { recaptchaV2Provider } from "./providers/recaptcha-v2.ts";
 import { recaptchaV3Provider } from "./providers/recaptcha-v3.ts";
+import { quizProvider } from "./providers/quiz.ts";
 export const challengeRegistry = new ChallengeRegistry()
 	.register(powSha256Provider)
 	.register(hcaptchaProvider)
@@ -17,4 +18,5 @@ export const challengeRegistry = new ChallengeRegistry()
 	.register(traceProvider)
 	.register(passwordProvider)
 	.register(recaptchaV2Provider)
-	.register(recaptchaV3Provider);
+	.register(recaptchaV3Provider)
+	.register(quizProvider);

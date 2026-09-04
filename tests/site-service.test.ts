@@ -201,6 +201,77 @@ describe("seedDefaultSite", () => {
 	});
 });
 
+describe("challenge policy referencing a removed/renamed provider", () => {
+	async function makeSiteWithStalePolicy(publicHost: string): Promise<SiteRecord> {
+		const site = await makeSite(publicHost);
+		const stale: SiteRecord = { ...site, challenge_policy_json: JSON.stringify([{ provider: "totally-removed-provider", config: {} }]) };
+		await repository.updateSite(stale);
+		return (await repository.siteById(site.id))!;
+	}
+
+	test("siteView still loads and shows the stale step, instead of throwing", async () => {
+		const site = await makeSiteWithStalePolicy("stale-policy-view.test");
+		const view = siteView(site);
+		expect(view.challengePolicy).toEqual([{ provider: "totally-removed-provider", config: {} }]);
+	});
+
+	test("saving an unrelated field succeeds without touching the stale policy", async () => {
+		const site = await makeSiteWithStalePolicy("stale-policy-unrelated-save.test");
+		const { site: updated } = await updateSite(site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(siteView(updated).challengePolicy).toEqual([{ provider: "totally-removed-provider", config: {} }]);
+	});
+
+	test("actually editing the challenge policy still enforces that every provider is registered", async () => {
+		const site = await makeSiteWithStalePolicy("stale-policy-edit.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				challengePolicy: [{ provider: "totally-removed-provider", config: {} }],
+			}),
+		).rejects.toThrow("Unknown challenge provider");
+	});
+});
+
+describe("challenge policy step whose provider's own config schema changed", () => {
+	async function makeSiteWithOutdatedQuizConfig(publicHost: string): Promise<SiteRecord> {
+		const site = await makeSite(publicHost);
+		const outdated: SiteRecord = {
+			...site,
+			challenge_policy_json: JSON.stringify([{ provider: "quiz", config: { question: "Old shape?", correctAnswers: ["Yes"], wrongAnswers: ["No"] } }]),
+		};
+		await repository.updateSite(outdated);
+		return (await repository.siteById(site.id))!;
+	}
+
+	test("siteView still loads and shows the outdated step, instead of throwing", async () => {
+		const site = await makeSiteWithOutdatedQuizConfig("stale-config-view.test");
+		const view = siteView(site);
+		expect(view.challengePolicy).toEqual([{ provider: "quiz", config: { question: "Old shape?", correctAnswers: ["Yes"], wrongAnswers: ["No"] } }]);
+	});
+
+	test("saving an unrelated field succeeds without touching the outdated step", async () => {
+		const site = await makeSiteWithOutdatedQuizConfig("stale-config-unrelated-save.test");
+		const { site: updated } = await updateSite(site.id, { name: "Renamed", publicHost: site.public_host, originUrl: site.origin_url });
+		expect(siteView(updated).challengePolicy).toEqual([
+			{ provider: "quiz", config: { question: "Old shape?", correctAnswers: ["Yes"], wrongAnswers: ["No"] } },
+		]);
+	});
+
+	test("actually editing the challenge policy still enforces the provider's current validateConfig", async () => {
+		const site = await makeSiteWithOutdatedQuizConfig("stale-config-edit.test");
+		await expect(
+			updateSite(site.id, {
+				name: site.name,
+				publicHost: site.public_host,
+				originUrl: site.origin_url,
+				challengePolicy: [{ provider: "quiz", config: { question: "Old shape?", correctAnswers: ["Yes"], wrongAnswers: ["No"] } }],
+			}),
+		).rejects.toThrow();
+	});
+});
+
 describe("per-provider challenge templates", () => {
 	const validTemplate = (label: string) => `<html><body>${label}{{challengeScript}}</body></html>`;
 

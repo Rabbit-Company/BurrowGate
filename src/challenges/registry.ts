@@ -11,6 +11,9 @@ export class ChallengeRegistry {
 		if (!p) throw new Error(`Unknown challenge provider: ${name}`);
 		return p;
 	}
+	tryGet(name: string): ChallengeProvider | undefined {
+		return this.providers.get(name);
+	}
 	names(): string[] {
 		return [...this.providers.keys()];
 	}
