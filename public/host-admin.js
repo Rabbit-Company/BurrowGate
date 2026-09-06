@@ -471,17 +471,13 @@ function summarizeChartDefinition(definition) {
 
 function renderSummaryList(containerId, items, formatter = formatNumber) {
 	const container = byId(containerId);
-	if (!items || items.length === 0) {
+	const visibleItems = (items ?? []).filter((item) => Number(item.count) > 0);
+	if (visibleItems.length === 0) {
 		container.innerHTML = "";
 		return;
 	}
-	const max = Math.max(0, ...items.map((item) => Number(item.count) || 0));
-	if (max === 0) {
-		container.innerHTML = '<p class="muted">No summary data is available.</p>';
-		return;
-	}
-	container.innerHTML = items
-		.slice(0, 6)
+	const max = Math.max(...visibleItems.map((item) => Number(item.count)));
+	container.innerHTML = visibleItems
 		.map((item) => {
 			const percentage = Math.max(1, (Number(item.count) / max) * 100);
 			return `<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.label)}</span><strong>${formatter(item.count)}</strong></div><div class="breakdown-track"><div style="width:${percentage}%"></div></div></div>`;

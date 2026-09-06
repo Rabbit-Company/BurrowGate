@@ -1,5 +1,6 @@
 import { config, type HaRole } from "../config.ts";
 import { MEMBERSHIP_SHRINK_GRACE_MS } from "../ha-timing.ts";
+import { BOT_CATALOG } from "../services/bot-service.ts";
 import { haPrimaryWriteBarrier } from "../services/ha-write-barrier.ts";
 import { db } from "./client.ts";
 import type { TransactionSQL } from "bun";
@@ -2800,7 +2801,7 @@ export const repository = {
 				COUNT(*) AS count, SUM(CASE WHEN decision='bot-blocked' THEN 1 ELSE 0 END) AS blocked
 			FROM request_events
 			WHERE created_at >= ${since} AND created_at <= ${until} AND bot_id IS NOT NULL ${siteFilter}
-			GROUP BY bot_id ORDER BY count DESC LIMIT 12
+			GROUP BY bot_id ORDER BY count DESC
 		`) as Array<{
 			bot_id: string;
 			bot_name: string | null;
@@ -2809,19 +2810,43 @@ export const repository = {
 			count: number | string;
 			blocked: number | string;
 		}>;
-		const bots = totals.map((row, index) => ({
-			id: row.bot_id,
-			key: `bot${index}`,
-			name: row.bot_name ?? row.bot_id,
-			category: row.bot_category ?? "other",
-			verified: toNumber(row.verified) > 0,
-			count: toNumber(row.count),
-			blocked: toNumber(row.blocked),
-		}));
+		const observedById = new Map(totals.map((row) => [row.bot_id, row]));
+		const catalogOrder = new Map(BOT_CATALOG.map((bot, index) => [bot.id, index]));
+		const allBots = [
+			...BOT_CATALOG.map((catalogBot) => {
+				const row = observedById.get(catalogBot.id);
+				return {
+					id: catalogBot.id,
+					name: catalogBot.name,
+					category: catalogBot.category,
+					verified: row ? toNumber(row.verified) > 0 : false,
+					count: row ? toNumber(row.count) : 0,
+					blocked: row ? toNumber(row.blocked) : 0,
+				};
+			}),
+			...totals
+				.filter((row) => !catalogOrder.has(row.bot_id))
+				.map((row) => ({
+					id: row.bot_id,
+					name: row.bot_name ?? row.bot_id,
+					category: row.bot_category ?? "other",
+					verified: toNumber(row.verified) > 0,
+					count: toNumber(row.count),
+					blocked: toNumber(row.blocked),
+				})),
+		].sort((left, right) => {
+			const countDifference = right.count - left.count;
+			if (countDifference) return countDifference;
+			const leftOrder = catalogOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+			const rightOrder = catalogOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+			return leftOrder - rightOrder || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+		});
+		const bots = allBots.map((bot, index) => ({ ...bot, key: `bot${index}` }));
 		const points = emptyMetricPoints(since, until, bucketMs, (bucket) => ({ bucket })) as Array<{ bucket: number; [key: string]: number }>;
-		if (bots.length === 0) return { bots, series: points };
+		for (const point of points) for (const bot of bots) point[bot.key] = 0;
+		if (totals.length === 0) return { bots, series: points };
 		const bucket = metricBucketExpression("created_at", bucketMs);
-		const ids = bots.map((bot) => bot.id);
+		const ids = totals.map((row) => row.bot_id);
 		const rows = (await db`
 			SELECT ${bucket} * ${bucketMs} AS bucket, bot_id, COUNT(*) AS count
 			FROM request_events
@@ -2830,7 +2855,6 @@ export const repository = {
 		`) as Array<{ bucket: number | string; bot_id: string; count: number | string }>;
 		const byBucket = new Map(points.map((point) => [point.bucket, point]));
 		const keyById = new Map(bots.map((bot) => [bot.id, bot.key]));
-		for (const point of points) for (const bot of bots) point[bot.key] = 0;
 		for (const row of rows) {
 			const point = byBucket.get(toNumber(row.bucket));
 			const key = keyById.get(row.bot_id);
@@ -3318,10 +3342,7 @@ export const repository = {
 			const requestDifference = (totals.get(b.id)?.requests ?? 0) - (totals.get(a.id)?.requests ?? 0);
 			return requestDifference || b.enabled - a.enabled || a.name.localeCompare(b.name);
 		});
-		const selected = ordered.length <= 6 ? ordered : ordered.slice(0, 5);
-		const selectedIds = new Set(selected.map((site) => site.id));
-		const includeOther = ordered.length > selected.length;
-		const descriptors = selected.map((site) => {
+		const descriptors = ordered.map((site) => {
 			const total = totals.get(site.id) ?? { requests: 0, totalLatency: 0 };
 			return {
 				key: site.id,
@@ -3330,22 +3351,7 @@ export const repository = {
 				averageLatency: total.requests > 0 ? Math.round(total.totalLatency / total.requests) : 0,
 			};
 		});
-		if (includeOther) {
-			let requests = 0;
-			let totalLatency = 0;
-			for (const site of ordered) {
-				if (selectedIds.has(site.id)) continue;
-				const total = totals.get(site.id);
-				requests += total?.requests ?? 0;
-				totalLatency += total?.totalLatency ?? 0;
-			}
-			descriptors.push({
-				key: "__other__",
-				label: `Other (${ordered.length - selected.length})`,
-				requests,
-				averageLatency: requests > 0 ? Math.round(totalLatency / requests) : 0,
-			});
-		}
+		const descriptorIds = new Set(descriptors.map((site) => site.key));
 		const points = emptyMetricPoints(since, until, bucketMs, (value) => ({ bucket: value, values: {} as Record<string, number> }));
 		const byBucket = new Map(points.map((point) => [point.bucket, point]));
 		for (const point of points) {
@@ -3354,8 +3360,7 @@ export const repository = {
 		for (const row of rows) {
 			const point = byBucket.get(toNumber(row.bucket));
 			if (!point) continue;
-			const key = selectedIds.has(row.site_id) ? row.site_id : includeOther ? "__other__" : null;
-			if (key) point.values[key] = (point.values[key] ?? 0) + toNumber(row.requests);
+			if (descriptorIds.has(row.site_id)) point.values[row.site_id] = toNumber(row.requests);
 		}
 		return {
 			series: points,
@@ -3529,18 +3534,39 @@ export const repository = {
       SELECT bot_id, MAX(bot_name) AS bot_name, MAX(bot_category) AS bot_category,
         MAX(COALESCE(bot_verified, 0)) AS verified, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} AND bot_id IS NOT NULL
-      GROUP BY bot_id
-      ORDER BY count DESC
-      LIMIT 25
-    `) as Array<{ bot_id: string; bot_name: string | null; bot_category: string | null; verified: number | string; count: number | string }>;
-		return rows.map((row) => ({
-			botId: row.bot_id,
-			name: row.bot_name ?? row.bot_id,
-			category: row.bot_category ?? "other",
-			verified: toNumber(row.verified) > 0,
-			count: toNumber(row.count),
-		}));
+		WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} AND bot_id IS NOT NULL
+		GROUP BY bot_id
+		ORDER BY count DESC
+	`) as Array<{ bot_id: string; bot_name: string | null; bot_category: string | null; verified: number | string; count: number | string }>;
+		const observedById = new Map(rows.map((row) => [row.bot_id, row]));
+		const catalogOrder = new Map(BOT_CATALOG.map((bot, index) => [bot.id, index]));
+		return [
+			...BOT_CATALOG.map((catalogBot) => {
+				const row = observedById.get(catalogBot.id);
+				return {
+					botId: catalogBot.id,
+					name: catalogBot.name,
+					category: catalogBot.category,
+					verified: row ? toNumber(row.verified) > 0 : false,
+					count: row ? toNumber(row.count) : 0,
+				};
+			}),
+			...rows
+				.filter((row) => !catalogOrder.has(row.bot_id))
+				.map((row) => ({
+					botId: row.bot_id,
+					name: row.bot_name ?? row.bot_id,
+					category: row.bot_category ?? "other",
+					verified: toNumber(row.verified) > 0,
+					count: toNumber(row.count),
+				})),
+		].sort((left, right) => {
+			const countDifference = right.count - left.count;
+			if (countDifference) return countDifference;
+			const leftOrder = catalogOrder.get(left.botId) ?? Number.MAX_SAFE_INTEGER;
+			const rightOrder = catalogOrder.get(right.botId) ?? Number.MAX_SAFE_INTEGER;
+			return leftOrder - rightOrder || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+		});
 	},
 	async tabIpMetrics(
 		siteScope: string | string[] | undefined,

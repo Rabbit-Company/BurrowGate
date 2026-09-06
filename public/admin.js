@@ -4590,22 +4590,65 @@ function summarizeChartDefinition(definition) {
 
 function renderSummaryList(containerId, items, formatter = formatNumber) {
 	const container = byId(containerId);
-	if (!items || items.length === 0) {
+	const visibleItems = (items ?? []).filter((item) => Number(item.count) > 0);
+	if (visibleItems.length === 0) {
 		container.innerHTML = "";
 		return;
 	}
-	const max = Math.max(0, ...items.map((item) => Number(item.count) || 0));
-	if (max === 0) {
-		container.innerHTML = '<p class="muted">No summary data is available.</p>';
-		return;
-	}
-	container.innerHTML = items
-		.slice(0, 6)
+	const max = Math.max(...visibleItems.map((item) => Number(item.count)));
+	container.innerHTML = visibleItems
 		.map((item) => {
 			const percentage = Math.max(1, (Number(item.count) / max) * 100);
 			return `<div class="breakdown-row"><div class="row between"><span>${escapeHtml(item.label)}</span><strong>${formatter(item.count)}</strong></div><div class="breakdown-track"><div style="width:${percentage}%"></div></div></div>`;
 		})
 		.join("");
+}
+
+function botChartDefinition(metrics, definition) {
+	if (metrics.section !== "bots") return definition;
+	if (!definition.timeSeries) {
+		return {
+			...definition,
+			data: (definition.data ?? []).filter((point) => (definition.datasets ?? []).some((dataset) => Number(point[dataset.key]) > 0)),
+		};
+	}
+	const activeKeys = new Set((metrics.bots ?? []).filter((bot) => Number(bot.count) > 0).map((bot) => bot.key));
+	return { ...definition, datasets: (definition.datasets ?? []).filter((dataset) => activeKeys.has(dataset.key)) };
+}
+
+function siteChartDefinition(metrics, definition) {
+	if (metrics.section !== "sites") return definition;
+	const catalog = metrics.primary?.datasets ?? [];
+	if (catalog.length <= 6) return definition;
+	const selected = catalog.slice(0, 5);
+	const remaining = catalog.slice(5);
+	if (definition.timeSeries) {
+		return {
+			...definition,
+			datasets: [...selected, { key: "__other__", label: `Other (${remaining.length})` }],
+			data: (definition.data ?? []).map((point) => ({
+				...point,
+				__other__: remaining.reduce((sum, dataset) => sum + Number(point[dataset.key] ?? 0), 0),
+			})),
+		};
+	}
+	const selectedKeys = new Set(selected.map((dataset) => dataset.key));
+	const selectedRows = (definition.data ?? []).filter((row) => selectedKeys.has(row.key));
+	const otherRows = (definition.data ?? []).filter((row) => !selectedKeys.has(row.key));
+	const otherRequests = otherRows.reduce((sum, row) => sum + Number(row.requests ?? 0), 0);
+	const otherLatencyTotal = otherRows.reduce((sum, row) => sum + Number(row.averageLatency ?? 0) * Number(row.requests ?? 0), 0);
+	return {
+		...definition,
+		data: [
+			...selectedRows,
+			{
+				key: "__other__",
+				label: `Other (${otherRows.length})`,
+				requests: otherRequests,
+				averageLatency: otherRequests > 0 ? Math.round(otherLatencyTotal / otherRequests) : 0,
+			},
+		],
+	};
 }
 
 function parseChartViewKey(key) {
@@ -4636,7 +4679,7 @@ async function refreshChartView() {
 	}
 	if (requestId !== chartViewRequestId || !metrics) return;
 
-	const definition = normalizeChartDefinition(metrics[slot] ?? metrics.primary);
+	const definition = normalizeChartDefinition(siteChartDefinition(metrics, botChartDefinition(metrics, metrics[slot] ?? metrics.primary)));
 	const display = isBitrate ? bytesDefinitionToBitrate(definition, metrics.bucketMs) : definition;
 	const select = byId("chartView");
 	byId("primaryChartTitle").textContent = select.selectedOptions[0]?.textContent ?? display.title;
@@ -5145,6 +5188,7 @@ function renderRefererList() {
 	if (config.topList === "none" || !topListData) return;
 	const kind = TOP_LIST_KIND[config.topList];
 	const items = topListData[kind.field] ?? [];
+	const visibleItems = config.topList === "bots" ? items.filter((item) => Number(item.count) > 0) : items;
 	const total = items.reduce((sum, item) => sum + Number(item.count), 0);
 	const rangeLabel = rangeDurationLabel(topListData.rangeDurationMs ?? selectedRangeTo - selectedRangeFrom);
 	const formatCount = kind.formatCount ?? formatNumber;
@@ -5152,9 +5196,9 @@ function renderRefererList() {
 	byId("refererSubtitle").textContent = kind.subtitle(rangeLabel);
 	byId("refererTotal").textContent = kind.formatCount ? formatCount(total) : `${formatNumber(total)} ${kind.totalUnit}`;
 	byId("refererList").innerHTML =
-		items.length === 0
+		visibleItems.length === 0
 			? `<p class="muted">${kind.empty}</p>`
-			: items
+			: visibleItems
 					.map((item) => {
 						const label = String(item[kind.itemKey] ?? "");
 						const percentage = total > 0 ? (Number(item.count) / total) * 100 : 0;

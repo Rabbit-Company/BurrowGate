@@ -312,6 +312,10 @@ button:disabled {
 	align-content: start;
 	gap: 10px;
 	min-width: 0;
+	max-height: clamp(320px, 50dvh, 560px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
 	padding: 4px 20px 18px 16px;
 	border-left: 1px solid var(--border);
 }
@@ -1004,6 +1008,7 @@ form.grid label {
 	.chart-sidebar {
 		border-left: none;
 		border-top: 1px solid var(--border);
+		max-height: 320px;
 		padding: 14px 16px 18px;
 	}
 	.toolbar,
@@ -1983,6 +1988,13 @@ form.grid label {
 .geo-country-list {
 	display: grid;
 	gap: 11px;
+}
+#refererList {
+	max-height: min(420px, 50dvh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+	padding-right: 6px;
 }
 .geo-country-row {
 	font-size: 12px;

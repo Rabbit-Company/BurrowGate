@@ -115,8 +115,10 @@ export const metricsPaths: Record<string, PathItemObject> = {
 	},
 	"/bot-metrics-tab": {
 		get: {
-			summary: "Top identified bots for a metrics tab",
-			description: "Unlike the other metrics tabs, this endpoint has no `scope` parameter and always includes `site` (null when no site is selected).",
+			summary: "Identified bot catalogue metrics",
+			description:
+				"Returns the complete known bot catalogue, with count=0 for bots that had no requests in the selected range; observed legacy IDs are retained. " +
+				"Unlike the other metrics tabs, this endpoint has no `scope` parameter and always includes `site` (null when no site is selected).",
 			tags: ["Metrics"],
 			operationId: "botMetricsTab",
 			parameters: [siteIdParam("Omit to scope to every site the caller can view."), ...rangeParams],
@@ -257,7 +259,9 @@ export const metricsPaths: Record<string, PathItemObject> = {
 			description:
 				"section=sites requires administrator access. section=connectivity, sites, system-cpu, system-memory, system-disk, system-network-download, " +
 				"and system-network-upload are instance-wide and ignore `siteId`; every other section is scoped by `siteId` (or every site the caller can " +
-				"view, if omitted). See MetricsChartResponse for exactly which fields are common to every section versus section-specific.",
+				"view, if omitted). For section=bots, the response includes the complete known bot catalogue and zero-filled totals and series for bots with no " +
+				"requests in the selected range. For section=sites, every configured site is returned with zero-filled series where necessary; the dashboard may " +
+				"condense that complete data for display. See MetricsChartResponse for exactly which fields are common to every section versus section-specific.",
 			tags: ["Metrics"],
 			operationId: "adminMetrics",
 			parameters: [

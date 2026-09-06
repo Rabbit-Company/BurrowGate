@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { fillCacheMetricSeries, fillTrafficMetricSeries, type CacheMetricPoint, type TrafficMetricPoint } from "../src/db/repository.ts";
+import { fillCacheMetricSeries, fillTrafficMetricSeries, repository, type CacheMetricPoint, type TrafficMetricPoint } from "../src/db/repository.ts";
+import { createSite } from "../src/services/site-service.ts";
 
 function point(bucket: number, requests: number): TrafficMetricPoint {
 	return { bucket, requests, blocked: 0, errors: 0, averageLatency: requests ? 25 : 0 };
@@ -49,5 +50,28 @@ describe("cache metric bucket completion", () => {
 		expect(series[0]).toEqual(rows[0]);
 		expect(series[1]).toEqual({ bucket: start + minute, hits: 0, misses: 0, bypasses: 0, hitRatio: 0 });
 		expect(series[2]).toEqual(rows[1]);
+	});
+});
+
+describe("site comparison metrics", () => {
+	test("returns every configured site instead of replacing sites after the fifth with Other", async () => {
+		const created = [];
+		for (let index = 0; index < 7; index += 1) {
+			created.push(
+				(
+					await createSite({
+						name: `Complete metrics ${index} ${crypto.randomUUID()}`,
+						publicHost: `complete-metrics-${crypto.randomUUID()}.test`,
+						originUrl: "https://origin.test",
+					})
+				).site,
+			);
+		}
+		const now = Date.now();
+		const metrics = await repository.siteMetrics(now - 60_000, now, 60_000);
+		const keys = new Set(metrics.sites.map((site) => site.key));
+		for (const site of created) expect(keys.has(site.id)).toBe(true);
+		expect(keys.has("__other__")).toBe(false);
+		for (const point of metrics.series) for (const site of created) expect(point.values[site.id]).toBe(0);
 	});
 });

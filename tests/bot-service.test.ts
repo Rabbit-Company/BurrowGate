@@ -207,8 +207,15 @@ describe("bot metrics", () => {
 		const metrics = await repository.botMetrics(site.id, now - 60_000, now + 60_000, 60_000);
 		expect(metrics.bots[0]).toMatchObject({ id: "gptbot", name: "GPTBot", category: "ai-crawler", count: 2, blocked: 1 });
 		expect(metrics.series.reduce((total, point) => total + Number(point.bot0 ?? 0), 0)).toBe(2);
+		expect(metrics.bots).toHaveLength(BOT_CATALOG.length);
+		expect(metrics.bots.map((bot) => bot.id)).toEqual(expect.arrayContaining(BOT_CATALOG.map((bot) => bot.id)));
+		expect(metrics.bots.find((bot) => bot.id === "bingbot")).toMatchObject({ count: 0, blocked: 0, verified: false });
+		const inactiveBot = metrics.bots.find((bot) => bot.count === 0)!;
+		expect(metrics.series.every((point) => point[inactiveBot.key] === 0)).toBe(true);
 
 		const topBots = await repository.tabBotMetrics(site.id, now - 60_000, now + 60_000);
 		expect(topBots[0]).toMatchObject({ botId: "gptbot", name: "GPTBot", category: "ai-crawler", count: 2 });
+		expect(topBots).toHaveLength(BOT_CATALOG.length);
+		expect(topBots.find((bot) => bot.botId === "bingbot")).toMatchObject({ count: 0, verified: false });
 	});
 });

@@ -2818,7 +2818,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...base,
 				primary: {
 					title: "Traffic by site",
-					subtitle: "Request volume across the busiest configured sites",
+					subtitle: "Request volume across configured sites",
 					type: "line",
 					timeSeries: true,
 					valueFormat: "number",
