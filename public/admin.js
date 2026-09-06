@@ -5497,7 +5497,7 @@ async function loadApiTokens() {
 		list.innerHTML =
 			tokens
 				.map(
-					(token) => `<li class="site-list-item">
+					(token) => `<li class="site-list-item api-token-item">
 			<div class="site-list-title"><strong>${escapeHtml(token.name)}</strong><span class="badge">Read only</span></div>
 			<div class="site-list-meta"><span>${escapeHtml(token.prefix)}…</span><span>Created ${new Date(token.createdAt).toLocaleDateString()}</span><span>${token.expiresAt ? `${token.expiresAt <= Date.now() ? "Expired" : "Expires"} ${new Date(token.expiresAt).toLocaleDateString()}` : "Never expires"}</span></div>
 			<div class="site-list-actions"><button class="button danger compact" type="button" data-api-token-revoke="${escapeHtml(token.id)}">Revoke</button></div>

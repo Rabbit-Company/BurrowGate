@@ -8,6 +8,14 @@ polling_headers: "authorization=Bearer {{ api_token | strip | url_encode }}"
 no_screen_padding: "no"
 dark_mode: "no"
 custom_fields:
+  - keyname: about
+    field_type: author_bio
+    name: BurrowGate
+    category: analytics,programming
+    description: Traffic, bandwidth, cache, protection, and system monitoring for your self-hosted BurrowGate reverse proxy.
+    learn_more_url: https://burrowgate.org
+    github_url: https://github.com/Rabbit-Company/BurrowGate
+    email_address: info@rabbit-company.com
   - keyname: instance_url
     field_type: url
     name: BurrowGate instance URL
@@ -48,3 +56,22 @@ custom_fields:
     name: Site ID
     optional: true
     description: Optional site ID from your BurrowGate dashboard URL or the monitoring sites API. Leave empty for all sites and for CPU, memory, storage, or network views. This filters the display (the token can read all sites).
+  - keyname: date_format
+    field_type: select
+    name: Date format
+    default: iso
+    options:
+      - "2026-08-06 (YYYY-MM-DD)": iso
+      - "06.08.2026 (DD.MM.YYYY)": day_first_dots
+      - "06/08/2026 (DD/MM/YYYY)": day_first_slashes
+      - "08/06/2026 (MM/DD/YYYY)": month_first_slashes
+  - keyname: time_format
+    field_type: select
+    name: Time format
+    default: twenty_four_seconds
+    description: Applies to chart dates and the last update time, shown in your TRMNL device's local time zone.
+    options:
+      - "15:43:32 (24-hour with seconds)": twenty_four_seconds
+      - "15:43 (24-hour)": twenty_four
+      - "03:43:32 PM (12-hour with seconds)": twelve_seconds
+      - "03:43 PM (12-hour)": twelve

@@ -1,4 +1,97 @@
 {% comment %}Source template. Run python3 trmnl/build.py after edits.{% endcomment %}
+{%- comment -%}Compute displayed dates via pure integer calendar math (Howard Hinnant's days_from_civil/civil_from_days) instead of the date filter, so the renderer's own time zone can never leak in; trmnl.user.utc_offset is applied by hand to reach the device's local time.{%- endcomment -%}
+{%- assign date_style = trmnl.plugin_settings.custom_fields_values.date_format | default: 'iso' -%}
+{%- assign time_style = trmnl.plugin_settings.custom_fields_values.time_format | default: 'twenty_four_seconds' -%}
+{%- assign utc_offset = trmnl.user.utc_offset | default: 0 -%}
+{%- assign timestamps = from | append: '|' | append: to | append: '|' | append: generatedAt | split: '|' -%}
+{%- capture formatted_dates -%}
+  {%- for timestamp in timestamps -%}
+    {%- assign y = timestamp | slice: 0, 4 | plus: 0 -%}
+    {%- assign mo = timestamp | slice: 5, 2 | plus: 0 -%}
+    {%- assign da = timestamp | slice: 8, 2 | plus: 0 -%}
+    {%- assign ho = timestamp | slice: 11, 2 | plus: 0 -%}
+    {%- assign mi = timestamp | slice: 14, 2 | plus: 0 -%}
+    {%- assign se = timestamp | slice: 17, 2 | plus: 0 -%}
+    {%- comment -%}days_from_civil{%- endcomment -%}
+    {%- assign cy = y -%}
+    {%- if mo <= 2 -%}{%- assign cy = cy | minus: 1 -%}{%- endif -%}
+    {%- assign era = cy | divided_by: 400 -%}
+    {%- assign era_400 = era | times: 400 -%}
+    {%- assign yoe = cy | minus: era_400 -%}
+    {%- assign m_adj = 9 -%}
+    {%- if mo > 2 -%}{%- assign m_adj = -3 -%}{%- endif -%}
+    {%- assign doy = mo | plus: m_adj | times: 153 | plus: 2 | divided_by: 5 | plus: da | minus: 1 -%}
+    {%- assign yoe_365 = yoe | times: 365 -%}
+    {%- assign yoe_div4 = yoe | divided_by: 4 -%}
+    {%- assign yoe_div100 = yoe | divided_by: 100 -%}
+    {%- assign doe = yoe_365 | plus: yoe_div4 | minus: yoe_div100 | plus: doy -%}
+    {%- assign era_146097 = era | times: 146097 -%}
+    {%- assign days = era_146097 | plus: doe | minus: 719468 -%}
+    {%- comment -%}apply the offset in whole seconds{%- endcomment -%}
+    {%- assign day_sec = days | times: 86400 -%}
+    {%- assign hour_sec = ho | times: 3600 -%}
+    {%- assign minute_sec = mi | times: 60 -%}
+    {%- assign epoch = day_sec | plus: hour_sec | plus: minute_sec | plus: se -%}
+    {%- assign shifted = epoch | plus: utc_offset -%}
+    {%- assign shifted_days = shifted | divided_by: 86400 -%}
+    {%- assign seconds_of_day = shifted | modulo: 86400 -%}
+    {%- assign out_hour = seconds_of_day | divided_by: 3600 -%}
+    {%- assign seconds_rem = seconds_of_day | modulo: 3600 -%}
+    {%- assign out_minute = seconds_rem | divided_by: 60 -%}
+    {%- assign out_second = seconds_rem | modulo: 60 -%}
+    {%- comment -%}civil_from_days{%- endcomment -%}
+    {%- assign z = shifted_days | plus: 719468 -%}
+    {%- assign era2 = z | divided_by: 146097 -%}
+    {%- assign era2_146097 = era2 | times: 146097 -%}
+    {%- assign doe2 = z | minus: era2_146097 -%}
+    {%- assign doe2_div1460 = doe2 | divided_by: 1460 -%}
+    {%- assign doe2_div36524 = doe2 | divided_by: 36524 -%}
+    {%- assign doe2_div146096 = doe2 | divided_by: 146096 -%}
+    {%- assign yoe2_num = doe2 | minus: doe2_div1460 | plus: doe2_div36524 | minus: doe2_div146096 -%}
+    {%- assign yoe2 = yoe2_num | divided_by: 365 -%}
+    {%- assign era2_400 = era2 | times: 400 -%}
+    {%- assign y2 = yoe2 | plus: era2_400 -%}
+    {%- assign yoe2_365 = yoe2 | times: 365 -%}
+    {%- assign yoe2_div4 = yoe2 | divided_by: 4 -%}
+    {%- assign yoe2_div100 = yoe2 | divided_by: 100 -%}
+    {%- assign inner2 = yoe2_365 | plus: yoe2_div4 | minus: yoe2_div100 -%}
+    {%- assign doy2 = doe2 | minus: inner2 -%}
+    {%- assign mp = doy2 | times: 5 | plus: 2 | divided_by: 153 -%}
+    {%- assign mp_term = mp | times: 153 | plus: 2 | divided_by: 5 -%}
+    {%- assign d2 = doy2 | minus: mp_term | plus: 1 -%}
+    {%- assign m_adj2 = 3 -%}
+    {%- if mp >= 10 -%}{%- assign m_adj2 = -9 -%}{%- endif -%}
+    {%- assign m2 = mp | plus: m_adj2 -%}
+    {%- assign y_final = y2 -%}
+    {%- if m2 <= 2 -%}{%- assign y_final = y2 | plus: 1 -%}{%- endif -%}
+    {%- capture month_text -%}{%- if m2 < 10 -%}0{%- endif -%}{{ m2 }}{%- endcapture -%}
+    {%- capture day_text -%}{%- if d2 < 10 -%}0{%- endif -%}{{ d2 }}{%- endcapture -%}
+    {%- capture hour24_text -%}{%- if out_hour < 10 -%}0{%- endif -%}{{ out_hour }}{%- endcapture -%}
+    {%- capture minute_text -%}{%- if out_minute < 10 -%}0{%- endif -%}{{ out_minute }}{%- endcapture -%}
+    {%- capture second_text -%}{%- if out_second < 10 -%}0{%- endif -%}{{ out_second }}{%- endcapture -%}
+    {%- capture date_text -%}
+      {%- case date_style -%}
+        {%- when 'day_first_dots' -%}{{ day_text }}.{{ month_text }}.{{ y_final }}
+        {%- when 'day_first_slashes' -%}{{ day_text }}/{{ month_text }}/{{ y_final }}
+        {%- when 'month_first_slashes' -%}{{ month_text }}/{{ day_text }}/{{ y_final }}
+        {%- else -%}{{ y_final }}-{{ month_text }}-{{ day_text }}
+      {%- endcase -%}
+    {%- endcapture -%}
+    {%- capture time_text -%}
+      {%- if time_style == 'twelve' or time_style == 'twelve_seconds' -%}
+        {%- assign clock_hour = out_hour | modulo: 12 -%}
+        {%- if clock_hour == 0 -%}{%- assign clock_hour = 12 -%}{%- endif -%}
+        {%- if clock_hour < 10 -%}0{%- endif -%}{{ clock_hour }}:{{ minute_text }}
+        {%- if time_style == 'twelve_seconds' -%}:{{ second_text }}{%- endif -%}
+        {{- ' ' -}}{% if out_hour < 12 %}AM{% else %}PM{% endif %}
+      {%- elsif time_style == 'twenty_four' -%}{{ hour24_text }}:{{ minute_text }}
+      {%- else -%}{{ hour24_text }}:{{ minute_text }}:{{ second_text }}
+      {%- endif -%}
+    {%- endcapture -%}
+    {{- date_text }} {{ time_text -}}{%- unless forloop.last -%}|{%- endunless -%}
+  {%- endfor -%}
+{%- endcapture -%}
+{%- assign date_labels = formatted_dates | split: '|' -%}
 <style>
   .bg-monitor { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 12px; font-family: "Inter", Arial, sans-serif; }
   .bg-monitor * { box-sizing: border-box; }
@@ -12,7 +105,17 @@
   .bg-monitor .bg-label { font-size: 15px; }
   .bg-monitor .bg-chart { flex: 1; min-height: 40px; display: flex; flex-direction: column; gap: 4px; }
   .bg-monitor .bg-scale, .bg-monitor .bg-axis { display: flex; justify-content: space-between; font-size: 13px; }
-  .bg-monitor .bg-bars { flex: 1; min-height: 20px; display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid currentColor; }
+  .bg-monitor .bg-plot-row { flex: 1; min-height: 20px; display: flex; gap: 8px; padding: 6px 0; }
+  .bg-monitor .bg-plot { position: relative; flex: 1; min-width: 0; }
+  .bg-monitor .bg-gridline { position: absolute; left: 0; right: 0; border-top: 1px dotted currentColor; opacity: 0.3; }
+  .bg-monitor .bg-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
+  .bg-monitor .bg-line-chart { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .bg-monitor .bg-values { position: relative; min-width: 48px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .bg-monitor .bg-tick { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
+  .bg-monitor .bg-axis { gap: 8px; font-size: 11px; }
+  .bg-monitor .bg-axis span { max-width: 50%; }
+  .bg-monitor .bg-axis span:last-child { text-align: right; }
+  .bg-footer .instance { font-size: 12px; font-family: "Inter", Arial, sans-serif; }
   .bg-monitor .bg-slot { flex: 1; height: 100%; display: flex; align-items: flex-end; }
   .bg-monitor .bg-bar { width: 100%; background: currentColor; }
   .bg-monitor .bg-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 20px; }
@@ -39,8 +142,32 @@
       </div>
       <div class="bg-stats">
         {% for stat in stats limit: 3 %}
+          {% assign stat_byte_multiplier = 0 %}
+          {% case stat.unit %}
+            {% when 'B' %}{% assign stat_byte_multiplier = 1 %}
+            {% when 'KiB' %}{% assign stat_byte_multiplier = 1024 %}
+            {% when 'MiB' %}{% assign stat_byte_multiplier = 1048576 %}
+            {% when 'GiB' %}{% assign stat_byte_multiplier = 1073741824 %}
+            {% when 'TiB' %}{% assign stat_byte_multiplier = 1099511627776 %}
+          {% endcase %}
           <div class="bg-stat">
-            <div class="bg-number">{% if stat.value == nil %}—{% elsif stat.value >= 1000000000 %}{{ stat.value | divided_by: 1000000000.0 | round: 1 }}B{% elsif stat.value >= 1000000 %}{{ stat.value | divided_by: 1000000.0 | round: 1 }}M{% elsif stat.value >= 10000 %}{{ stat.value | divided_by: 1000.0 | round: 1 }}k{% else %}{{ stat.value | round: 1 }}{% endif %} <span class="bg-unit">{{ stat.unit | escape }}</span></div>
+            <div class="bg-number">
+              {% if stat.value == nil %}
+                —
+              {% elsif stat_byte_multiplier > 0 %}
+                {% assign stat_bytes = stat.value | times: stat_byte_multiplier %}
+                {% if stat_bytes >= 1099511627776 %}{{ stat_bytes | divided_by: 1099511627776.0 | round: 2 }} <span class="bg-unit">TiB</span>
+                {% elsif stat_bytes >= 1073741824 %}{{ stat_bytes | divided_by: 1073741824.0 | round: 2 }} <span class="bg-unit">GiB</span>
+                {% elsif stat_bytes >= 1048576 %}{{ stat_bytes | divided_by: 1048576.0 | round: 2 }} <span class="bg-unit">MiB</span>
+                {% elsif stat_bytes >= 1024 %}{{ stat_bytes | divided_by: 1024.0 | round: 2 }} <span class="bg-unit">KiB</span>
+                {% else %}{{ stat_bytes | round: 0 }} <span class="bg-unit">B</span>
+                {% endif %}
+              {% elsif stat.value >= 1000000000 %}{{ stat.value | divided_by: 1000000000.0 | round: 1 }}B <span class="bg-unit">{{ stat.unit | escape }}</span>
+              {% elsif stat.value >= 1000000 %}{{ stat.value | divided_by: 1000000.0 | round: 1 }}M <span class="bg-unit">{{ stat.unit | escape }}</span>
+              {% elsif stat.value >= 10000 %}{{ stat.value | divided_by: 1000.0 | round: 1 }}k <span class="bg-unit">{{ stat.unit | escape }}</span>
+              {% else %}{{ stat.value | round: 1 }} <span class="bg-unit">{{ stat.unit | escape }}</span>
+              {% endif %}
+            </div>
             <div class="bg-label">{{ stat.label | escape }}</div>
           </div>
         {% endfor %}
@@ -49,15 +176,328 @@
         <div class="bg-empty">No samples in this range</div>
       {% elsif view == 'geography' %}
         <table class="bg-countries" aria-label="Requests by country">
-          <tbody>{% for row in rows limit: 6 %}<tr><td>{{ row.label | escape }}</td><td>{{ row.value | round: 0 }}</td></tr>{% endfor %}</tbody>
+          <tbody>
+            {% for row in rows limit: 6 %}
+              {%- assign country_code = row.label | upcase -%}
+              {%- assign country_name = row.label -%}
+              {%- case country_code -%}
+                {%- when 'AD' -%}{%- assign country_name = 'Andorra' -%}
+                {%- when 'AE' -%}{%- assign country_name = 'United Arab Emirates' -%}
+                {%- when 'AF' -%}{%- assign country_name = 'Afghanistan' -%}
+                {%- when 'AG' -%}{%- assign country_name = 'Antigua & Barbuda' -%}
+                {%- when 'AI' -%}{%- assign country_name = 'Anguilla' -%}
+                {%- when 'AL' -%}{%- assign country_name = 'Albania' -%}
+                {%- when 'AM' -%}{%- assign country_name = 'Armenia' -%}
+                {%- when 'AO' -%}{%- assign country_name = 'Angola' -%}
+                {%- when 'AQ' -%}{%- assign country_name = 'Antarctica' -%}
+                {%- when 'AR' -%}{%- assign country_name = 'Argentina' -%}
+                {%- when 'AS' -%}{%- assign country_name = 'American Samoa' -%}
+                {%- when 'AT' -%}{%- assign country_name = 'Austria' -%}
+                {%- when 'AU' -%}{%- assign country_name = 'Australia' -%}
+                {%- when 'AW' -%}{%- assign country_name = 'Aruba' -%}
+                {%- when 'AX' -%}{%- assign country_name = 'Åland Islands' -%}
+                {%- when 'AZ' -%}{%- assign country_name = 'Azerbaijan' -%}
+                {%- when 'BA' -%}{%- assign country_name = 'Bosnia & Herzegovina' -%}
+                {%- when 'BB' -%}{%- assign country_name = 'Barbados' -%}
+                {%- when 'BD' -%}{%- assign country_name = 'Bangladesh' -%}
+                {%- when 'BE' -%}{%- assign country_name = 'Belgium' -%}
+                {%- when 'BF' -%}{%- assign country_name = 'Burkina Faso' -%}
+                {%- when 'BG' -%}{%- assign country_name = 'Bulgaria' -%}
+                {%- when 'BH' -%}{%- assign country_name = 'Bahrain' -%}
+                {%- when 'BI' -%}{%- assign country_name = 'Burundi' -%}
+                {%- when 'BJ' -%}{%- assign country_name = 'Benin' -%}
+                {%- when 'BL' -%}{%- assign country_name = 'St. Barthélemy' -%}
+                {%- when 'BM' -%}{%- assign country_name = 'Bermuda' -%}
+                {%- when 'BN' -%}{%- assign country_name = 'Brunei' -%}
+                {%- when 'BO' -%}{%- assign country_name = 'Bolivia' -%}
+                {%- when 'BQ' -%}{%- assign country_name = 'Caribbean Netherlands' -%}
+                {%- when 'BR' -%}{%- assign country_name = 'Brazil' -%}
+                {%- when 'BS' -%}{%- assign country_name = 'Bahamas' -%}
+                {%- when 'BT' -%}{%- assign country_name = 'Bhutan' -%}
+                {%- when 'BV' -%}{%- assign country_name = 'Bouvet Island' -%}
+                {%- when 'BW' -%}{%- assign country_name = 'Botswana' -%}
+                {%- when 'BY' -%}{%- assign country_name = 'Belarus' -%}
+                {%- when 'BZ' -%}{%- assign country_name = 'Belize' -%}
+                {%- when 'CA' -%}{%- assign country_name = 'Canada' -%}
+                {%- when 'CC' -%}{%- assign country_name = 'Cocos (Keeling) Islands' -%}
+                {%- when 'CD' -%}{%- assign country_name = 'Congo - Kinshasa' -%}
+                {%- when 'CF' -%}{%- assign country_name = 'Central African Republic' -%}
+                {%- when 'CG' -%}{%- assign country_name = 'Congo - Brazzaville' -%}
+                {%- when 'CH' -%}{%- assign country_name = 'Switzerland' -%}
+                {%- when 'CI' -%}{%- assign country_name = 'Côte d’Ivoire' -%}
+                {%- when 'CK' -%}{%- assign country_name = 'Cook Islands' -%}
+                {%- when 'CL' -%}{%- assign country_name = 'Chile' -%}
+                {%- when 'CM' -%}{%- assign country_name = 'Cameroon' -%}
+                {%- when 'CN' -%}{%- assign country_name = 'China' -%}
+                {%- when 'CO' -%}{%- assign country_name = 'Colombia' -%}
+                {%- when 'CR' -%}{%- assign country_name = 'Costa Rica' -%}
+                {%- when 'CU' -%}{%- assign country_name = 'Cuba' -%}
+                {%- when 'CV' -%}{%- assign country_name = 'Cape Verde' -%}
+                {%- when 'CW' -%}{%- assign country_name = 'Curaçao' -%}
+                {%- when 'CX' -%}{%- assign country_name = 'Christmas Island' -%}
+                {%- when 'CY' -%}{%- assign country_name = 'Cyprus' -%}
+                {%- when 'CZ' -%}{%- assign country_name = 'Czechia' -%}
+                {%- when 'DE' -%}{%- assign country_name = 'Germany' -%}
+                {%- when 'DJ' -%}{%- assign country_name = 'Djibouti' -%}
+                {%- when 'DK' -%}{%- assign country_name = 'Denmark' -%}
+                {%- when 'DM' -%}{%- assign country_name = 'Dominica' -%}
+                {%- when 'DO' -%}{%- assign country_name = 'Dominican Republic' -%}
+                {%- when 'DZ' -%}{%- assign country_name = 'Algeria' -%}
+                {%- when 'EC' -%}{%- assign country_name = 'Ecuador' -%}
+                {%- when 'EE' -%}{%- assign country_name = 'Estonia' -%}
+                {%- when 'EG' -%}{%- assign country_name = 'Egypt' -%}
+                {%- when 'EH' -%}{%- assign country_name = 'Western Sahara' -%}
+                {%- when 'ER' -%}{%- assign country_name = 'Eritrea' -%}
+                {%- when 'ES' -%}{%- assign country_name = 'Spain' -%}
+                {%- when 'ET' -%}{%- assign country_name = 'Ethiopia' -%}
+                {%- when 'FI' -%}{%- assign country_name = 'Finland' -%}
+                {%- when 'FJ' -%}{%- assign country_name = 'Fiji' -%}
+                {%- when 'FK' -%}{%- assign country_name = 'Falkland Islands' -%}
+                {%- when 'FM' -%}{%- assign country_name = 'Micronesia' -%}
+                {%- when 'FO' -%}{%- assign country_name = 'Faroe Islands' -%}
+                {%- when 'FR' -%}{%- assign country_name = 'France' -%}
+                {%- when 'GA' -%}{%- assign country_name = 'Gabon' -%}
+                {%- when 'GB' -%}{%- assign country_name = 'United Kingdom' -%}
+                {%- when 'GD' -%}{%- assign country_name = 'Grenada' -%}
+                {%- when 'GE' -%}{%- assign country_name = 'Georgia' -%}
+                {%- when 'GF' -%}{%- assign country_name = 'French Guiana' -%}
+                {%- when 'GG' -%}{%- assign country_name = 'Guernsey' -%}
+                {%- when 'GH' -%}{%- assign country_name = 'Ghana' -%}
+                {%- when 'GI' -%}{%- assign country_name = 'Gibraltar' -%}
+                {%- when 'GL' -%}{%- assign country_name = 'Greenland' -%}
+                {%- when 'GM' -%}{%- assign country_name = 'Gambia' -%}
+                {%- when 'GN' -%}{%- assign country_name = 'Guinea' -%}
+                {%- when 'GP' -%}{%- assign country_name = 'Guadeloupe' -%}
+                {%- when 'GQ' -%}{%- assign country_name = 'Equatorial Guinea' -%}
+                {%- when 'GR' -%}{%- assign country_name = 'Greece' -%}
+                {%- when 'GS' -%}{%- assign country_name = 'South Georgia & South Sandwich Islands' -%}
+                {%- when 'GT' -%}{%- assign country_name = 'Guatemala' -%}
+                {%- when 'GU' -%}{%- assign country_name = 'Guam' -%}
+                {%- when 'GW' -%}{%- assign country_name = 'Guinea-Bissau' -%}
+                {%- when 'GY' -%}{%- assign country_name = 'Guyana' -%}
+                {%- when 'HK' -%}{%- assign country_name = 'Hong Kong SAR China' -%}
+                {%- when 'HM' -%}{%- assign country_name = 'Heard & McDonald Islands' -%}
+                {%- when 'HN' -%}{%- assign country_name = 'Honduras' -%}
+                {%- when 'HR' -%}{%- assign country_name = 'Croatia' -%}
+                {%- when 'HT' -%}{%- assign country_name = 'Haiti' -%}
+                {%- when 'HU' -%}{%- assign country_name = 'Hungary' -%}
+                {%- when 'ID' -%}{%- assign country_name = 'Indonesia' -%}
+                {%- when 'IE' -%}{%- assign country_name = 'Ireland' -%}
+                {%- when 'IL' -%}{%- assign country_name = 'Israel' -%}
+                {%- when 'IM' -%}{%- assign country_name = 'Isle of Man' -%}
+                {%- when 'IN' -%}{%- assign country_name = 'India' -%}
+                {%- when 'IO' -%}{%- assign country_name = 'British Indian Ocean Territory' -%}
+                {%- when 'IQ' -%}{%- assign country_name = 'Iraq' -%}
+                {%- when 'IR' -%}{%- assign country_name = 'Iran' -%}
+                {%- when 'IS' -%}{%- assign country_name = 'Iceland' -%}
+                {%- when 'IT' -%}{%- assign country_name = 'Italy' -%}
+                {%- when 'JE' -%}{%- assign country_name = 'Jersey' -%}
+                {%- when 'JM' -%}{%- assign country_name = 'Jamaica' -%}
+                {%- when 'JO' -%}{%- assign country_name = 'Jordan' -%}
+                {%- when 'JP' -%}{%- assign country_name = 'Japan' -%}
+                {%- when 'KE' -%}{%- assign country_name = 'Kenya' -%}
+                {%- when 'KG' -%}{%- assign country_name = 'Kyrgyzstan' -%}
+                {%- when 'KH' -%}{%- assign country_name = 'Cambodia' -%}
+                {%- when 'KI' -%}{%- assign country_name = 'Kiribati' -%}
+                {%- when 'KM' -%}{%- assign country_name = 'Comoros' -%}
+                {%- when 'KN' -%}{%- assign country_name = 'St. Kitts & Nevis' -%}
+                {%- when 'KP' -%}{%- assign country_name = 'North Korea' -%}
+                {%- when 'KR' -%}{%- assign country_name = 'South Korea' -%}
+                {%- when 'KW' -%}{%- assign country_name = 'Kuwait' -%}
+                {%- when 'KY' -%}{%- assign country_name = 'Cayman Islands' -%}
+                {%- when 'KZ' -%}{%- assign country_name = 'Kazakhstan' -%}
+                {%- when 'LA' -%}{%- assign country_name = 'Laos' -%}
+                {%- when 'LB' -%}{%- assign country_name = 'Lebanon' -%}
+                {%- when 'LC' -%}{%- assign country_name = 'St. Lucia' -%}
+                {%- when 'LI' -%}{%- assign country_name = 'Liechtenstein' -%}
+                {%- when 'LK' -%}{%- assign country_name = 'Sri Lanka' -%}
+                {%- when 'LR' -%}{%- assign country_name = 'Liberia' -%}
+                {%- when 'LS' -%}{%- assign country_name = 'Lesotho' -%}
+                {%- when 'LT' -%}{%- assign country_name = 'Lithuania' -%}
+                {%- when 'LU' -%}{%- assign country_name = 'Luxembourg' -%}
+                {%- when 'LV' -%}{%- assign country_name = 'Latvia' -%}
+                {%- when 'LY' -%}{%- assign country_name = 'Libya' -%}
+                {%- when 'MA' -%}{%- assign country_name = 'Morocco' -%}
+                {%- when 'MC' -%}{%- assign country_name = 'Monaco' -%}
+                {%- when 'MD' -%}{%- assign country_name = 'Moldova' -%}
+                {%- when 'ME' -%}{%- assign country_name = 'Montenegro' -%}
+                {%- when 'MF' -%}{%- assign country_name = 'St. Martin' -%}
+                {%- when 'MG' -%}{%- assign country_name = 'Madagascar' -%}
+                {%- when 'MH' -%}{%- assign country_name = 'Marshall Islands' -%}
+                {%- when 'MK' -%}{%- assign country_name = 'North Macedonia' -%}
+                {%- when 'ML' -%}{%- assign country_name = 'Mali' -%}
+                {%- when 'MM' -%}{%- assign country_name = 'Myanmar (Burma)' -%}
+                {%- when 'MN' -%}{%- assign country_name = 'Mongolia' -%}
+                {%- when 'MO' -%}{%- assign country_name = 'Macao SAR China' -%}
+                {%- when 'MP' -%}{%- assign country_name = 'Northern Mariana Islands' -%}
+                {%- when 'MQ' -%}{%- assign country_name = 'Martinique' -%}
+                {%- when 'MR' -%}{%- assign country_name = 'Mauritania' -%}
+                {%- when 'MS' -%}{%- assign country_name = 'Montserrat' -%}
+                {%- when 'MT' -%}{%- assign country_name = 'Malta' -%}
+                {%- when 'MU' -%}{%- assign country_name = 'Mauritius' -%}
+                {%- when 'MV' -%}{%- assign country_name = 'Maldives' -%}
+                {%- when 'MW' -%}{%- assign country_name = 'Malawi' -%}
+                {%- when 'MX' -%}{%- assign country_name = 'Mexico' -%}
+                {%- when 'MY' -%}{%- assign country_name = 'Malaysia' -%}
+                {%- when 'MZ' -%}{%- assign country_name = 'Mozambique' -%}
+                {%- when 'NA' -%}{%- assign country_name = 'Namibia' -%}
+                {%- when 'NC' -%}{%- assign country_name = 'New Caledonia' -%}
+                {%- when 'NE' -%}{%- assign country_name = 'Niger' -%}
+                {%- when 'NF' -%}{%- assign country_name = 'Norfolk Island' -%}
+                {%- when 'NG' -%}{%- assign country_name = 'Nigeria' -%}
+                {%- when 'NI' -%}{%- assign country_name = 'Nicaragua' -%}
+                {%- when 'NL' -%}{%- assign country_name = 'Netherlands' -%}
+                {%- when 'NO' -%}{%- assign country_name = 'Norway' -%}
+                {%- when 'NP' -%}{%- assign country_name = 'Nepal' -%}
+                {%- when 'NR' -%}{%- assign country_name = 'Nauru' -%}
+                {%- when 'NU' -%}{%- assign country_name = 'Niue' -%}
+                {%- when 'NZ' -%}{%- assign country_name = 'New Zealand' -%}
+                {%- when 'OM' -%}{%- assign country_name = 'Oman' -%}
+                {%- when 'PA' -%}{%- assign country_name = 'Panama' -%}
+                {%- when 'PE' -%}{%- assign country_name = 'Peru' -%}
+                {%- when 'PF' -%}{%- assign country_name = 'French Polynesia' -%}
+                {%- when 'PG' -%}{%- assign country_name = 'Papua New Guinea' -%}
+                {%- when 'PH' -%}{%- assign country_name = 'Philippines' -%}
+                {%- when 'PK' -%}{%- assign country_name = 'Pakistan' -%}
+                {%- when 'PL' -%}{%- assign country_name = 'Poland' -%}
+                {%- when 'PM' -%}{%- assign country_name = 'St. Pierre & Miquelon' -%}
+                {%- when 'PN' -%}{%- assign country_name = 'Pitcairn Islands' -%}
+                {%- when 'PR' -%}{%- assign country_name = 'Puerto Rico' -%}
+                {%- when 'PS' -%}{%- assign country_name = 'Palestinian Territories' -%}
+                {%- when 'PT' -%}{%- assign country_name = 'Portugal' -%}
+                {%- when 'PW' -%}{%- assign country_name = 'Palau' -%}
+                {%- when 'PY' -%}{%- assign country_name = 'Paraguay' -%}
+                {%- when 'QA' -%}{%- assign country_name = 'Qatar' -%}
+                {%- when 'RE' -%}{%- assign country_name = 'Réunion' -%}
+                {%- when 'RO' -%}{%- assign country_name = 'Romania' -%}
+                {%- when 'RS' -%}{%- assign country_name = 'Serbia' -%}
+                {%- when 'RU' -%}{%- assign country_name = 'Russia' -%}
+                {%- when 'RW' -%}{%- assign country_name = 'Rwanda' -%}
+                {%- when 'SA' -%}{%- assign country_name = 'Saudi Arabia' -%}
+                {%- when 'SB' -%}{%- assign country_name = 'Solomon Islands' -%}
+                {%- when 'SC' -%}{%- assign country_name = 'Seychelles' -%}
+                {%- when 'SD' -%}{%- assign country_name = 'Sudan' -%}
+                {%- when 'SE' -%}{%- assign country_name = 'Sweden' -%}
+                {%- when 'SG' -%}{%- assign country_name = 'Singapore' -%}
+                {%- when 'SH' -%}{%- assign country_name = 'St. Helena' -%}
+                {%- when 'SI' -%}{%- assign country_name = 'Slovenia' -%}
+                {%- when 'SJ' -%}{%- assign country_name = 'Svalbard & Jan Mayen' -%}
+                {%- when 'SK' -%}{%- assign country_name = 'Slovakia' -%}
+                {%- when 'SL' -%}{%- assign country_name = 'Sierra Leone' -%}
+                {%- when 'SM' -%}{%- assign country_name = 'San Marino' -%}
+                {%- when 'SN' -%}{%- assign country_name = 'Senegal' -%}
+                {%- when 'SO' -%}{%- assign country_name = 'Somalia' -%}
+                {%- when 'SR' -%}{%- assign country_name = 'Suriname' -%}
+                {%- when 'SS' -%}{%- assign country_name = 'South Sudan' -%}
+                {%- when 'ST' -%}{%- assign country_name = 'São Tomé & Príncipe' -%}
+                {%- when 'SV' -%}{%- assign country_name = 'El Salvador' -%}
+                {%- when 'SX' -%}{%- assign country_name = 'Sint Maarten' -%}
+                {%- when 'SY' -%}{%- assign country_name = 'Syria' -%}
+                {%- when 'SZ' -%}{%- assign country_name = 'Eswatini' -%}
+                {%- when 'TC' -%}{%- assign country_name = 'Turks & Caicos Islands' -%}
+                {%- when 'TD' -%}{%- assign country_name = 'Chad' -%}
+                {%- when 'TF' -%}{%- assign country_name = 'French Southern Territories' -%}
+                {%- when 'TG' -%}{%- assign country_name = 'Togo' -%}
+                {%- when 'TH' -%}{%- assign country_name = 'Thailand' -%}
+                {%- when 'TJ' -%}{%- assign country_name = 'Tajikistan' -%}
+                {%- when 'TK' -%}{%- assign country_name = 'Tokelau' -%}
+                {%- when 'TL' -%}{%- assign country_name = 'Timor-Leste' -%}
+                {%- when 'TM' -%}{%- assign country_name = 'Turkmenistan' -%}
+                {%- when 'TN' -%}{%- assign country_name = 'Tunisia' -%}
+                {%- when 'TO' -%}{%- assign country_name = 'Tonga' -%}
+                {%- when 'TR' -%}{%- assign country_name = 'Türkiye' -%}
+                {%- when 'TT' -%}{%- assign country_name = 'Trinidad & Tobago' -%}
+                {%- when 'TV' -%}{%- assign country_name = 'Tuvalu' -%}
+                {%- when 'TW' -%}{%- assign country_name = 'Taiwan' -%}
+                {%- when 'TZ' -%}{%- assign country_name = 'Tanzania' -%}
+                {%- when 'UA' -%}{%- assign country_name = 'Ukraine' -%}
+                {%- when 'UG' -%}{%- assign country_name = 'Uganda' -%}
+                {%- when 'UM' -%}{%- assign country_name = 'U.S. Outlying Islands' -%}
+                {%- when 'US' -%}{%- assign country_name = 'United States' -%}
+                {%- when 'UY' -%}{%- assign country_name = 'Uruguay' -%}
+                {%- when 'UZ' -%}{%- assign country_name = 'Uzbekistan' -%}
+                {%- when 'VA' -%}{%- assign country_name = 'Vatican City' -%}
+                {%- when 'VC' -%}{%- assign country_name = 'St. Vincent & Grenadines' -%}
+                {%- when 'VE' -%}{%- assign country_name = 'Venezuela' -%}
+                {%- when 'VG' -%}{%- assign country_name = 'British Virgin Islands' -%}
+                {%- when 'VI' -%}{%- assign country_name = 'U.S. Virgin Islands' -%}
+                {%- when 'VN' -%}{%- assign country_name = 'Vietnam' -%}
+                {%- when 'VU' -%}{%- assign country_name = 'Vanuatu' -%}
+                {%- when 'WF' -%}{%- assign country_name = 'Wallis & Futuna' -%}
+                {%- when 'WS' -%}{%- assign country_name = 'Samoa' -%}
+                {%- when 'XK' -%}{%- assign country_name = 'Kosovo' -%}
+                {%- when 'XX' -%}{%- assign country_name = 'Local / private network' -%}
+                {%- when 'YE' -%}{%- assign country_name = 'Yemen' -%}
+                {%- when 'YT' -%}{%- assign country_name = 'Mayotte' -%}
+                {%- when 'ZA' -%}{%- assign country_name = 'South Africa' -%}
+                {%- when 'ZM' -%}{%- assign country_name = 'Zambia' -%}
+                {%- when 'ZW' -%}{%- assign country_name = 'Zimbabwe' -%}
+                {%- when 'ZZ' -%}{%- assign country_name = 'Unknown' -%}
+              {%- endcase -%}
+              <tr><td>{{ country_name | escape }}</td><td>{{ row.value | round: 0 }}</td></tr>
+            {% endfor %}
+          </tbody>
         </table>
       {% else %}
         <div class="bg-chart" role="img" aria-label="{{ title | escape }} over the last {{ hours | plus: 0 }} hours">
-          <div class="bg-scale"><span>{{ maximum | round: 1 }} {{ unit | escape }}</span><span>{% if view == 'cache' or view == 'latency' or view == 'cpu' or view == 'memory' or view == 'disk' or view == 'network' %}Average per interval{% else %}Total per interval{% endif %}</span></div>
-          <div class="bg-bars">
-            {% for point in points %}<div class="bg-slot"><div class="bg-bar" style="height: {{ point.height | plus: 0 | at_least: 0 | at_most: 100 }}%"></div></div>{% endfor %}
+          {% assign chart_maximum = maximum | plus: 0 %}
+          {% if chart_maximum <= 0 %}{% assign chart_maximum = 1 %}{% endif %}
+          {% assign ticks = '100,75,50,25,0' | split: ',' %}
+          {% assign chart_byte_multiplier = 0 %}
+          {% case unit %}
+            {% when 'B' %}{% assign chart_byte_multiplier = 1 %}
+            {% when 'KiB' %}{% assign chart_byte_multiplier = 1024 %}
+            {% when 'MiB' %}{% assign chart_byte_multiplier = 1048576 %}
+            {% when 'GiB' %}{% assign chart_byte_multiplier = 1073741824 %}
+            {% when 'TiB' %}{% assign chart_byte_multiplier = 1099511627776 %}
+          {% endcase %}
+          {% assign chart_display_unit = unit %}
+          {% assign chart_ratio = 1.0 %}
+          {% if chart_byte_multiplier > 0 %}
+            {% assign chart_max_bytes = chart_maximum | times: chart_byte_multiplier %}
+            {% assign chart_display_multiplier = 1 %}
+            {% if chart_max_bytes >= 1099511627776 %}{% assign chart_display_multiplier = 1099511627776 %}{% assign chart_display_unit = 'TiB' %}
+            {% elsif chart_max_bytes >= 1073741824 %}{% assign chart_display_multiplier = 1073741824 %}{% assign chart_display_unit = 'GiB' %}
+            {% elsif chart_max_bytes >= 1048576 %}{% assign chart_display_multiplier = 1048576 %}{% assign chart_display_unit = 'MiB' %}
+            {% elsif chart_max_bytes >= 1024 %}{% assign chart_display_multiplier = 1024 %}{% assign chart_display_unit = 'KiB' %}
+            {% else %}{% assign chart_display_multiplier = 1 %}{% assign chart_display_unit = 'B' %}
+            {% endif %}
+            {% assign chart_ratio = chart_byte_multiplier | times: 1.0 | divided_by: chart_display_multiplier %}
+          {% endif %}
+          <div class="bg-scale"><span>{% if view == 'cache' or view == 'latency' or view == 'cpu' or view == 'memory' or view == 'disk' or view == 'network' %}Average per interval{% else %}Total per interval{% endif %}</span><span>{{ chart_display_unit | escape }}</span></div>
+          <div class="bg-plot-row">
+            <div class="bg-plot">
+              {% for tick in ticks %}<div class="bg-gridline" style="top: {{ 100 | minus: tick }}%"></div>{% endfor %}
+              {% if view == 'cpu' or view == 'memory' or view == 'disk' %}
+                <svg class="bg-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {% assign intervals = points.size | minus: 1 | at_least: 1 %}
+                  {% assign previous_value = nil %}
+                  {% for point in points %}
+                    {% assign x = forloop.index0 | times: 100.0 | divided_by: intervals %}
+                    {% if point.value != nil %}
+                      {% assign y = point.value | times: 100.0 | divided_by: chart_maximum | at_least: 0 | at_most: 100 %}
+                      {% assign y = 100 | minus: y %}
+                      {% if previous_value != nil %}<line x1="{{ previous_x }}" y1="{{ previous_y }}" x2="{{ x }}" y2="{{ y }}" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" />{% endif %}
+                      <line x1="{{ x }}" y1="{{ y }}" x2="{{ x }}" y2="{{ y }}" stroke="currentColor" stroke-width="2" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+                      {% assign previous_x = x %}{% assign previous_y = y %}
+                    {% endif %}
+                    {% assign previous_value = point.value %}
+                  {% endfor %}
+                </svg>
+              {% else %}
+                <div class="bg-bars">
+                  {% for point in points %}<div class="bg-slot"><div class="bg-bar" style="height: {{ point.value | plus: 0 | times: 100.0 | divided_by: chart_maximum | at_least: 0 | at_most: 100 }}%"></div></div>{% endfor %}
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-values">
+              {% for tick in ticks %}
+                {% assign tick_value = chart_maximum | times: tick | divided_by: 100.0 %}
+                <span class="bg-tick" style="top: {{ 100 | minus: tick }}%">{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
+              {% endfor %}
+            </div>
           </div>
-          <div class="bg-axis"><span>{{ from | slice: 5, 11 | replace: 'T', ' ' }}</span><span>{{ to | slice: 5, 11 | replace: 'T', ' ' }} UTC</span></div>
+          <div class="bg-axis"><span>{{ date_labels[0] | escape }}</span><span>{{ date_labels[1] | escape }}</span></div>
         </div>
       {% endif %}
     {% else %}
@@ -66,7 +506,7 @@
     {% endif %}
   </div>
 </div>
-<div class="title_bar">
+<div class="title_bar bg-footer">
   <span class="title">BurrowGate</span>
-  <span class="instance">{% if schemaVersion == 1 %}{{ hours | plus: 0 }}h · Updated {{ generatedAt | slice: 5, 11 | replace: 'T', ' ' }} UTC{% else %}Monitoring{% endif %}</span>
+  <span class="instance">{% if schemaVersion == 1 %}{{ hours | plus: 0 }}h · {{ date_labels[2] | escape }}{% else %}Monitoring{% endif %}</span>
 </div>
