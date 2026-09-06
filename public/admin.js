@@ -1,4 +1,15 @@
 import { isWebauthnSupported, registerCredential } from "/_burrowgate/static/webauthn-client.js";
+import {
+	byId,
+	escapeHtml,
+	showToast,
+	setTableLoading,
+	setTableError,
+	runWithButton,
+	setPendingDurabilityWarning,
+	createUsersController,
+	createApiTokensController,
+} from "/_burrowgate/static/admin-shared.js";
 
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
@@ -212,7 +223,6 @@ function geoConfigForScope(scope) {
 let sites = [];
 let sitePendingChanges = [];
 let currentAdmin = null;
-let usersData = { items: [], sites: [], streams: [] };
 let accessSso = {
 	enabled: false,
 	enforceSso: false,
@@ -222,7 +232,6 @@ let accessSso = {
 	scopes: "openid email profile",
 	buttonLabel: "Single sign-on",
 };
-let editingPermissionsUserId = null;
 let defaultEventRetentionDays = 7;
 let errorResponseDefaults = { mode: "json", htmlTemplate: "", jsonFields: [], jsonFieldOptions: [], placeholders: [] };
 let challengeDefaults = { htmlTemplate: "", placeholders: [], texts: [] };
@@ -329,20 +338,6 @@ let selectedRangeTo = 0;
 let dateRangeIsAutomatic = true;
 let dateTimeFormat = "iso-24";
 const loadedTabs = new Set(["traffic"]);
-
-const byId = (id) => document.getElementById(id);
-const escapeHtml = (value) =>
-	String(value ?? "").replace(
-		/[&<>"']/g,
-		(character) =>
-			({
-				"&": "&amp;",
-				"<": "&lt;",
-				">": "&gt;",
-				'"': "&quot;",
-				"'": "&#39;",
-			})[character],
-	);
 
 const BOT_CATEGORY_LABELS = {
 	"search-engine": "Search engines",
@@ -1401,21 +1396,6 @@ function debounce(callback, delay = 300) {
 	};
 }
 
-let pendingDurabilityWarning = false;
-
-function showToast(message, kind = "ok") {
-	const toast = byId("toast");
-	if (kind === "ok" && pendingDurabilityWarning) {
-		message = `${message} Not yet confirmed durable on a majority of cluster members - will retry.`;
-		kind = "warn";
-	}
-	pendingDurabilityWarning = false;
-	toast.textContent = message;
-	toast.className = `toast ${kind}`;
-	clearTimeout(showToast.timer);
-	showToast.timer = setTimeout(() => toast.classList.add("hidden"), 3_500);
-}
-
 async function api(path, options = {}, siteScoped = true) {
 	const target = new URL(`${ADMIN_API}${path}`, location.origin);
 	if (siteScoped && selectedSiteId) target.searchParams.set("siteId", selectedSiteId);
@@ -1429,7 +1409,7 @@ async function api(path, options = {}, siteScoped = true) {
 	}
 	const data = await response.json();
 	if (!response.ok) throw new Error(data.error ?? "Request failed");
-	if (data && typeof data === "object" && "durabilityConfirmed" in data) pendingDurabilityWarning = data.durabilityConfirmed === false;
+	if (data && typeof data === "object" && "durabilityConfirmed" in data) setPendingDurabilityWarning(data.durabilityConfirmed === false);
 	return data;
 }
 
@@ -1439,14 +1419,6 @@ function queryString(parameters) {
 		if (value !== "" && value !== undefined && value !== null) search.set(key, String(value));
 	}
 	return search.toString();
-}
-
-function setTableLoading(id, columns) {
-	byId(id).innerHTML = `<tr><td colspan="${columns}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
-}
-
-function setTableError(id, columns, error) {
-	byId(id).innerHTML = `<tr><td colspan="${columns}" class="empty-cell error-text">${escapeHtml(error.message)}</td></tr>`;
 }
 
 function updatePagination(prefix, result, load) {
@@ -5226,15 +5198,6 @@ function markUpdated(prefix = "Updated") {
 	byId("lastUpdated").textContent = `${prefix} ${formatTime()}`;
 }
 
-async function runWithButton(button, task) {
-	button.disabled = true;
-	try {
-		await task();
-	} finally {
-		button.disabled = false;
-	}
-}
-
 async function refreshDashboard() {
 	const tasks = [loadOverview(), loadMetrics(), refreshGeoAndReferrers()];
 	if (activeTab === "traffic") tasks.push(loadTraffic());
@@ -5388,136 +5351,26 @@ function applyCurrentAdminVisibility() {
 function openModal(name) {
 	byId(`modal-${name}`).classList.remove("hidden");
 	document.body.classList.add("modal-open");
-	if (name === "users") void loadUsers();
+	if (name === "users") void usersController.loadUsers();
 	if (name === "audit") void loadAuditLog();
 	if (name === "account") void loadAccount();
 	if (name === "sso") void loadAdminSso();
 }
 
 function closeModal(name) {
-	if (name === "account") clearApiTokenSecret();
+	if (name === "account") apiTokensController.clearApiTokenSecret();
 	byId(`modal-${name}`).classList.add("hidden");
 	if (!document.querySelector(".modal-overlay:not(.hidden)")) document.body.classList.remove("modal-open");
-	if (name === "users") {
-		editingPermissionsUserId = null;
-		byId("userPermissionsCard").classList.add("hidden");
-	}
+	if (name === "users") usersController.closePermissionsEditor();
 }
 
 function closeAllModals() {
 	document.querySelectorAll(".modal-overlay:not(.hidden)").forEach((overlay) => closeModal(overlay.dataset.modal));
 }
 
-function userPermissionsSummary(user) {
-	if (user.role === "administrator") return "All sites and streams";
-	const parts = [];
-	if (user.sitePermissions.length) parts.push(`${user.sitePermissions.length} site${user.sitePermissions.length === 1 ? "" : "s"}`);
-	if (user.streamPermissions.length) parts.push(`${user.streamPermissions.length} stream${user.streamPermissions.length === 1 ? "" : "s"}`);
-	return parts.length ? parts.join(", ") : "None";
-}
-
-function renderUsers() {
-	const rows = usersData.items
-		.map(
-			(user) => `<tr>
-        <td>${escapeHtml(user.username)}</td>
-        <td><span class="badge ${user.role === "administrator" ? "info" : ""}">${user.role === "administrator" ? "Administrator" : "Member"}</span></td>
-        <td>${user.totpEnrolled || user.webauthnCredentialCount > 0 ? '<span class="badge ok">Enrolled</span>' : '<span class="badge warn">Pending</span>'}</td>
-        <td>${user.enabled ? '<span class="badge ok">Enabled</span>' : '<span class="badge bad">Disabled</span>'}</td>
-        <td>${escapeHtml(userPermissionsSummary(user))}</td>
-        <td class="row-actions">
-          ${user.role === "administrator" ? "" : `<button class="button secondary compact" data-user-permissions="${escapeHtml(user.id)}" type="button">Permissions</button>`}
-          <button class="button secondary compact" data-user-reset-password="${escapeHtml(user.id)}" type="button">Reset password</button>
-          <button class="button secondary compact" data-user-reset-totp="${escapeHtml(user.id)}" type="button">Reset 2FA</button>
-          <button class="button danger compact" data-user-delete="${escapeHtml(user.id)}" type="button">Delete</button>
-        </td>
-      </tr>`,
-		)
-		.join("");
-	byId("users").innerHTML = rows || '<tr><td colspan="6" class="empty-cell">No users yet.</td></tr>';
-}
-
-async function loadUsers() {
-	setTableLoading("users", 6);
-	try {
-		usersData = await api("/users", {}, false);
-		renderUsers();
-	} catch (error) {
-		setTableError("users", 6, error);
-	}
-}
-
-async function createUser(event) {
-	event.preventDefault();
-	const form = event.currentTarget;
-	const payload = Object.fromEntries(new FormData(form));
-	try {
-		await api("/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }, false);
-		form.reset();
-		showToast("User created.");
-		await loadUsers();
-	} catch (error) {
-		showToast(error.message, "bad");
-	}
-}
-
-function permissionsGrid(id, resources, current, resourceKey) {
-	const currentByResource = new Map(current.map((entry) => [entry[resourceKey], entry.level]));
-	byId(id).innerHTML = resources.length
-		? resources
-				.map((resource) => {
-					const level = currentByResource.get(resource.id) ?? "none";
-					return `<label class="permission-row"><span>${escapeHtml(resource.label)}</span><select class="select" data-permission-resource="${escapeHtml(resource.id)}">
-          <option value="none" ${level === "none" ? "selected" : ""}>None</option>
-          <option value="viewer" ${level === "viewer" ? "selected" : ""}>Viewer</option>
-          <option value="manager" ${level === "manager" ? "selected" : ""}>Manager</option>
-        </select></label>`;
-				})
-				.join("")
-		: '<p class="muted">None configured yet.</p>';
-}
-
-function openUserPermissions(userId) {
-	const user = usersData.items.find((item) => item.id === userId);
-	if (!user) return;
-	editingPermissionsUserId = userId;
-	byId("userPermissionsTitle").textContent = `Permissions for ${user.username}`;
-	permissionsGrid(
-		"userSitePermissions",
-		usersData.sites.map((site) => ({ id: site.id, label: site.name })),
-		user.sitePermissions,
-		"siteId",
-	);
-	permissionsGrid(
-		"userStreamPermissions",
-		usersData.streams.map((stream) => ({ id: stream.id, label: `${stream.name} (port ${stream.incomingPort})` })),
-		user.streamPermissions,
-		"streamId",
-	);
-	byId("userPermissionsCard").classList.remove("hidden");
-}
-
-async function saveUserPermissions() {
-	if (!editingPermissionsUserId) return;
-	const sitePermissions = [...document.querySelectorAll("#userSitePermissions [data-permission-resource]")]
-		.map((select) => ({ siteId: select.dataset.permissionResource, level: select.value }))
-		.filter((entry) => entry.level !== "none");
-	const streamPermissions = [...document.querySelectorAll("#userStreamPermissions [data-permission-resource]")]
-		.map((select) => ({ streamId: select.dataset.permissionResource, level: select.value }))
-		.filter((entry) => entry.level !== "none");
-	try {
-		await api(
-			`/users/${encodeURIComponent(editingPermissionsUserId)}`,
-			{ method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ sitePermissions, streamPermissions }) },
-			false,
-		);
-		showToast("Permissions updated.");
-		byId("userPermissionsCard").classList.add("hidden");
-		await loadUsers();
-	} catch (error) {
-		showToast(error.message, "bad");
-	}
-}
+const scopelessApi = (path, options) => api(path, options, false);
+const usersController = createUsersController({ api: scopelessApi });
+const apiTokensController = createApiTokensController({ api: scopelessApi });
 
 async function loadAccount() {
 	const me = currentAdmin ?? (await loadCurrentAdmin());
@@ -5527,61 +5380,9 @@ async function loadAccount() {
 	const monitoringOption = byId("apiTokenScope").querySelector('option[value="monitoring"]');
 	monitoringOption.disabled = me.role !== "administrator";
 	monitoringOption.hidden = me.role !== "administrator";
-	await loadApiTokens();
+	await apiTokensController.loadApiTokens();
 	await loadWebauthnCredentials();
 	byId("webauthnRegisterButton").disabled = !isWebauthnSupported();
-}
-
-function clearApiTokenSecret() {
-	byId("apiTokenSecret").value = "";
-	byId("apiTokenCreated").classList.add("hidden");
-}
-
-async function loadApiTokens() {
-	const list = byId("apiTokenList");
-	try {
-		const { tokens } = await api("/me/api-tokens", {}, false);
-		list.innerHTML =
-			tokens
-				.map(
-					(token) => `<li class="site-list-item api-token-item">
-			<div class="site-list-title"><strong>${escapeHtml(token.name)}</strong><span class="badge ${token.scope === "full" ? "warn" : ""}">${token.scope === "full" ? "Full access" : "Read only"}</span></div>
-			<div class="site-list-meta"><span>${escapeHtml(token.prefix)}…</span><span>Created ${new Date(token.createdAt).toLocaleDateString()}</span><span>${token.expiresAt ? `${token.expiresAt <= Date.now() ? "Expired" : "Expires"} ${new Date(token.expiresAt).toLocaleDateString()}` : "Never expires"}</span></div>
-			<div class="site-list-actions"><button class="button danger compact" type="button" data-api-token-revoke="${escapeHtml(token.id)}">Revoke</button></div>
-		</li>`,
-				)
-				.join("") || '<li class="empty-state-inline">No API tokens.</li>';
-	} catch (error) {
-		list.innerHTML = `<li class="empty-state-inline error-text">${escapeHtml(error.message)}</li>`;
-	}
-}
-
-async function createApiToken(event) {
-	event.preventDefault();
-	const form = event.currentTarget;
-	const button = form.querySelector('button[type="submit"]');
-	await runWithButton(button, async () => {
-		clearApiTokenSecret();
-		const fields = new FormData(form);
-		const result = await api(
-			"/me/api-tokens",
-			{
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					name: fields.get("name"),
-					scope: fields.get("scope"),
-					expiresInDays: fields.get("expiresInDays") === "never" ? null : Number(fields.get("expiresInDays")),
-				}),
-			},
-			false,
-		);
-		byId("apiTokenSecret").value = result.token;
-		byId("apiTokenCreated").classList.remove("hidden");
-		byId("apiTokenSecret").select();
-		form.reset();
-		await loadApiTokens();
-	});
 }
 
 async function loadWebauthnCredentials() {
@@ -5786,7 +5587,7 @@ async function handleBodyClick(event) {
 	}
 	const userPermissionsButton = event.target.closest("button[data-user-permissions]");
 	if (userPermissionsButton) {
-		openUserPermissions(userPermissionsButton.dataset.userPermissions);
+		usersController.openUserPermissions(userPermissionsButton.dataset.userPermissions);
 		return;
 	}
 	const userResetPasswordButton = event.target.closest("button[data-user-reset-password]");
@@ -5815,7 +5616,7 @@ async function handleBodyClick(event) {
 		try {
 			await api(`/users/${encodeURIComponent(userResetTotpButton.dataset.userResetTotp)}/totp/reset`, { method: "POST" }, false);
 			showToast("Two-factor authentication reset.");
-			await loadUsers();
+			await usersController.loadUsers();
 		} catch (error) {
 			userResetTotpButton.disabled = false;
 			showToast(error.message, "bad");
@@ -5829,7 +5630,7 @@ async function handleBodyClick(event) {
 		try {
 			await api(`/users/${encodeURIComponent(userDeleteButton.dataset.userDelete)}`, { method: "DELETE" }, false);
 			showToast("User deleted.");
-			await loadUsers();
+			await usersController.loadUsers();
 		} catch (error) {
 			userDeleteButton.disabled = false;
 			showToast(error.message, "bad");
@@ -6225,16 +6026,13 @@ function bindActions() {
 	document.addEventListener("keydown", (event) => {
 		if (event.key === "Escape") closeAllModals();
 	});
-	byId("userForm").addEventListener("submit", createUser);
-	byId("refreshUsers").addEventListener("click", () => void loadUsers());
-	byId("closeUserPermissions").addEventListener("click", () => {
-		editingPermissionsUserId = null;
-		byId("userPermissionsCard").classList.add("hidden");
-	});
-	byId("saveUserPermissions").addEventListener("click", () => void saveUserPermissions());
+	byId("userForm").addEventListener("submit", usersController.createUser);
+	byId("refreshUsers").addEventListener("click", () => void usersController.loadUsers());
+	byId("closeUserPermissions").addEventListener("click", () => usersController.closePermissionsEditor());
+	byId("saveUserPermissions").addEventListener("click", () => void usersController.saveUserPermissions());
 	byId("passwordForm").addEventListener("submit", changePassword);
-	byId("apiTokenForm").addEventListener("submit", (event) => void createApiToken(event).catch((error) => showToast(error.message, "bad")));
-	byId("dismissApiToken").addEventListener("click", clearApiTokenSecret);
+	byId("apiTokenForm").addEventListener("submit", (event) => void apiTokensController.createApiToken(event).catch((error) => showToast(error.message, "bad")));
+	byId("dismissApiToken").addEventListener("click", apiTokensController.clearApiTokenSecret);
 	byId("copyApiToken").addEventListener("click", async () => {
 		try {
 			await navigator.clipboard.writeText(byId("apiTokenSecret").value);
@@ -6249,8 +6047,8 @@ function bindActions() {
 		if (!button || !confirm("Revoke this token? Any integration using it will stop refreshing.")) return;
 		await runWithButton(button, async () => {
 			await api(`/me/api-tokens/${encodeURIComponent(button.dataset.apiTokenRevoke)}`, { method: "DELETE" }, false);
-			clearApiTokenSecret();
-			await loadApiTokens();
+			apiTokensController.clearApiTokenSecret();
+			await apiTokensController.loadApiTokens();
 			showToast("API token revoked.");
 		}).catch((error) => showToast(error.message, "bad"));
 	});

@@ -739,6 +739,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 			}),
 	);
 
+	app.get(
+		"/_burrowgate/static/admin-shared.js",
+		() =>
+			new Response(Bun.file("public/admin-shared.js"), {
+				headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
+			}),
+	);
+
 	app.get("/_burrowgate/static/world.svg", (ctx) => {
 		const accepted = ctx.req.headers.get("accept-encoding") ?? "";
 		const encoding = accepted.includes("br") ? "br" : accepted.includes("gzip") ? "gzip" : null;
