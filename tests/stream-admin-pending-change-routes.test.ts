@@ -1,15 +1,37 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { Web } from "@rabbit-company/web";
 import { repository } from "../src/db/repository.ts";
 import { registerStreamAdminRoutes } from "../src/routes/stream-admin-routes.ts";
 import { createAdminUser } from "../src/services/admin-user-service.ts";
 import { registerPendingChangeApplier } from "../src/services/pending-change-service.ts";
 import { createAdminSession } from "../src/services/session-service.ts";
+import { streamProxyManager } from "../src/services/stream-proxy-service.ts";
 import { applyPendingStreamChange } from "../src/services/stream-service.ts";
 
 const app = new Web();
 registerStreamAdminRoutes(app);
 registerPendingChangeApplier("stream", applyPendingStreamChange);
+
+const createdStreamIds = new Set<string>();
+
+function availableTcpPort(): number {
+	const probe = Bun.listen({
+		hostname: "0.0.0.0",
+		port: 0,
+		socket: { data() {} },
+	});
+	const port = probe.port;
+	probe.stop(true);
+	return port;
+}
+
+afterEach(async () => {
+	for (const streamId of createdStreamIds) {
+		await streamProxyManager.remove(streamId);
+		await repository.deleteStream(streamId);
+	}
+	createdStreamIds.clear();
+});
 
 async function administratorCookie(): Promise<string> {
 	const user = await createAdminUser({ username: `stream-admin-${crypto.randomUUID()}`, password: "password123", role: "administrator" }, "test-suite");
@@ -24,16 +46,17 @@ function req(path: string, cookie: string, init: RequestInit = {}): Request {
 }
 
 async function createStream(cookie: string, overrides: Record<string, unknown> = {}): Promise<{ id: string; incomingPort: number }> {
-	const port = 50_000 + Math.floor(Math.random() * 10_000);
+	const port = availableTcpPort();
 	const response = await app.handle(
 		req("", cookie, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name: "Test stream", incomingPort: port, forwardHost: "localhost", forwardPort: port + 1, ...overrides }),
+			body: JSON.stringify({ name: "Test stream", incomingPort: port, forwardHost: "localhost", forwardPort: 1, ...overrides }),
 		}),
 	);
 	expect(response.status).toBe(201);
 	const body = (await response.json()) as { stream: { id: string; incomingPort: number } };
+	createdStreamIds.add(body.stream.id);
 	return body.stream;
 }
 
@@ -58,14 +81,14 @@ describe("stream pending-change routes", () => {
 	test("a restart-required edit with a future effectiveAt stages it and leaves the live port unchanged", async () => {
 		const cookie = await administratorCookie();
 		const stream = await createStream(cookie);
-		const newPort = stream.incomingPort + 1;
+		const newPort = availableTcpPort();
 		const effectiveAt = Date.now() + 3_600_000;
 
 		const putResponse = await app.handle(
 			req(`/${stream.id}`, cookie, {
 				method: "PUT",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ name: "Test stream", incomingPort: newPort, forwardHost: "localhost", forwardPort: newPort + 1, effectiveAt }),
+				body: JSON.stringify({ name: "Test stream", incomingPort: newPort, forwardHost: "localhost", forwardPort: 1, effectiveAt }),
 			}),
 		);
 		expect(putResponse.status).toBe(200);
@@ -94,7 +117,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: stream.incomingPort + 1,
 					forwardHost: "localhost",
-					forwardPort: stream.incomingPort + 2,
+					forwardPort: 1,
 					effectiveAt,
 				}),
 			}),
@@ -108,7 +131,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: stream.incomingPort + 2,
 					forwardHost: "localhost",
-					forwardPort: stream.incomingPort + 3,
+					forwardPort: 1,
 					effectiveAt: effectiveAt + 60_000,
 				}),
 			}),
@@ -121,7 +144,7 @@ describe("stream pending-change routes", () => {
 	test("apply-now applies the change immediately and clears the pending row", async () => {
 		const cookie = await administratorCookie();
 		const stream = await createStream(cookie);
-		const newPort = stream.incomingPort + 1;
+		const newPort = availableTcpPort();
 		await app.handle(
 			req(`/${stream.id}`, cookie, {
 				method: "PUT",
@@ -130,7 +153,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: newPort,
 					forwardHost: "localhost",
-					forwardPort: newPort + 1,
+					forwardPort: 1,
 					effectiveAt: Date.now() + 3_600_000,
 				}),
 			}),
@@ -149,7 +172,7 @@ describe("stream pending-change routes", () => {
 	test("a failed change is visible in the list and can be retried or dismissed via the routes", async () => {
 		const cookie = await administratorCookie();
 		const stream = await createStream(cookie);
-		const newPort = stream.incomingPort + 1;
+		const newPort = availableTcpPort();
 		const putResponse = await app.handle(
 			req(`/${stream.id}`, cookie, {
 				method: "PUT",
@@ -158,7 +181,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: newPort,
 					forwardHost: "localhost",
-					forwardPort: newPort + 1,
+					forwardPort: 1,
 					effectiveAt: Date.now() + 3_600_000,
 				}),
 			}),
@@ -180,7 +203,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: newPort + 2,
 					forwardHost: "localhost",
-					forwardPort: newPort + 3,
+					forwardPort: 1,
 					effectiveAt: Date.now() + 3_600_000,
 				}),
 			}),
@@ -197,7 +220,7 @@ describe("stream pending-change routes", () => {
 	test("cancelling a pending change leaves the live stream unchanged", async () => {
 		const cookie = await administratorCookie();
 		const stream = await createStream(cookie);
-		const newPort = stream.incomingPort + 1;
+		const newPort = availableTcpPort();
 		await app.handle(
 			req(`/${stream.id}`, cookie, {
 				method: "PUT",
@@ -206,7 +229,7 @@ describe("stream pending-change routes", () => {
 					name: "Test stream",
 					incomingPort: newPort,
 					forwardHost: "localhost",
-					forwardPort: newPort + 1,
+					forwardPort: 1,
 					effectiveAt: Date.now() + 3_600_000,
 				}),
 			}),
