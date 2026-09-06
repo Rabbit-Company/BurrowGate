@@ -5479,8 +5479,11 @@ async function loadAccount() {
 	const me = currentAdmin ?? (await loadCurrentAdmin());
 	byId("accountSummary").textContent =
 		`Signed in as ${me.username} (${me.role === "administrator" ? "Administrator" : "Member"}). Two-factor authentication: ${me.totpEnrolled || me.webauthnCredentialCount > 0 ? "enrolled" : "not enrolled"}.`;
-	byId("apiTokensCard").classList.toggle("hidden", me.role !== "administrator");
-	if (me.role === "administrator") await loadApiTokens();
+	byId("apiTokensCard").classList.remove("hidden");
+	const monitoringOption = byId("apiTokenScope").querySelector('option[value="monitoring"]');
+	monitoringOption.disabled = me.role !== "administrator";
+	monitoringOption.hidden = me.role !== "administrator";
+	await loadApiTokens();
 	await loadWebauthnCredentials();
 	byId("webauthnRegisterButton").disabled = !isWebauthnSupported();
 }
@@ -5498,18 +5501,18 @@ async function loadApiTokens() {
 			tokens
 				.map(
 					(token) => `<li class="site-list-item api-token-item">
-			<div class="site-list-title"><strong>${escapeHtml(token.name)}</strong><span class="badge">Read only</span></div>
+			<div class="site-list-title"><strong>${escapeHtml(token.name)}</strong><span class="badge ${token.scope === "full" ? "warn" : ""}">${token.scope === "full" ? "Full access" : "Read only"}</span></div>
 			<div class="site-list-meta"><span>${escapeHtml(token.prefix)}…</span><span>Created ${new Date(token.createdAt).toLocaleDateString()}</span><span>${token.expiresAt ? `${token.expiresAt <= Date.now() ? "Expired" : "Expires"} ${new Date(token.expiresAt).toLocaleDateString()}` : "Never expires"}</span></div>
 			<div class="site-list-actions"><button class="button danger compact" type="button" data-api-token-revoke="${escapeHtml(token.id)}">Revoke</button></div>
 		</li>`,
 				)
-				.join("") || '<li class="empty-state-inline">No read-only API tokens.</li>';
+				.join("") || '<li class="empty-state-inline">No API tokens.</li>';
 	} catch (error) {
 		list.innerHTML = `<li class="empty-state-inline error-text">${escapeHtml(error.message)}</li>`;
 	}
 }
 
-async function createReadOnlyApiToken(event) {
+async function createApiToken(event) {
 	event.preventDefault();
 	const form = event.currentTarget;
 	const button = form.querySelector('button[type="submit"]');
@@ -5521,7 +5524,11 @@ async function createReadOnlyApiToken(event) {
 			{
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ name: fields.get("name"), expiresInDays: fields.get("expiresInDays") === "never" ? null : Number(fields.get("expiresInDays")) }),
+				body: JSON.stringify({
+					name: fields.get("name"),
+					scope: fields.get("scope"),
+					expiresInDays: fields.get("expiresInDays") === "never" ? null : Number(fields.get("expiresInDays")),
+				}),
 			},
 			false,
 		);
@@ -6182,7 +6189,7 @@ function bindActions() {
 	});
 	byId("saveUserPermissions").addEventListener("click", () => void saveUserPermissions());
 	byId("passwordForm").addEventListener("submit", changePassword);
-	byId("apiTokenForm").addEventListener("submit", (event) => void createReadOnlyApiToken(event).catch((error) => showToast(error.message, "bad")));
+	byId("apiTokenForm").addEventListener("submit", (event) => void createApiToken(event).catch((error) => showToast(error.message, "bad")));
 	byId("dismissApiToken").addEventListener("click", clearApiTokenSecret);
 	byId("copyApiToken").addEventListener("click", async () => {
 		try {

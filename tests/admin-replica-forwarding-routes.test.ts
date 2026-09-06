@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Web } from "@rabbit-company/web";
 import { config } from "../src/config.ts";
 import { registerAdminRoutes } from "../src/routes/admin-routes.ts";
+import { createApiToken } from "../src/services/api-token-service.ts";
 import { pinPrimaryHaCertificate } from "../src/services/ha-tls-service.ts";
 import { createAdminSession } from "../src/services/session-service.ts";
 import { createAdminUser } from "../src/services/admin-user-service.ts";
@@ -97,33 +98,37 @@ describe("forwarding verifies the primary's admin URL against the pinned HA cert
 		config.dataDirectory = originalDataDirectory;
 	});
 
-	test("uses the pinned certificate, not the system CA store, once one is pinned", async () => {
+	test("uses the pinned certificate and forwards a full-access bearer credential intact", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "bg-ha-forward-tls-test-"));
 		config.dataDirectory = tempDir;
 		try {
 			const site = (
 				await createSite({ name: "Replica fwd TLS site", publicHost: `replica-fwd-tls-${crypto.randomUUID()}.test`, originUrl: "https://origin.test" })
 			).site;
-			const cookie = await sessionCookie();
+			const user = await createAdminUser({ username: `replica-token-${crypto.randomUUID()}`, password: "password123", role: "administrator" }, "test-suite");
+			const { token } = await createApiToken(user.id, { name: "Replica forwarding", scope: "full" });
 			config.ha.enabled = true;
 			config.ha.role = "replica";
 			config.ha.primaryAdminUrl = "https://primary.internal";
 			await pinPrimaryHaCertificate("pinned-primary-admin-certificate");
 			let capturedTls: unknown;
+			let capturedAuthorization = "";
 			globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
 				capturedTls = (init as (RequestInit & { tls?: unknown }) | undefined)?.tls;
+				capturedAuthorization = new Headers(init?.headers).get("authorization") ?? "";
 				return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
 			}) as unknown as typeof fetch;
 
 			await app.handle(
 				new Request(`http://admin.test/_burrowgate/api/admin/sites/${site.id}/notification-policy`, {
 					method: "PUT",
-					headers: { cookie, "content-type": "application/json", "x-burrowgate-admin": "1" },
+					headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
 					body: JSON.stringify({}),
 				}),
 			);
 
 			expect(capturedTls).toMatchObject({ ca: "pinned-primary-admin-certificate", checkServerIdentity: expect.any(Function) });
+			expect(capturedAuthorization).toBe(`Bearer ${token}`);
 		} finally {
 			await rm(tempDir, { recursive: true, force: true });
 		}

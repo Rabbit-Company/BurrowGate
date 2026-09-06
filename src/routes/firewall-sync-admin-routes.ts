@@ -1,7 +1,8 @@
 import type { Web } from "@rabbit-company/web";
 import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { recordAdminAudit } from "../services/admin-audit-service.ts";
-import { requireAdministrator, resolveAdminUser, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
+import { requireAdministrator, resolveRequestAdmin, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
+import { isFullAccessTokenRequest } from "../services/api-token-service.ts";
 import {
 	addFirewallSyncWhitelistCidr,
 	aggregateBannedCidrsDetailed,
@@ -23,12 +24,12 @@ import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts"
 import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function mutationGuard(request: Request): Response | null {
+	if (isFullAccessTokenRequest(request)) return null;
 	if (!sameOriginRequest(request) || request.headers.get("x-burrowgate-admin") !== "1") {
 		return jsonResponse({ error: "CSRF validation failed" }, 403);
 	}

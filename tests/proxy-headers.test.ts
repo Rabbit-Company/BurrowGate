@@ -57,4 +57,19 @@ describe("reverse-proxy authority headers", () => {
 		expect(headers.get("x-burrowgate-request-id")).toBe(expectedId);
 		expect(headers.get("x-burrowgate-request-id")).not.toBe("attacker-controlled");
 	});
+
+	test("never forwards BurrowGate API credentials while preserving application bearer tokens", async () => {
+		for (const authorization of ["Bearer bgat_secret", "Bearer bgro_secret", "Burrow access-secret"]) {
+			const headers = await upstreamHeaders(new Request("https://example.com/", { headers: { authorization } }), site, "203.0.113.10", null);
+			expect(headers.has("authorization")).toBe(false);
+		}
+
+		const application = await upstreamHeaders(
+			new Request("https://example.com/", { headers: { authorization: "Bearer application-secret" } }),
+			site,
+			"203.0.113.10",
+			null,
+		);
+		expect(application.get("authorization")).toBe("Bearer application-secret");
+	});
 });

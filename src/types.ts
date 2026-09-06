@@ -872,13 +872,14 @@ export interface GatewayState {
 	[key: string]: unknown;
 }
 
-/** A monitoring-only credential. The plaintext token is never persisted. */
+/** An API credential owned by an admin user. The plaintext token is never persisted. */
 export interface ApiTokenRecord {
 	id: string;
 	user_id: string;
 	name: string;
 	token_hash: string;
 	token_prefix: string;
+	scope: "monitoring" | "full";
 	created_at: number;
 	expires_at: number | null;
 }

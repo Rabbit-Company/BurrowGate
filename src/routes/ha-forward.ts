@@ -3,7 +3,7 @@ import { Logger } from "../logger.ts";
 import { pinnedHaTlsOptions } from "../services/ha-tls-service.ts";
 import { jsonResponse } from "../utils/http.ts";
 
-const FORWARDED_HEADERS = ["cookie", "x-burrowgate-admin", "content-type"];
+const FORWARDED_HEADERS = ["cookie", "authorization", "x-burrowgate-admin", "content-type"];
 const FORWARD_LOOP_GUARD_HEADER = "x-burrowgate-ha-forwarded";
 
 function isAlreadyForwarded(request: Request): boolean {

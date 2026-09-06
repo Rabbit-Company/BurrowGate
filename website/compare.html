@@ -6,7 +6,7 @@
 		<title>Compare BurrowGate - Traefik, Nginx Proxy Manager, Caddy, Nginx &amp; Apache</title>
 		<meta
 			name="description"
-			content="Compare BurrowGate with Traefik, Nginx Proxy Manager, Caddy, Nginx, and Apache across setup, security, traffic management, observability, audit logging, and availability."
+			content="Compare BurrowGate with Traefik, Nginx Proxy Manager, Caddy, Nginx, and Apache across setup, API automation, security, traffic management, observability, audit logging, and availability."
 		/>
 		<link rel="canonical" href="https://burrowgate.org/compare" />
 
@@ -135,6 +135,15 @@
 										<td>Text files</td>
 									</tr>
 									<tr>
+										<th scope="row">Configuration automation through JSON/API</th>
+										<td class="burrowgate-col">✅ Complete permission-scoped dashboard API (OpenAPI 3.2)</td>
+										<td>⚠️ Status API is read-only (writes use providers)</td>
+										<td>✅ Bearer-token API (OpenAPI 3.1)</td>
+										<td>✅ Native JSON config API</td>
+										<td>⚠️ JSON control/reload API (configuration remains file-based)</td>
+										<td>❌ Files and reload signals</td>
+									</tr>
+									<tr>
 										<th scope="row">Config as code / GitOps</th>
 										<td class="burrowgate-col">❌ Dashboard/database state</td>
 										<td>✅</td>
@@ -183,8 +192,12 @@
 							</table>
 						</div>
 						<p>
-							BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. Traefik, Caddy, Nginx, and Apache are better fits when
-							version-controlled declarative configuration is a requirement; Traefik specializes in routes that follow a changing container or Kubernetes fleet.
+							BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. BurrowGate's database-backed state is not declarative GitOps, but it
+							is fully automatable: every admin JSON endpoint is available to permission-scoped full-access tokens. Traefik, Caddy, Nginx, and Apache are better
+							fits when version-controlled declarative configuration is a requirement; Traefik specializes in routes that follow a changing container or
+							Kubernetes fleet. See the
+							<a href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/API_TOKENS.md" target="_blank" rel="noopener">API tokens and OpenAPI guide</a
+							>.
 						</p>
 					</section>
 
@@ -597,8 +610,8 @@
 						<div class="comparison-choice card">
 							<h3>BurrowGate</h3>
 							<p>
-								Choose one dashboard-managed gateway for TLS, integrated protection, app access with 2FA, origin load balancing, audit history, and traffic
-								visibility.
+								Choose one dashboard-managed gateway for TLS, integrated protection, app access with 2FA, origin load balancing, permission-scoped API
+								automation, audit history, and traffic visibility.
 							</p>
 						</div>
 						<div class="comparison-choice card">

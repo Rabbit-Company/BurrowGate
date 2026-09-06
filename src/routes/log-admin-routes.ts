@@ -1,14 +1,13 @@
 import type { Web } from "@rabbit-company/web";
 import { Logger } from "../logger.ts";
-import { resolveAdminUser, requireAdministrator, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
+import { resolveRequestAdmin, requireAdministrator, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
 import { dailyFileLogs, type FileLogSettings, type LogLevelName } from "../services/daily-file-log-service.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { logPage } from "../ui/log-page.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
 
 async function authenticated(request: Request): Promise<AuthenticatedAdmin | Response> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ?? jsonResponse({ error: "Unauthorized" }, 401);
 }
 

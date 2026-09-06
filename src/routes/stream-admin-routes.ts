@@ -48,11 +48,12 @@ import {
 	isAdministrator,
 	requireAdministrator,
 	requireLevel,
-	resolveAdminUser,
+	resolveRequestAdmin,
 	streamAccessLevel,
 	type AuthenticatedAdmin,
 } from "../services/admin-permission-service.ts";
 import { recordAdminAudit } from "../services/admin-audit-service.ts";
+import { isFullAccessTokenRequest } from "../services/api-token-service.ts";
 
 const METRIC_BUCKETS_MS = [
 	60_000, 300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 172_800_000, 345_600_000, 604_800_000,
@@ -61,12 +62,12 @@ const METRIC_BUCKETS_MS = [
 const STREAM_LONG_LIVED_MIN_DURATION_MS = 10_000;
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function mutationGuard(request: Request): Response | null {
+	if (isFullAccessTokenRequest(request)) return null;
 	if (!sameOriginRequest(request) || request.headers.get("x-burrowgate-admin") !== "1") {
 		return jsonResponse({ error: "CSRF validation failed" }, 403);
 	}

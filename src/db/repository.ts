@@ -1067,7 +1067,7 @@ export const repository = {
 	async insertApiToken(record: ApiTokenRecord): Promise<void> {
 		assertPrimaryWritable("an API token");
 		await db.begin(async (transaction) => {
-			await transaction`INSERT INTO api_tokens (id,user_id,name,token_hash,token_prefix,created_at,expires_at) VALUES (${record.id},${record.user_id},${record.name},${record.token_hash},${record.token_prefix},${record.created_at},${record.expires_at})`;
+			await transaction`INSERT INTO api_tokens (id,user_id,name,token_hash,token_prefix,scope,created_at,expires_at) VALUES (${record.id},${record.user_id},${record.name},${record.token_hash},${record.token_prefix},${record.scope},${record.created_at},${record.expires_at})`;
 			await appendChangelogEntry(transaction, "api_token", record.id, "insert", record);
 		});
 	},

@@ -1,5 +1,5 @@
 import type { Web } from "@rabbit-company/web";
-import { resolveAdminUser } from "../services/admin-permission-service.ts";
+import { resolveRequestAdmin } from "../services/admin-permission-service.ts";
 import { connectivityMonitor } from "../services/connectivity-monitor-service.ts";
 import { getAdminSession } from "../services/session-service.ts";
 import { systemMonitor } from "../services/system-monitor-service.ts";
@@ -7,8 +7,7 @@ import { hostPage } from "../ui/host-page.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
 
 async function guard(request: Request): Promise<Response | true> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ? true : jsonResponse({ error: "Unauthorized" }, 401);
 }
 

@@ -83,10 +83,10 @@ export async function upstreamHeaders(
 	if (cookie) headers.set("cookie", cookie);
 	else headers.delete("cookie");
 
-	// BurrowGate access credentials authenticate the edge and must never be
-	// disclosed to the protected origin. Preserve unrelated Authorization
-	// schemes because applications may use Basic/Bearer authentication.
-	if (headers.get("authorization")?.startsWith("Burrow ")) headers.delete("authorization");
+	// BurrowGate credentials authenticate the edge or admin API and must never be disclosed to a
+	// protected origin. The route boundary rejects admin/monitoring tokens before proxying.
+	const authorization = headers.get("authorization") ?? "";
+	if (authorization.startsWith("Burrow ") || /^Bearer\s+bg(?:at|ro)_/i.test(authorization)) headers.delete("authorization");
 	headers.delete("x-burrow-token");
 	// Identity assertions are owned by BurrowGate. Never allow a client to
 	// provide or override them, even when identity forwarding is disabled.

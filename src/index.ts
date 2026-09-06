@@ -21,6 +21,7 @@ import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.t
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { loadHaClusterConfigAtBoot } from "./services/ha-config-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
+import { fullAccessTokenBoundaryResponse } from "./services/api-token-service.ts";
 import { serveStaticOrigin } from "./services/static-origin-service.ts";
 import { findAccessSession, HaSessionPublicationError, userAgentHash } from "./services/session-service.ts";
 import { applyPendingSiteChange, resolveSiteForHost, seedDefaultSite } from "./services/site-service.ts";
@@ -214,6 +215,7 @@ app.use(
 app.use("/_burrowgate/api/v1", rateLimit({ windowMs: 60_000, max: 60, headers: true }));
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
 app.use("/_burrowgate/api/access/session/introspect", rateLimit({ windowMs: 60_000, max: 600, headers: true }));
+app.use(async (ctx, next) => fullAccessTokenBoundaryResponse(ctx.req) ?? (await next()));
 app.use(async (ctx, next) => {
 	const blocked = haVersionWriteGuard(ctx.req);
 	if (blocked) return blocked;

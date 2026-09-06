@@ -1,5 +1,5 @@
 import { registerMonitoringRoutes } from "./monitoring-routes.ts";
-import { ApiTokenValidationError, apiTokenView, createApiToken } from "../services/api-token-service.ts";
+import { ApiTokenValidationError, apiTokenView, createApiToken, isFullAccessTokenRequest } from "../services/api-token-service.ts";
 import type { Web } from "@rabbit-company/web";
 import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { challengeRegistry } from "../challenges/index.ts";
@@ -9,6 +9,7 @@ import {
 	config,
 	cookieCanBeIssuedForRequest,
 	insecureCookieConfigurationMessage,
+	requestTransport,
 	secureCookieForRequest,
 } from "../config.ts";
 import { repository, type SortDirection, type TabMetricsScope } from "../db/repository.ts";
@@ -95,7 +96,7 @@ import type { DefaultNetworkAction, IpRuleAction, SiteRecord } from "../types.ts
 import { adminPage, loginPage, totpRecoveryCodesPage, twoFactorEnrollPage, twoFactorVerifyPage } from "../ui/admin-page.ts";
 import { serializeCookie } from "../utils/cookies.ts";
 import { randomId, sha256Hex } from "../utils/crypto.ts";
-import { appendSetCookies, htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts";
+import { appendSetCookies, htmlResponse, jsonResponse, requestHost, sameOriginRequest } from "../utils/http.ts";
 import { blockSiteBandwidth, flushBandwidthMetrics, resumeSiteBandwidth } from "../services/bandwidth-service.ts";
 import { blockSiteEvents, resumeSiteEvents } from "../services/event-service.ts";
 import { updateCheckManager } from "../services/update-check-service.ts";
@@ -118,11 +119,12 @@ import { resendCapturedRequest, ResendTargetError } from "../services/resend-ser
 import { BOT_CATALOG } from "../services/bot-service.ts";
 import { networkPrivacyCategoryCatalog } from "../services/network-privacy-service.ts";
 import { managedRuleSetCatalog } from "../services/managed-protection-service.ts";
+import { buildOpenApiDocument } from "../services/openapi-service.ts";
 import {
 	isAdministrator,
 	requireAdministrator,
 	requireLevel,
-	resolveAdminUser,
+	resolveRequestAdmin,
 	siteAccessLevel,
 	type AuthenticatedAdmin,
 } from "../services/admin-permission-service.ts";
@@ -151,8 +153,7 @@ import {
 } from "../services/admin-sso-service.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
@@ -179,6 +180,7 @@ async function consumeAdminRecoveryCode(userId: string, codeHash: string): Promi
 }
 
 function mutationGuard(request: Request): Response | null {
+	if (isFullAccessTokenRequest(request)) return null;
 	if (!sameOriginRequest(request) || request.headers.get("x-burrowgate-admin") !== "1") {
 		return jsonResponse({ error: "CSRF validation failed" }, 403);
 	}
@@ -3571,11 +3573,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 		return jsonResponse(await tlsView(site));
 	});
 
+	app.get("/_burrowgate/api/admin/openapi.json", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const serverOrigin = `${requestTransport(ctx.req)}://${requestHost(ctx.req)}`;
+		return jsonResponse(buildOpenApiDocument(serverOrigin));
+	});
+
 	app.get("/_burrowgate/api/admin/me/api-tokens", async (ctx) => {
 		const guarded = await guard(ctx.req);
 		if (guarded instanceof Response) return guarded;
-		const forbidden = requireAdministrator(guarded.user);
-		if (forbidden) return forbidden;
 		const result = jsonResponse({ tokens: (await repository.apiTokensForUser(guarded.user.id)).map(apiTokenView) });
 		result.headers.set("cache-control", "no-store");
 		return result;
@@ -3587,8 +3594,6 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
-		const forbidden = requireAdministrator(user);
-		if (forbidden) return forbidden;
 		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
 		if (forwarded) return forwarded;
 		try {
@@ -3598,7 +3603,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				action: "api_token.create",
 				resourceType: "api_token",
 				resourceId: created.id,
-				summary: `Created read-only API token ${created.name}`,
+				summary: `Created ${created.scope === "full" ? "full-access" : "read-only monitoring"} API token ${created.name}`,
 				ip: getClientIp(ctx) ?? "unknown",
 			});
 			const result = jsonResponse(await withDurability(created), 201);
@@ -3616,17 +3621,16 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const csrf = mutationGuard(ctx.req);
 		if (csrf) return csrf;
 		const { user } = guarded;
-		const forbidden = requireAdministrator(user);
-		if (forbidden) return forbidden;
 		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
 		if (forwarded) return forwarded;
+		const existing = (await repository.apiTokensForUser(user.id)).find((token) => token.id === ctx.params.id);
 		if (!(await repository.deleteApiToken(ctx.params.id, user.id))) return jsonResponse({ error: "API token not found" }, 404);
 		await recordAdminAudit({
 			actor: user,
 			action: "api_token.revoke",
 			resourceType: "api_token",
 			resourceId: ctx.params.id,
-			summary: "Revoked read-only API token",
+			summary: `Revoked ${existing?.scope === "full" ? "full-access" : "read-only monitoring"} API token`,
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse(await withDurability({ ok: true }));

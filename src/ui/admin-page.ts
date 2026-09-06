@@ -992,15 +992,16 @@ export function adminPage(): string {
       </article>
       <article id="apiTokensCard" class="card hidden">
         <div class="pad">
-          <h2>Read-only API tokens</h2>
-          <p class="muted">Connect TRMNL and other monitoring tools. Tokens can read aggregate metrics for all sites and the system. They cannot change configuration or read secrets, captured requests, or sessions.</p>
+          <h2>API tokens</h2>
+          <p class="muted">A full-access token can do anything your account can do through this dashboard - manage every site and stream you have permission for, exactly as if you were signed in. A read-only monitoring token (for TRMNL and similar tools) can only read aggregate metrics and it cannot change configuration or read secrets, captured requests, or sessions.</p>
           <form id="apiTokenForm" class="form-row">
             <label><span>Name</span><input class="input" name="name" maxlength="100" placeholder="TRMNL display" required></label>
+            <label><span>Scope</span><select id="apiTokenScope" class="select" name="scope"><option value="full">Full access</option><option value="monitoring">Read-only monitoring</option></select></label>
             <label><span>Expires after</span><select class="select" name="expiresInDays"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">1 year</option><option value="never">Never</option></select></label>
-            <button class="button align-end" type="submit">Create read-only token</button>
+            <button class="button align-end" type="submit">Create token</button>
           </form>
           <div id="apiTokenCreated" class="notice hidden" role="status">
-            <p>Copy this token now. It will not be shown again.</p>
+            <p>Copy this token now. It will not be shown again. Store it as securely as a password - a full-access token can do anything your account can do.</p>
             <label><span>New token</span><input id="apiTokenSecret" class="input" type="text" readonly autocomplete="off" spellcheck="false"></label>
             <button id="copyApiToken" class="button secondary compact" type="button">Copy token</button>
             <button id="dismissApiToken" class="button secondary compact" type="button">Done</button>

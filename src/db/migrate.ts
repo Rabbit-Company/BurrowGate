@@ -1198,6 +1198,17 @@ async function ensureAccessUserColumns(): Promise<void> {
 	}
 }
 
+async function ensureApiTokenColumns(): Promise<void> {
+	const statements = ["ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'monitoring'"];
+	for (const statement of statements) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureAccessSettingsColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE site_access_settings ADD COLUMN session_verification_token_hash VARCHAR(64) NULL",
@@ -1502,6 +1513,7 @@ export async function migrate(): Promise<void> {
 	await ensureGeoIpColumns();
 	await ensureAsnColumns();
 	await ensureAccessUserColumns();
+	await ensureApiTokenColumns();
 	await ensureAccessSettingsColumns();
 	await ensureAccessSessionColumns();
 	await ensureAdminUserSsoColumns();

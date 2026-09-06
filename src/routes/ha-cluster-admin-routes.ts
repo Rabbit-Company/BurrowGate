@@ -4,7 +4,8 @@ import { config } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import { recordAdminAudit } from "../services/admin-audit-service.ts";
-import { requireAdministrator, resolveAdminUser, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
+import { requireAdministrator, resolveRequestAdmin, type AuthenticatedAdmin } from "../services/admin-permission-service.ts";
+import { isFullAccessTokenRequest } from "../services/api-token-service.ts";
 import { joinCluster, leaveCluster, updateNodeIdentity, viewJoinCode } from "../services/ha-config-service.ts";
 import { haMeshService, type HaClusterNode } from "../services/ha-mesh-service.ts";
 import { processLifecycle } from "../services/process-lifecycle-service.ts";
@@ -15,12 +16,12 @@ import { htmlResponse, jsonResponse, sameOriginRequest } from "../utils/http.ts"
 import { forwardToPrimaryIfReplica, tryForwardToPrimary } from "./ha-forward.ts";
 
 async function guard(request: Request): Promise<Response | { user: AuthenticatedAdmin }> {
-	const session = await getAdminSession(request);
-	const user = session ? await resolveAdminUser(session) : null;
+	const user = await resolveRequestAdmin(request);
 	return user ? { user } : jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function mutationGuard(request: Request): Response | null {
+	if (isFullAccessTokenRequest(request)) return null;
 	if (!sameOriginRequest(request) || request.headers.get("x-burrowgate-admin") !== "1") {
 		return jsonResponse({ error: "CSRF validation failed" }, 403);
 	}

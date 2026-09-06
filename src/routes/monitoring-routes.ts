@@ -1,6 +1,6 @@
 import type { Web } from "@rabbit-company/web";
 import { repository } from "../db/repository.ts";
-import { authenticateApiToken } from "../services/api-token-service.ts";
+import { authenticateApiToken, fullAccessTokenBoundaryResponse } from "../services/api-token-service.ts";
 import { monitoringData, MONITORING_VIEWS, type MonitoringView } from "../services/monitoring-service.ts";
 import { jsonResponse } from "../utils/http.ts";
 
@@ -17,6 +17,8 @@ export function registerMonitoringRoutes(app: Web<any>): void {
 	app.use(async (ctx, next) => {
 		const path = new URL(ctx.req.url).pathname;
 		const monitoringCredential = /^Bearer\s+bgro_/i.test(ctx.req.headers.get("authorization") ?? "");
+		const fullAccessBoundary = fullAccessTokenBoundaryResponse(ctx.req);
+		if (fullAccessBoundary) return fullAccessBoundary;
 		const apiPath = path === BASE || path.startsWith(`${BASE}/`);
 		if (!apiPath && !monitoringCredential) return await next();
 		if (ctx.req.method !== "GET") return response({ error: "Monitoring API tokens are read-only" }, 403);

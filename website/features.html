@@ -6,7 +6,7 @@
 		<title>Features - BurrowGate</title>
 		<meta
 			name="description"
-			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, monitoring, and more."
+			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, monitoring, API automation, and more."
 		/>
 		<link rel="canonical" href="https://burrowgate.org/features" />
 
@@ -15,7 +15,7 @@
 		<meta property="og:title" content="Features - BurrowGate" />
 		<meta
 			property="og:description"
-			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, and monitoring."
+			content="Every BurrowGate capability: reverse proxy & TLS, bot protection, network & access policies, rate limiting, load balancing, caching, TCP/UDP streams, monitoring, and API automation."
 		/>
 		<meta property="og:url" content="https://burrowgate.org/features" />
 		<meta property="og:image" content="https://burrowgate.org/assets/og-image.png" />
@@ -323,6 +323,25 @@
 									regardless of configured retention
 								</li>
 								<li>Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M8 9l-3 3 3 3" />
+									<path d="M16 9l3 3-3 3" />
+									<path d="M14 5l-4 14" />
+								</svg>
+							</div>
+							<h3>API access &amp; automation</h3>
+							<p>Use the same permission model outside the dashboard.</p>
+							<ul>
+								<li>Full-access bearer tokens authenticate as their owner and inherit that user's exact role and site/Stream permissions</li>
+								<li>Administrators and members can create, list, and revoke their own full-access tokens, choosing an expiry when each token is created</li>
+								<li>Live OpenAPI 3.2 JSON at <code>/_burrowgate/api/admin/openapi.json</code>, with the requesting origin and complete admin paths</li>
+								<li>Separate administrator-created read-only tokens expose only aggregate site and system monitoring data</li>
+								<li>Secrets are shown once, stored only as SHA-256 hashes, and replicated across High Availability nodes</li>
 							</ul>
 						</div>
 

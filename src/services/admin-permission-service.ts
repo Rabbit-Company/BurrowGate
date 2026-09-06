@@ -1,6 +1,8 @@
 import { repository } from "../db/repository.ts";
 import type { AdminAccessLevel, AdminRole, AdminSessionRecord } from "../types.ts";
 import { jsonResponse } from "../utils/http.ts";
+import { authenticateFullAccessApiToken, hasFullAccessTokenCredential } from "./api-token-service.ts";
+import { getAdminSession } from "./session-service.ts";
 
 export interface AuthenticatedAdmin {
 	id: string;
@@ -13,6 +15,14 @@ export async function resolveAdminUser(session: AdminSessionRecord): Promise<Aut
 	const user = await repository.adminUserById(session.user_id);
 	if (!user || user.enabled !== 1) return null;
 	return { id: user.id, username: user.username, role: user.role };
+}
+
+export async function resolveRequestAdmin(request: Request): Promise<AuthenticatedAdmin | null> {
+	if (hasFullAccessTokenCredential(request)) return authenticateFullAccessApiToken(request);
+	const session = await getAdminSession(request);
+	const sessionUser = session ? await resolveAdminUser(session) : null;
+	if (sessionUser) return sessionUser;
+	return null;
 }
 
 export function isAdministrator(user: AuthenticatedAdmin): boolean {

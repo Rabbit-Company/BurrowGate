@@ -7,7 +7,7 @@ import { repository, type ReplicationChangelogRow } from "../src/db/repository.t
 import { db } from "../src/db/client.ts";
 import { createAdminUser } from "../src/services/admin-user-service.ts";
 import { createAdminSession } from "../src/services/session-service.ts";
-import { createApiToken } from "../src/services/api-token-service.ts";
+import { createApiToken, fullAccessTokenBoundaryResponse } from "../src/services/api-token-service.ts";
 import { createSite } from "../src/services/site-service.ts";
 import { MONITORING_VIEWS } from "../src/services/monitoring-service.ts";
 
@@ -28,7 +28,11 @@ describe("read-only monitoring API tokens", () => {
 	test("creation shows the secret once, persists only its hash, and revocation takes effect", async () => {
 		const { user, headers } = await account();
 		const created = await app.handle(
-			new Request(`${BASE}/admin/me/api-tokens`, { method: "POST", headers, body: JSON.stringify({ name: "TRMNL", expiresInDays: 30 }) }),
+			new Request(`${BASE}/admin/me/api-tokens`, {
+				method: "POST",
+				headers,
+				body: JSON.stringify({ name: "TRMNL", expiresInDays: 30, scope: "monitoring" }),
+			}),
 		);
 		expect(created.status).toBe(201);
 		expect(created.headers.get("cache-control")).toBe("no-store");
@@ -39,7 +43,7 @@ describe("read-only monitoring API tokens", () => {
 		expect(JSON.stringify(records)).not.toContain(result.token);
 		const list = await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { headers }));
 		const text = await list.text();
-		expect(text).toContain("monitoring:read");
+		expect(text).toContain(`"scope":"monitoring"`);
 		expect(text).not.toContain(result.token);
 		expect(text).not.toContain(records[0]!.token_hash);
 		const bearer = { authorization: `Bearer ${result.token}` };
@@ -50,7 +54,7 @@ describe("read-only monitoring API tokens", () => {
 
 	test("rejects every non-GET method and endpoints outside the allowlist, even with an admin cookie", async () => {
 		const { user, headers } = await account();
-		const { token } = await createApiToken(user.id, { name: "Boundary" });
+		const { token } = await createApiToken(user.id, { name: "Boundary", scope: "monitoring" });
 		const combined = { ...headers, authorization: `Bearer ${token}` };
 		for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
 			for (const path of ["/v1/monitoring", "/v1/sites", "/admin/sites", "/admin/me/api-tokens"]) {
@@ -66,7 +70,7 @@ describe("read-only monitoring API tokens", () => {
 
 	test("requires a bearer token, rejects expiry and disabled, deleted, or demoted owners", async () => {
 		const { user, headers } = await account();
-		const created = await createApiToken(user.id, { name: "Lifecycle" });
+		const created = await createApiToken(user.id, { name: "Lifecycle", scope: "monitoring" });
 		const read = () => app.handle(new Request(`${BASE}/v1/sites`, { headers: { authorization: `Bearer ${created.token}` } }));
 		for (const invalidHeaders of [new Headers(), new Headers(headers), new Headers({ authorization: "Bearer bad-token" })]) {
 			expect((await app.handle(new Request(`${BASE}/v1/sites`, { headers: invalidHeaders }))).status).toBe(401);
@@ -86,13 +90,14 @@ describe("read-only monitoring API tokens", () => {
 		expect((await read()).status).toBe(401);
 	});
 
-	test("management requires an administrator session, CSRF protection, and ownership", async () => {
+	test("token management is open to any signed-in user, requires CSRF protection and ownership, and gates monitoring-scope creation to administrators", async () => {
 		const owner = await account();
 		const member = await account("member");
 		const other = await account();
-		const created = await createApiToken(owner.user.id, { name: "Private token" });
+		const created = await createApiToken(owner.user.id, { name: "Private token", scope: "monitoring" });
+		// any signed-in user (including a member) can list their own tokens
+		expect((await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { headers: member.headers }))).status).toBe(200);
 		for (const method of ["GET", "POST"]) {
-			expect((await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { method, headers: member.headers }))).status).toBe(403);
 			expect((await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { method }))).status).toBe(401);
 		}
 		expect((await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { method: "POST", headers: { cookie: owner.headers.cookie } }))).status).toBe(403);
@@ -100,16 +105,102 @@ describe("read-only monitoring API tokens", () => {
 			(await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { method: "POST", headers: { ...owner.headers, origin: "http://evil.test" } }))).status,
 		).toBe(403);
 		expect((await app.handle(new Request(`${BASE}/admin/me/api-tokens/${created.id}`, { method: "DELETE", headers: other.headers }))).status).toBe(404);
-		for (const body of [null, [], {}, { name: " " }, { name: "x", expiresInDays: -1 }, { name: "x", expiresInDays: "30" }]) {
+		// a member may mint a full-access token for themself, scoped to their own permissions (but not a monitoring token)
+		expect(
+			(
+				await app.handle(
+					new Request(`${BASE}/admin/me/api-tokens`, {
+						method: "POST",
+						headers: member.headers,
+						body: JSON.stringify({ name: "Mine", scope: "full" }),
+					}),
+				)
+			).status,
+		).toBe(201);
+		expect(
+			(
+				await app.handle(
+					new Request(`${BASE}/admin/me/api-tokens`, {
+						method: "POST",
+						headers: member.headers,
+						body: JSON.stringify({ name: "Mine", scope: "monitoring" }),
+					}),
+				)
+			).status,
+		).toBe(400);
+		for (const body of [
+			null,
+			[],
+			{},
+			{ name: "x", scope: "bogus" },
+			{ name: " ", scope: "monitoring" },
+			{ name: "x", expiresInDays: -1, scope: "monitoring" },
+			{ name: "x", expiresInDays: "30", scope: "monitoring" },
+		]) {
 			expect(
 				(await app.handle(new Request(`${BASE}/admin/me/api-tokens`, { method: "POST", headers: owner.headers, body: JSON.stringify(body) }))).status,
 			).toBe(400);
 		}
 	});
 
+	test("a full-access token authenticates as its real owner, inherits that user's permissions, bypasses CSRF, and stays inside the admin API", async () => {
+		const member = await account("member");
+		const administrator = await account();
+		const { site } = await createSite({ name: "Scoped site", publicHost: `scoped-${crypto.randomUUID()}.test`, originUrl: "http://origin.test" });
+		const otherSite = await createSite({
+			name: "Other site",
+			publicHost: `other-${crypto.randomUUID()}.test`,
+			originUrl: "http://origin.test",
+		}).then((r) => r.site);
+		await repository.replaceAdminSitePermissions(member.user.id, [{ siteId: site.id, level: "manager" }]);
+		const created = await createApiToken(member.user.id, { name: "Full", scope: "full" });
+		expect(created.token).toMatch(/^bgat_[A-Za-z0-9_-]{43}$/);
+		const bearer = { authorization: `Bearer ${created.token}`, "content-type": "application/json" };
+		// The explicit bearer identity wins over any ambient dashboard cookie.
+		expect((await app.handle(new Request(`${BASE}/admin/users`, { headers: { ...bearer, cookie: administrator.headers.cookie } }))).status).toBe(403);
+		// An invalid explicit bgat_ credential cannot fall back to a valid cookie or bypass CSRF.
+		for (const token of ["bgat_invalid", `bgat_${"A".repeat(43)}`]) {
+			expect(
+				(
+					await app.handle(
+						new Request(`${BASE}/admin/sites/does-not-exist`, {
+							method: "PUT",
+							headers: { authorization: `Bearer ${token}`, cookie: administrator.headers.cookie, "content-type": "application/json" },
+							body: "{}",
+						}),
+					)
+				).status,
+			).toBe(401);
+		}
+		// Full-access credentials are confined to the admin API and never reach public/proxied paths.
+		for (const method of ["GET", "POST"]) {
+			expect((await app.handle(new Request("http://admin.test/origin", { method, headers: bearer }))).status).toBe(403);
+		}
+		// The application-wide form of the same guard also covers internal routes registered before the
+		// admin router (for example, access-session introspection).
+		expect(fullAccessTokenBoundaryResponse(new Request("http://admin.test/_burrowgate/api/access/session/introspect", { headers: bearer }))?.status).toBe(403);
+		expect(fullAccessTokenBoundaryResponse(new Request(`${BASE}/admin/sites`, { headers: bearer }))).toBeNull();
+		// no cookie, no origin, no x-burrowgate-admin header - and still allowed, because bearer tokens are exempt from CSRF checks
+		const permitted = await app.handle(
+			new Request(`${BASE}/admin/sites/${site.id}`, { method: "PUT", headers: bearer, body: JSON.stringify({ name: "Renamed via token" }) }),
+		);
+		expect(permitted.status).toBe(200);
+		// the token carries the member's own permission, not elevated access - a site they have no permission on is still forbidden
+		const forbidden = await app.handle(
+			new Request(`${BASE}/admin/sites/${otherSite.id}`, { method: "PUT", headers: bearer, body: JSON.stringify({ name: "x" }) }),
+		);
+		expect(forbidden.status).toBe(403);
+		// administrator-only routes stay out of reach for a member's token
+		expect((await app.handle(new Request(`${BASE}/admin/users`, { headers: bearer }))).status).toBe(403);
+		// revoking the token immediately invalidates it
+		await repository.deleteApiToken(created.id, member.user.id);
+		const revoked = await app.handle(new Request(`${BASE}/admin/sites/${site.id}`, { method: "PUT", headers: bearer, body: JSON.stringify({ name: "x" }) }));
+		expect(revoked.status).toBe(401);
+	});
+
 	test("all views return bounded aggregates, site filtering is validated, and secrets are excluded", async () => {
 		const { user } = await account();
-		const { token } = await createApiToken(user.id, { name: "Views", expiresInDays: null });
+		const { token } = await createApiToken(user.id, { name: "Views", expiresInDays: null, scope: "monitoring" });
 		const headers = { authorization: `Bearer ${token}` };
 		const { site } = await createSite({
 			name: "Monitoring site",
@@ -167,7 +258,7 @@ describe("read-only monitoring API tokens", () => {
 		try {
 			config.ha.enabled = true;
 			config.ha.role = "primary";
-			const created = await createApiToken(user.id, { name: "Replicated" });
+			const created = await createApiToken(user.id, { name: "Replicated", scope: "monitoring" });
 			const snapshot = await repository.fullSnapshot();
 			const tokenRow = snapshot.rows.find((row) => row.entity_type === "api_token" && row.entity_id === created.id);
 			expect(tokenRow).toBeDefined();

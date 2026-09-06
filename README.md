@@ -33,6 +33,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Per-site HSTS (`Strict-Transport-Security`) with optional includeSubDomains and preload
 - Resend any captured Recent Traffic request from the dashboard, with editable headers and body, automatic same-site redirect following, and a full hop-by-hop chain in the result
 - Structured administrative audit trail with actor, source IP, action, resource, timestamp, searchable history, and application-level append-only records
+- Permission-scoped full-access API tokens for automating the dashboard API, with a live OpenAPI 3.2 document, plus separate read-only tokens for monitoring integrations
 - Paginated traffic, session, route, rule, and site monitoring
 - Separate client-side and upstream bandwidth monitoring with per-site, per-IP, protocol, and country totals
 - Stream connection logs, live TCP/UDP peers, GeoIP and ASN enrichment, and bandwidth by IP and incoming port
@@ -79,16 +80,17 @@ A feature can still require configuration when marked ✅.
 
 ### Setup & TLS
 
-|                                            | BurrowGate                                         | Traefik                      | Nginx Proxy Manager         | Caddy                         | Nginx                                       | Apache      |
-| ------------------------------------------ | -------------------------------------------------- | ---------------------------- | --------------------------- | ----------------------------- | ------------------------------------------- | ----------- |
-| Primary configuration surface              | Web dashboard                                      | Files, labels, CRDs          | Web dashboard               | Caddyfile or JSON API         | Text files                                  | Text files  |
-| Config as code / GitOps                    | ❌ dashboard/database state                        | ✅                           | ❌ dashboard/database state | ✅                            | ✅                                          | ✅          |
-| Docker/Kubernetes service discovery        | ❌ manual origins                                  | ✅ provider integrations     | ❌ manual hosts             | ❌                            | ❌                                          | ❌          |
-| Automatic ACME certificates                | ✅ HTTP-01; RFC 2136 DNS-01 (no wildcard issuance) | ✅ HTTP-01, DNS-01, TLS-ALPN | ✅ HTTP-01 and DNS plugins  | ✅ automatic; DNS via modules | ⚠️ optional official ACME module or Certbot | ✅ `mod_md` |
-| Custom PEM certificates / multi-domain SNI | ✅                                                 | ✅                           | ✅                          | ✅                            | ✅                                          | ✅          |
-| Scheduled listener-affecting changes       | ✅ dashboard scheduler                             | ❌                           | ❌                          | ❌                            | ❌                                          | ❌          |
+|                                            | BurrowGate                                                | Traefik                                           | Nginx Proxy Manager               | Caddy                         | Nginx                                                         | Apache                      |
+| ------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------- | --------------------------------- | ----------------------------- | ------------------------------------------------------------- | --------------------------- |
+| Primary configuration surface              | Web dashboard                                             | Files, labels, CRDs                               | Web dashboard                     | Caddyfile or JSON API         | Text files                                                    | Text files                  |
+| Configuration automation through JSON/API  | ✅ complete permission-scoped dashboard API (OpenAPI 3.2) | ⚠️ status API is read-only (writes use providers) | ✅ bearer-token API (OpenAPI 3.1) | ✅ native JSON config API     | ⚠️ JSON control/reload API (configuration remains file-based) | ❌ files and reload signals |
+| Config as code / GitOps                    | ❌ dashboard/database state                               | ✅                                                | ❌ dashboard/database state       | ✅                            | ✅                                                            | ✅                          |
+| Docker/Kubernetes service discovery        | ❌ manual origins                                         | ✅ provider integrations                          | ❌ manual hosts                   | ❌                            | ❌                                                            | ❌                          |
+| Automatic ACME certificates                | ✅ HTTP-01; RFC 2136 DNS-01 (no wildcard issuance)        | ✅ HTTP-01, DNS-01, TLS-ALPN                      | ✅ HTTP-01 and DNS plugins        | ✅ automatic; DNS via modules | ⚠️ optional official ACME module or Certbot                   | ✅ `mod_md`                 |
+| Custom PEM certificates / multi-domain SNI | ✅                                                        | ✅                                                | ✅                                | ✅                            | ✅                                                            | ✅                          |
+| Scheduled listener-affecting changes       | ✅ dashboard scheduler                                    | ❌                                                | ❌                                | ❌                            | ❌                                                            | ❌                          |
 
-BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. Traefik, Caddy, Nginx, and Apache are better fits when version-controlled declarative configuration is a requirement; Traefik is the clear specialist when routes should follow a changing container or Kubernetes fleet automatically.
+BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. BurrowGate's database-backed state is not declarative GitOps, but it is fully automatable: every admin JSON endpoint is available to permission-scoped full-access tokens, and the live OpenAPI document is tested against the registered route set. Traefik, Caddy, Nginx, and Apache are better fits when version-controlled declarative configuration is a requirement; Traefik is the clear specialist when routes should follow a changing container or Kubernetes fleet automatically. See [API tokens and OpenAPI](docs/API_TOKENS.md).
 
 ### Security & Access Control
 
@@ -150,7 +152,7 @@ This is the central trade-off: BurrowGate is the youngest project here, with the
 
 ### Which one should you use?
 
-- **Reach for BurrowGate** if you want one dashboard-managed gateway that terminates TLS, applies integrated request and network protections, gates access behind logins with 2FA, load-balances origins, and shows you what happened without assembling several companion services.
+- **Reach for BurrowGate** if you want one dashboard-managed gateway that terminates TLS, applies integrated request and network protections, gates access behind logins with 2FA, load-balances origins, exposes the complete control surface through a permission-scoped JSON API, and shows you what happened without assembling several companion services.
 - **Reach for Traefik** if you're running Kubernetes or a large, fast-changing Docker fleet and want routing to auto-discover services from labels/CRDs - its dynamic-configuration model is more mature for that specific job.
 - **Reach for Nginx Proxy Manager** if you want a focused GUI for common homelab proxy hosts, certificates, access lists, and TCP/UDP forwarding.
 - **Reach for Caddy** if you want automatic HTTPS, a concise configuration, and a highly capable general-purpose web server without an integrated management dashboard.
@@ -653,15 +655,21 @@ https://origin.example.com -> wss://origin.example.com
 
 BurrowGate forwards application cookies, authentication headers, binary messages, text messages, and negotiated subprotocols. BurrowGate credentials are removed before the upstream handshake.
 
-## Read-only monitoring API and TRMNL
+## Admin API, OpenAPI, monitoring API, and TRMNL
 
-Administrators can create and revoke read-only monitoring tokens under **Account -> Read-only API tokens**. These credentials expose aggregate site and system metrics through a dedicated API and cannot modify BurrowGate or read secrets, raw requests, or sessions. See [API tokens](docs/API_TOKENS.md).
+Any signed-in user can create a **Full access** token under **Account -> API tokens**. It authenticates as that user against the normal dashboard API at `/_burrowgate/api/admin/...`, inheriting exactly the owner's role and site/stream permissions. It can perform the same reads and mutations that the owner can perform in the dashboard, without requiring a browser session or CSRF header.
+
+An authenticated OpenAPI 3.2 document for the admin API is available from `GET /_burrowgate/api/admin/openapi.json`. Its server URL reflects the origin used to request the document, while its paths contain the complete `/_burrowgate/api/admin/...` routes, so it can be imported directly into API clients and code generators.
+
+Administrators can also create **Read-only monitoring** tokens. These instance-wide credentials can only access aggregate site and system metrics through `GET /_burrowgate/api/v1/sites` and `GET /_burrowgate/api/v1/monitoring`; they cannot modify BurrowGate or read secrets, raw requests, or sessions. Token plaintext is shown once, only its SHA-256 hash is stored, and every token can be given an expiry or revoked individually. See [API tokens and OpenAPI](docs/API_TOKENS.md).
 
 The [TRMNL recipe](trmnl/README.md) accepts an instance URL and monitoring token, with selectable traffic, blocked requests, bandwidth, cache, protection, latency, geography, and system views. It supports full screens and all three mashup sizes.
 
-## Sessions and API Tokens
+## Visitor Sessions and Protected-Application Tokens
 
 After a successful challenge, BurrowGate creates a random opaque token and stores only its SHA-256 hash. Browsers receive an HTTP-only cookie.
+
+These credentials authenticate visitors to a protected application; they are separate from the full-access and monitoring tokens created under **Account -> API tokens**.
 
 API clients can use:
 
