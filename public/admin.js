@@ -5351,6 +5351,7 @@ function openModal(name) {
 }
 
 function closeModal(name) {
+	if (name === "account") clearApiTokenSecret();
 	byId(`modal-${name}`).classList.add("hidden");
 	if (!document.querySelector(".modal-overlay:not(.hidden)")) document.body.classList.remove("modal-open");
 	if (name === "users") {
@@ -5478,8 +5479,58 @@ async function loadAccount() {
 	const me = currentAdmin ?? (await loadCurrentAdmin());
 	byId("accountSummary").textContent =
 		`Signed in as ${me.username} (${me.role === "administrator" ? "Administrator" : "Member"}). Two-factor authentication: ${me.totpEnrolled || me.webauthnCredentialCount > 0 ? "enrolled" : "not enrolled"}.`;
+	byId("apiTokensCard").classList.toggle("hidden", me.role !== "administrator");
+	if (me.role === "administrator") await loadApiTokens();
 	await loadWebauthnCredentials();
 	byId("webauthnRegisterButton").disabled = !isWebauthnSupported();
+}
+
+function clearApiTokenSecret() {
+	byId("apiTokenSecret").value = "";
+	byId("apiTokenCreated").classList.add("hidden");
+}
+
+async function loadApiTokens() {
+	const list = byId("apiTokenList");
+	try {
+		const { tokens } = await api("/me/api-tokens", {}, false);
+		list.innerHTML =
+			tokens
+				.map(
+					(token) => `<li class="site-list-item">
+			<div class="site-list-title"><strong>${escapeHtml(token.name)}</strong><span class="badge">Read only</span></div>
+			<div class="site-list-meta"><span>${escapeHtml(token.prefix)}…</span><span>Created ${new Date(token.createdAt).toLocaleDateString()}</span><span>${token.expiresAt ? `${token.expiresAt <= Date.now() ? "Expired" : "Expires"} ${new Date(token.expiresAt).toLocaleDateString()}` : "Never expires"}</span></div>
+			<div class="site-list-actions"><button class="button danger compact" type="button" data-api-token-revoke="${escapeHtml(token.id)}">Revoke</button></div>
+		</li>`,
+				)
+				.join("") || '<li class="empty-state-inline">No read-only API tokens.</li>';
+	} catch (error) {
+		list.innerHTML = `<li class="empty-state-inline error-text">${escapeHtml(error.message)}</li>`;
+	}
+}
+
+async function createReadOnlyApiToken(event) {
+	event.preventDefault();
+	const form = event.currentTarget;
+	const button = form.querySelector('button[type="submit"]');
+	await runWithButton(button, async () => {
+		clearApiTokenSecret();
+		const fields = new FormData(form);
+		const result = await api(
+			"/me/api-tokens",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: fields.get("name"), expiresInDays: fields.get("expiresInDays") === "never" ? null : Number(fields.get("expiresInDays")) }),
+			},
+			false,
+		);
+		byId("apiTokenSecret").value = result.token;
+		byId("apiTokenCreated").classList.remove("hidden");
+		byId("apiTokenSecret").select();
+		form.reset();
+		await loadApiTokens();
+	});
 }
 
 async function loadWebauthnCredentials() {
@@ -6131,6 +6182,27 @@ function bindActions() {
 	});
 	byId("saveUserPermissions").addEventListener("click", () => void saveUserPermissions());
 	byId("passwordForm").addEventListener("submit", changePassword);
+	byId("apiTokenForm").addEventListener("submit", (event) => void createReadOnlyApiToken(event).catch((error) => showToast(error.message, "bad")));
+	byId("dismissApiToken").addEventListener("click", clearApiTokenSecret);
+	byId("copyApiToken").addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(byId("apiTokenSecret").value);
+			showToast("Token copied.");
+		} catch {
+			byId("apiTokenSecret").select();
+			showToast("Select and copy the token manually.", "bad");
+		}
+	});
+	byId("apiTokenList").addEventListener("click", async (event) => {
+		const button = event.target.closest("button[data-api-token-revoke]");
+		if (!button || !confirm("Revoke this token? Any integration using it will stop refreshing.")) return;
+		await runWithButton(button, async () => {
+			await api(`/me/api-tokens/${encodeURIComponent(button.dataset.apiTokenRevoke)}`, { method: "DELETE" }, false);
+			clearApiTokenSecret();
+			await loadApiTokens();
+			showToast("API token revoked.");
+		}).catch((error) => showToast(error.message, "bad"));
+	});
 	byId("recoveryCodesForm").addEventListener("submit", regenerateRecoveryCodes);
 	byId("webauthnRegisterButton").addEventListener("click", registerWebauthnCredential);
 	byId("refreshAuditLog").addEventListener("click", () => void loadAuditLog());

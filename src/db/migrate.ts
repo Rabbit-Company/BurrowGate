@@ -306,6 +306,15 @@ CREATE TABLE IF NOT EXISTS bandwidth_minutes (
   upstream_received_bytes BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (site_id, bucket_start, ip, country_code, protocol)
 );
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  token_prefix VARCHAR(16) NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_sessions (
   id VARCHAR(64) PRIMARY KEY,
   token_hash VARCHAR(64) NOT NULL UNIQUE,
@@ -872,6 +881,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_challenge_flows_site_created ON challenge_flows (site_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_steps_expiry ON challenge_steps (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_challenge_consumptions_created ON challenge_consumptions (consumed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens (user_id)",
 	"CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions (expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_tls_settings_mode ON site_tls_settings (mode, force_https)",
 	"CREATE INDEX IF NOT EXISTS idx_certificates_status_expiry ON certificates (status, expires_at)",

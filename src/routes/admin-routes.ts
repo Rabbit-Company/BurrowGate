@@ -1,3 +1,5 @@
+import { registerMonitoringRoutes } from "./monitoring-routes.ts";
+import { ApiTokenValidationError, apiTokenView, createApiToken } from "../services/api-token-service.ts";
 import type { Web } from "@rabbit-company/web";
 import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { challengeRegistry } from "../challenges/index.ts";
@@ -346,6 +348,7 @@ function boundedAdminUsername(value: unknown): string {
 }
 
 export function registerAdminRoutes(app: Web<any>): void {
+	registerMonitoringRoutes(app);
 	app.get("/_burrowgate/admin/login", async (ctx) =>
 		(await getAdminSession(ctx.req))
 			? Response.redirect(new URL("/_burrowgate/admin", ctx.req.url).href, 302)
@@ -3566,6 +3569,67 @@ export function registerAdminRoutes(app: Web<any>): void {
 			ip: getClientIp(ctx) ?? "unknown",
 		});
 		return jsonResponse(await tlsView(site));
+	});
+
+	app.get("/_burrowgate/api/admin/me/api-tokens", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		const result = jsonResponse({ tokens: (await repository.apiTokensForUser(guarded.user.id)).map(apiTokenView) });
+		result.headers.set("cache-control", "no-store");
+		return result;
+	});
+
+	app.post("/_burrowgate/api/admin/me/api-tokens", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
+		try {
+			const created = await createApiToken(user.id, await ctx.req.json());
+			await recordAdminAudit({
+				actor: user,
+				action: "api_token.create",
+				resourceType: "api_token",
+				resourceId: created.id,
+				summary: `Created read-only API token ${created.name}`,
+				ip: getClientIp(ctx) ?? "unknown",
+			});
+			const result = jsonResponse(await withDurability(created), 201);
+			result.headers.set("cache-control", "no-store");
+			return result;
+		} catch (error) {
+			if (error instanceof ApiTokenValidationError || error instanceof SyntaxError) return jsonResponse({ error: error.message }, 400);
+			throw error;
+		}
+	});
+
+	app.delete("/_burrowgate/api/admin/me/api-tokens/:id", async (ctx: any) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const { user } = guarded;
+		const forbidden = requireAdministrator(user);
+		if (forbidden) return forbidden;
+		const forwarded = await forwardToPrimaryIfReplica(ctx.req);
+		if (forwarded) return forwarded;
+		if (!(await repository.deleteApiToken(ctx.params.id, user.id))) return jsonResponse({ error: "API token not found" }, 404);
+		await recordAdminAudit({
+			actor: user,
+			action: "api_token.revoke",
+			resourceType: "api_token",
+			resourceId: ctx.params.id,
+			summary: "Revoked read-only API token",
+			ip: getClientIp(ctx) ?? "unknown",
+		});
+		return jsonResponse(await withDurability({ ok: true }));
 	});
 
 	app.get("/_burrowgate/api/admin/me", async (ctx) => {

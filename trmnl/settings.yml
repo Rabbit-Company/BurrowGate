@@ -1,0 +1,50 @@
+---
+name: BurrowGate
+strategy: polling
+refresh_interval: 15
+polling_verb: GET
+polling_url: "{% assign base = instance_url | strip %}{% assign last = base | slice: -1 %}{{ base }}{% unless last == '/' %}/{% endunless %}_burrowgate/api/v1/monitoring?view={{ view | url_encode }}&hours={{ hours | url_encode }}&siteId={{ site_id | strip | url_encode }}"
+polling_headers: "authorization=Bearer {{ api_token | strip | url_encode }}"
+no_screen_padding: "no"
+dark_mode: "no"
+custom_fields:
+  - keyname: instance_url
+    field_type: url
+    name: BurrowGate instance URL
+    placeholder: https://gate.example.com
+    description: Public HTTPS base URL of your BurrowGate dashboard, without /_burrowgate/admin. TRMNL must be able to reach this address.
+  - keyname: api_token
+    field_type: password
+    name: Read-only API token
+    description: Create a token in BurrowGate under Account -> Read-only API tokens. Paste the bgro_ token here.
+  - keyname: view
+    field_type: select
+    name: View
+    default: overview
+    options:
+      - Traffic overview: overview
+      - Request traffic: traffic
+      - Blocked requests: blocked
+      - Client bandwidth: bandwidth
+      - Cache hit ratio: cache
+      - Managed protection: protection
+      - Request latency: latency
+      - Top countries: geography
+      - CPU usage: cpu
+      - Memory usage: memory
+      - Storage usage: disk
+      - Network throughput: network
+  - keyname: hours
+    field_type: select
+    name: Time range
+    default: "24"
+    options:
+      - Last hour: "1"
+      - Last 6 hours: "6"
+      - Last 24 hours: "24"
+      - Last 7 days: "168"
+  - keyname: site_id
+    field_type: string
+    name: Site ID
+    optional: true
+    description: Optional site ID from your BurrowGate dashboard URL or the monitoring sites API. Leave empty for all sites and for CPU, memory, storage, or network views. This filters the display (the token can read all sites).

@@ -653,6 +653,12 @@ https://origin.example.com -> wss://origin.example.com
 
 BurrowGate forwards application cookies, authentication headers, binary messages, text messages, and negotiated subprotocols. BurrowGate credentials are removed before the upstream handshake.
 
+## Read-only monitoring API and TRMNL
+
+Administrators can create and revoke read-only monitoring tokens under **Account -> Read-only API tokens**. These credentials expose aggregate site and system metrics through a dedicated API and cannot modify BurrowGate or read secrets, raw requests, or sessions. See [API tokens](docs/API_TOKENS.md).
+
+The [TRMNL recipe](trmnl/README.md) accepts an instance URL and monitoring token, with selectable traffic, blocked requests, bandwidth, cache, protection, latency, geography, and system views. It supports full screens and all three mashup sizes.
+
 ## Sessions and API Tokens
 
 After a successful challenge, BurrowGate creates a random opaque token and stores only its SHA-256 hash. Browsers receive an HTTP-only cookie.

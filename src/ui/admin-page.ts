@@ -990,6 +990,24 @@ export function adminPage(): string {
       <article class="card account-summary-card">
         <div class="pad section-heading"><div><h2>Your account</h2><p id="accountSummary" class="muted">-</p></div></div>
       </article>
+      <article id="apiTokensCard" class="card hidden">
+        <div class="pad">
+          <h2>Read-only API tokens</h2>
+          <p class="muted">Connect TRMNL and other monitoring tools. Tokens can read aggregate metrics for all sites and the system. They cannot change configuration or read secrets, captured requests, or sessions.</p>
+          <form id="apiTokenForm" class="form-row">
+            <label><span>Name</span><input class="input" name="name" maxlength="100" placeholder="TRMNL display" required></label>
+            <label><span>Expires after</span><select class="select" name="expiresInDays"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">1 year</option><option value="never">Never</option></select></label>
+            <button class="button align-end" type="submit">Create read-only token</button>
+          </form>
+          <div id="apiTokenCreated" class="notice hidden" role="status">
+            <p>Copy this token now. It will not be shown again.</p>
+            <label><span>New token</span><input id="apiTokenSecret" class="input" type="text" readonly autocomplete="off" spellcheck="false"></label>
+            <button id="copyApiToken" class="button secondary compact" type="button">Copy token</button>
+            <button id="dismissApiToken" class="button secondary compact" type="button">Done</button>
+          </div>
+          <ul id="apiTokenList" class="settings-list"></ul>
+        </div>
+      </article>
       <article class="card account-password-card">
         <div class="pad"><h2>Change password</h2><form id="passwordForm" class="form-row"><label><span>Current password</span><input class="input" type="password" name="currentPassword" autocomplete="current-password" required></label><label><span>New password</span><input class="input" type="password" name="newPassword" autocomplete="new-password" required></label><button class="button align-end" type="submit">Change password</button></form></div>
       </article>

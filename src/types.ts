@@ -871,3 +871,14 @@ export interface GatewayState {
 	clientIp?: string;
 	[key: string]: unknown;
 }
+
+/** A monitoring-only credential. The plaintext token is never persisted. */
+export interface ApiTokenRecord {
+	id: string;
+	user_id: string;
+	name: string;
+	token_hash: string;
+	token_prefix: string;
+	created_at: number;
+	expires_at: number | null;
+}

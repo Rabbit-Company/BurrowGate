@@ -175,6 +175,7 @@ function isDashboardRequest(request: Request): boolean {
 	return (
 		path === "/_burrowgate/admin" ||
 		path.startsWith("/_burrowgate/admin/") ||
+		path.startsWith("/_burrowgate/api/v1/") ||
 		path === "/_burrowgate/api/admin" ||
 		path.startsWith("/_burrowgate/api/admin/") ||
 		[
@@ -210,6 +211,7 @@ app.use(
 		],
 	}),
 );
+app.use("/_burrowgate/api/v1", rateLimit({ windowMs: 60_000, max: 60, headers: true }));
 app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
 app.use("/_burrowgate/api/access/session/introspect", rateLimit({ windowMs: 60_000, max: 600, headers: true }));
 app.use(async (ctx, next) => {

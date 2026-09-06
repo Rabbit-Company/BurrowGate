@@ -15,6 +15,7 @@ import type {
 	AdminSessionRecord,
 	AdminSsoSettingsRecord,
 	AdminUserRecord,
+	ApiTokenRecord,
 	AdminUserSitePermissionRecord,
 	AdminUserStreamPermissionRecord,
 	AdminWebauthnCredentialRecord,
@@ -447,6 +448,7 @@ function tabScopeFilter(scope: Exclude<TabMetricsScope, "bandwidth" | "sessions"
 }
 
 export type ReplicatedEntityType =
+	| "api_token"
 	| "site"
 	| "site_origin"
 	| "route_policy"
@@ -671,6 +673,10 @@ async function applyChangelogRow(
 			await transaction`DELETE FROM dns_providers WHERE id=${entityId}`;
 			if (row) await transaction`INSERT INTO dns_providers ${transaction(row)}`;
 			return;
+		case "api_token":
+			await transaction`DELETE FROM api_tokens WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO api_tokens ${transaction(row)}`;
+			return;
 		case "admin_session":
 			await transaction`DELETE FROM admin_sessions WHERE id=${entityId}`;
 			if (row) await transaction`INSERT INTO admin_sessions ${transaction(row)}`;
@@ -863,6 +869,7 @@ async function reapplyPendingSessionRelays(transaction: TransactionSQL): Promise
 }
 
 const SNAPSHOT_TABLES: Array<{ entityType: ReplicatedEntityType; table: string; entityId: (row: Record<string, unknown>) => string }> = [
+	{ entityType: "api_token", table: "api_tokens", entityId: (row) => row.id as string },
 	{ entityType: "site", table: "sites", entityId: (row) => row.id as string },
 	{ entityType: "site_origin", table: "site_origins", entityId: (row) => row.id as string },
 	{ entityType: "route_policy", table: "route_policies", entityId: (row) => row.id as string },
@@ -1050,6 +1057,29 @@ export interface DeadLetteredRelayRecord {
 }
 
 export const repository = {
+	async apiTokensForUser(userId: string): Promise<ApiTokenRecord[]> {
+		return (await db`SELECT * FROM api_tokens WHERE user_id=${userId} ORDER BY created_at DESC`) as ApiTokenRecord[];
+	},
+	async apiTokenByHash(hash: string): Promise<ApiTokenRecord | null> {
+		const rows = (await db`SELECT * FROM api_tokens WHERE token_hash=${hash} LIMIT 1`) as ApiTokenRecord[];
+		return rows[0] ?? null;
+	},
+	async insertApiToken(record: ApiTokenRecord): Promise<void> {
+		assertPrimaryWritable("an API token");
+		await db.begin(async (transaction) => {
+			await transaction`INSERT INTO api_tokens (id,user_id,name,token_hash,token_prefix,created_at,expires_at) VALUES (${record.id},${record.user_id},${record.name},${record.token_hash},${record.token_prefix},${record.created_at},${record.expires_at})`;
+			await appendChangelogEntry(transaction, "api_token", record.id, "insert", record);
+		});
+	},
+	async deleteApiToken(id: string, userId: string): Promise<boolean> {
+		assertPrimaryWritable("an API token");
+		return await db.begin(async (transaction) => {
+			const result = await transaction`DELETE FROM api_tokens WHERE id=${id} AND user_id=${userId}`;
+			if (deletedRowCount(result) === 0) return false;
+			await appendChangelogEntry(transaction, "api_token", id, "delete", null);
+			return true;
+		});
+	},
 	async siteByHost(host: string): Promise<SiteRecord | null> {
 		const rows = (await db`SELECT * FROM sites WHERE public_host = ${host} AND enabled = 1 LIMIT 1`) as SiteRecord[];
 		return rows[0] ?? null;
@@ -5396,6 +5426,8 @@ export const repository = {
 };
 
 const PRIMARY_WRITE_METHOD_NAMES = [
+	"insertApiToken",
+	"deleteApiToken",
 	"insertSession",
 	"authenticateSession",
 	"revokeAccessSessionsBySsoSid",
