@@ -483,7 +483,7 @@
             <div class="stretch-y flex flex--col flex--between text--right text--small w--min-[48px]">
               {% for tick in ticks %}
                 {% assign tick_value = chart_maximum | times: tick | divided_by: 100.0 %}
-                <span class="bg-tick">{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
+                <span>{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
               {% endfor %}
             </div>
           </div>

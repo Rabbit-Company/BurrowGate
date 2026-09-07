@@ -26,8 +26,9 @@ custom_fields:
   - keyname: api_token
     field_type: password
     name: Read-only API token
+    placeholder: "bgro_xxx"
     optional: true
-    description: Create a token in BurrowGate under Account -> Read-only API tokens. Paste the bgro_ token here.
+    description: Create a token in BurrowGate under Account -> API tokens. Paste the bgro_ token here.
   - keyname: view
     field_type: select
     name: View
@@ -57,6 +58,7 @@ custom_fields:
   - keyname: site_id
     field_type: string
     name: Site ID
+    placeholder: "site_xxx"
     optional: true
     description: Optional site ID from your BurrowGate dashboard URL or the monitoring sites API. Leave empty for all sites and for CPU, memory, storage, or network views. This filters the display (the token can read all sites).
   - keyname: date_format
