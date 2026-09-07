@@ -79,7 +79,7 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 	} else if (view === "geography") {
 		title = "Top countries";
 		const countries = await repository.tabGeoMetrics(siteId, since, now, "requests");
-		rows = countries.slice(0, 6).map((c) => ({ label: c.countryCode, value: c.count }));
+		rows = countries.map((c) => ({ label: c.countryCode, value: c.count }));
 		stats = [stat("Requests", sum(countries.map((c) => c.count))), stat("Countries", countries.filter((c) => c.countryCode !== "ZZ").length, "")];
 	} else {
 		const metrics = await repository.trafficMetrics(siteId, since, now, bucketMs);

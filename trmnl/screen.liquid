@@ -132,6 +132,16 @@
   .bg-monitor.bg-quadrant .bg-label, .bg-monitor.bg-quadrant .bg-unit { font-size: 12px; }
   .bg-monitor.bg-half_horizontal .bg-countries, .bg-monitor.bg-quadrant .bg-countries { font-size: 14px; }
   .bg-monitor.bg-half_horizontal .bg-countries td, .bg-monitor.bg-quadrant .bg-countries td { padding: 1px 0; }
+  .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+6), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+6) { display: none; }
+  @media (max-height: 700px) {
+    .bg-monitor.bg-full .bg-countries tr:nth-child(n+7), .bg-monitor.bg-half_vertical .bg-countries tr:nth-child(n+7) { display: none; }
+    .bg-monitor.bg-quadrant .bg-chart { display: none; }
+    .bg-monitor.bg-quadrant .bg-stats { flex: 1; align-items: center; }
+    .bg-monitor.bg-quadrant .bg-number { font-size: 30px; }
+    .bg-monitor.bg-quadrant .bg-label { font-size: 14px; }
+    .bg-monitor.bg-quadrant .bg-unit { font-size: 13px; }
+    .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+4), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+4) { display: none; }
+  }
 </style>
 <div class="layout layout--col">
   <div class="bg-monitor bg-__LAYOUT__">

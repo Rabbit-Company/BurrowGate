@@ -6,7 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 root = Path(__file__).resolve().parent
 source = (root / "screen.liquid").read_text()
 files = ["settings.yml"]
-for layout, stats, rows in [("full", 3, 6), ("half_horizontal", 3, 3), ("half_vertical", 2, 6), ("quadrant", 2, 3)]:
+for layout, stats, rows in [("full", 3, 12), ("half_horizontal", 3, 12), ("half_vertical", 2, 12), ("quadrant", 2, 12)]:
     name = f"{layout}.liquid"
     rendered = source.replace("__LAYOUT__", layout).replace("__STAT_LIMIT__", str(stats)).replace("__ROW_LIMIT__", str(rows))
     rendered = rendered.replace("__TICKS__", "100,50,0" if layout in ("half_horizontal", "quadrant") else "100,75,50,25,0")
