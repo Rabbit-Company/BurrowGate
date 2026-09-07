@@ -3,7 +3,6 @@
 {%- assign date_style = trmnl.plugin_settings.custom_fields_values.date_format | default: 'iso' -%}
 {%- assign time_style = trmnl.plugin_settings.custom_fields_values.time_format | default: 'twenty_four_seconds' -%}
 {%- assign utc_offset = trmnl.user.utc_offset | default: 0 -%}
-{%- assign screen_height = trmnl.screen.height | default: trmnl.device.height | plus: 0 -%}
 {%- assign timestamps = from | append: '|' | append: to | append: '|' | append: generatedAt | split: '|' -%}
 {%- capture formatted_dates -%}
   {%- for timestamp in timestamps -%}
@@ -94,67 +93,39 @@
 {%- endcapture -%}
 {%- assign date_labels = formatted_dates | split: '|' -%}
 <style>
-  .bg-monitor { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 12px; font-family: "Inter", Arial, sans-serif; }
-  .bg-monitor * { box-sizing: border-box; }
-  .bg-monitor .bg-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 2px solid currentColor; padding-bottom: 8px; }
-  .bg-monitor .bg-heading strong { font-size: 24px; line-height: 1.1; }
-  .bg-monitor .bg-scope { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
-  .bg-monitor .bg-stats { display: flex; gap: 20px; }
-  .bg-monitor .bg-stat { flex: 1; min-width: 0; }
-  .bg-monitor .bg-number { font-size: 34px; font-weight: 700; line-height: 1.1; white-space: nowrap; }
-  .bg-monitor .bg-unit { font-size: 14px; font-weight: 400; }
-  .bg-monitor .bg-label { font-size: 15px; }
-  .bg-monitor .bg-chart { flex: 1; min-height: 40px; display: flex; flex-direction: column; gap: 4px; }
-  .bg-monitor .bg-scale, .bg-monitor .bg-axis { display: flex; justify-content: space-between; font-size: 13px; }
-  .bg-monitor .bg-plot-row { flex: 1; min-height: 20px; display: flex; gap: 8px; padding: 6px 0; }
-  .bg-monitor .bg-plot { position: relative; flex: 1; min-width: 0; }
-  .bg-monitor .bg-gridline { position: absolute; left: 0; right: 0; border-top: 1px dotted currentColor; opacity: 0.3; }
-  .bg-monitor .bg-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
-  .bg-monitor .bg-line-chart { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-  .bg-monitor .bg-values { position: relative; min-width: 48px; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .bg-monitor .bg-tick { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
-  .bg-monitor .bg-axis { gap: 8px; font-size: 11px; }
-  .bg-monitor .bg-axis span { max-width: 50%; }
-  .bg-monitor .bg-axis span:last-child { text-align: right; }
-  .bg-footer .instance { font-size: 12px; font-family: "Inter", Arial, sans-serif; }
-  .bg-monitor .bg-slot { flex: 1; height: 100%; display: flex; align-items: flex-end; }
-  .bg-monitor .bg-bar { width: 100%; background: currentColor; }
-  .bg-monitor .bg-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 20px; }
-  .bg-monitor .bg-countries { flex: 1; width: 100%; border-collapse: collapse; font-size: 20px; }
-  .bg-monitor .bg-countries td { border-bottom: 1px solid currentColor; padding: 5px 0; }
-  .bg-monitor .bg-countries td:last-child { text-align: right; font-weight: 700; }
-  .bg-monitor.bg-half_horizontal, .bg-monitor.bg-quadrant { gap: 5px; }
-  .bg-monitor.bg-half_horizontal .bg-heading strong, .bg-monitor.bg-quadrant .bg-heading strong { font-size: 18px; }
-  .bg-monitor.bg-half_horizontal .bg-number, .bg-monitor.bg-quadrant .bg-number { font-size: 24px; }
-  .bg-monitor.bg-half_vertical .bg-stats, .bg-monitor.bg-quadrant .bg-stats { gap: 8px; }
-  .bg-monitor.bg-half_vertical .bg-number { font-size: 26px; }
-  .bg-monitor.bg-half_vertical .bg-heading, .bg-monitor.bg-quadrant .bg-heading { display: block; }
-  .bg-monitor.bg-half_vertical .bg-scope, .bg-monitor.bg-quadrant .bg-scope { display: block; max-width: 100%; font-size: 12px; }
-  .bg-monitor.bg-quadrant .bg-label, .bg-monitor.bg-quadrant .bg-unit { font-size: 12px; }
-  .bg-monitor.bg-half_horizontal .bg-countries, .bg-monitor.bg-quadrant .bg-countries { font-size: 14px; }
-  .bg-monitor.bg-half_horizontal .bg-countries td, .bg-monitor.bg-quadrant .bg-countries td { padding: 1px 0; }
-  .bg-frame { container-type: size; container-name: bg; }
-  .bg-monitor.bg-quadrant .bg-chart { display: var(--bg-tall-chart, none); }
-  .bg-monitor.bg-full .bg-countries tr:nth-child(n+9), .bg-monitor.bg-half_vertical .bg-countries tr:nth-child(n+7) { display: var(--bg-tall-rows, none); }
+  .bg-monitor .bg-number { white-space: nowrap; }
+  .bg-monitor .bg-stats-fill { flex-grow: var(--bg-tall-stats, 1); }
+  .bg-monitor.bg-half_horizontal .bg-chart, .bg-monitor.bg-quadrant .bg-chart { display: var(--bg-tall-chart, none); }
+  .bg-monitor.bg-full .bg-countries tr:nth-child(n+11), .bg-monitor.bg-half_vertical .bg-countries tr:nth-child(n+11) { display: var(--bg-tall-rows, none); }
   .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+4), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+4) { display: var(--bg-tall-rows, none); }
   .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+6), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+6) { display: none; }
-  @container bg (min-height: 300px) {
-    .bg-monitor.bg-half_horizontal, .bg-monitor.bg-quadrant { --bg-tall-chart: flex; --bg-tall-rows: table-row; }
-  }
-  @container bg (min-height: 600px) {
-    .bg-monitor.bg-full, .bg-monitor.bg-half_vertical { --bg-tall-rows: table-row; }
-  }
-  :is(.bg-tall, .screen--lg) .bg-monitor { --bg-tall-chart: flex; --bg-tall-rows: table-row; }
+  :is(.screen--lg, .screen--v2) .bg-monitor { --bg-tall-chart: flex; --bg-tall-rows: table-row; --bg-tall-stats: 0; }
 </style>
 {% template body %}
-<div class="layout layout--col bg-frame{% if screen_height > 700 %} bg-tall{% endif %}">
-  <div class="bg-monitor bg-{{ layout }}">
+{%- assign compact = false -%}{%- if layout == 'half_horizontal' or layout == 'quadrant' -%}{%- assign compact = true -%}{%- endif -%}
+{%- assign narrow = false -%}{%- if layout == 'half_vertical' or layout == 'quadrant' -%}{%- assign narrow = true -%}{%- endif -%}
+{%- assign monitor_gap = 'gap--[12px]' -%}{%- if compact -%}{%- assign monitor_gap = 'gap--xsmall' -%}{%- endif -%}
+{%- assign heading_layout = 'flex flex--row flex--between flex--bottom gap--[12px]' -%}{%- if narrow -%}{%- assign heading_layout = '' -%}{%- endif -%}
+{%- assign title_size = 'title' -%}{%- if compact -%}{%- assign title_size = 'title title--small' -%}{%- endif -%}
+{%- assign scope_size = 'label' -%}{%- if narrow -%}{%- assign scope_size = 'label label--small' -%}{%- endif -%}
+{%- assign stats_gap = 'gap--large' -%}{%- if narrow -%}{%- assign stats_gap = 'gap--small' -%}{%- endif -%}
+{%- assign value_size = 'value' -%}{%- if layout == 'half_vertical' -%}{%- assign value_size = 'value value--small' -%}{%- elsif compact -%}{%- assign value_size = 'value value--xsmall' -%}{%- endif -%}
+{%- assign stat_label_size = 'label' -%}{%- if layout == 'quadrant' -%}{%- assign stat_label_size = 'label label--small' -%}{%- endif -%}
+{%- assign table_size = 'table--small' -%}{%- if compact -%}{%- assign table_size = 'table--xsmall' -%}{%- endif -%}
+{%- assign stats_fill = '' -%}
+{%- if compact and hasData != false and view != 'geography' -%}
+  {%- assign stats_fill = 'bg-stats-fill' -%}
+  {%- assign value_size = 'value lg:value--xsmall' -%}
+  {%- if layout == 'quadrant' -%}{%- assign value_size = 'value value--small lg:value--xsmall' -%}{%- assign stat_label_size = 'label lg:label--small' -%}{%- endif -%}
+{%- endif -%}
+<div class="layout layout--col">
+  <div class="bg-monitor bg-{{ layout }} flex flex--col w--full h--full {{ monitor_gap }}">
     {% if schemaVersion == 1 %}
-      <div class="bg-heading">
-        <strong>{{ title | escape }}</strong>
-        <span class="bg-scope">{{ scope | escape }}</span>
+      <div class="w--full border--h-1 pb--2 {{ heading_layout }}">
+        <span class="{{ title_size }}">{{ title | escape }}</span>
+        <span class="{{ scope_size }}" data-clamp="1">{{ scope | escape }}</span>
       </div>
-      <div class="bg-stats">
+      <div class="flex flex--row w--full {{ stats_gap }} {{ stats_fill }}">
         {% for stat in stats limit: stat_limit %}
           {% assign stat_byte_multiplier = 0 %}
           {% case stat.unit %}
@@ -164,32 +135,32 @@
             {% when 'GiB' %}{% assign stat_byte_multiplier = 1073741824 %}
             {% when 'TiB' %}{% assign stat_byte_multiplier = 1099511627776 %}
           {% endcase %}
-          <div class="bg-stat">
-            <div class="bg-number">
+          <div class="grow basis--0 w--min-[0px]">
+            <div class="bg-number {{ value_size }} value--tnums">
               {% if stat.value == nil %}
                 —
               {% elsif stat_byte_multiplier > 0 %}
                 {% assign stat_bytes = stat.value | times: stat_byte_multiplier %}
-                {% if stat_bytes >= 1099511627776 %}{{ stat_bytes | divided_by: 1099511627776.0 | round: 2 }} <span class="bg-unit">TiB</span>
-                {% elsif stat_bytes >= 1073741824 %}{{ stat_bytes | divided_by: 1073741824.0 | round: 2 }} <span class="bg-unit">GiB</span>
-                {% elsif stat_bytes >= 1048576 %}{{ stat_bytes | divided_by: 1048576.0 | round: 2 }} <span class="bg-unit">MiB</span>
-                {% elsif stat_bytes >= 1024 %}{{ stat_bytes | divided_by: 1024.0 | round: 2 }} <span class="bg-unit">KiB</span>
-                {% else %}{{ stat_bytes | round: 0 }} <span class="bg-unit">B</span>
+                {% if stat_bytes >= 1099511627776 %}{{ stat_bytes | divided_by: 1099511627776.0 | round: 2 }} <span class="label label--small ">TiB</span>
+                {% elsif stat_bytes >= 1073741824 %}{{ stat_bytes | divided_by: 1073741824.0 | round: 2 }} <span class="label label--small ">GiB</span>
+                {% elsif stat_bytes >= 1048576 %}{{ stat_bytes | divided_by: 1048576.0 | round: 2 }} <span class="label label--small ">MiB</span>
+                {% elsif stat_bytes >= 1024 %}{{ stat_bytes | divided_by: 1024.0 | round: 2 }} <span class="label label--small ">KiB</span>
+                {% else %}{{ stat_bytes | round: 0 }} <span class="label label--small ">B</span>
                 {% endif %}
-              {% elsif stat.value >= 1000000000 %}{{ stat.value | divided_by: 1000000000.0 | round: 1 }}B <span class="bg-unit">{{ stat.unit | escape }}</span>
-              {% elsif stat.value >= 1000000 %}{{ stat.value | divided_by: 1000000.0 | round: 1 }}M <span class="bg-unit">{{ stat.unit | escape }}</span>
-              {% elsif stat.value >= 10000 %}{{ stat.value | divided_by: 1000.0 | round: 1 }}k <span class="bg-unit">{{ stat.unit | escape }}</span>
-              {% else %}{{ stat.value | round: 1 }} <span class="bg-unit">{{ stat.unit | escape }}</span>
+              {% elsif stat.value >= 1000000000 %}{{ stat.value | divided_by: 1000000000.0 | round: 1 }}B <span class="label label--small ">{{ stat.unit | escape }}</span>
+              {% elsif stat.value >= 1000000 %}{{ stat.value | divided_by: 1000000.0 | round: 1 }}M <span class="label label--small ">{{ stat.unit | escape }}</span>
+              {% elsif stat.value >= 10000 %}{{ stat.value | divided_by: 1000.0 | round: 1 }}k <span class="label label--small ">{{ stat.unit | escape }}</span>
+              {% else %}{{ stat.value | round: 1 }} <span class="label label--small ">{{ stat.unit | escape }}</span>
               {% endif %}
             </div>
-            <div class="bg-label">{{ stat.label | escape }}</div>
+            <span class="{{ stat_label_size }}">{{ stat.label | escape }}</span>
           </div>
         {% endfor %}
       </div>
       {% if hasData == false %}
-        <div class="bg-empty">No samples in this range</div>
+        <div class="grow flex flex--row flex--center-x flex--center-y w--full text--center text--large">No samples in this range</div>
       {% elsif view == 'geography' %}
-        <table class="bg-countries" aria-label="Requests by country">
+        <table class="table {{ table_size }} bg-countries grow w--full" aria-label="Requests by country">
           <tbody>
             {% for row in rows limit: row_limit %}
               {%- assign country_code = row.label | upcase -%}
@@ -448,12 +419,12 @@
                 {%- when 'ZW' -%}{%- assign country_name = 'Zimbabwe' -%}
                 {%- when 'ZZ' -%}{%- assign country_name = 'Unknown' -%}
               {%- endcase -%}
-              <tr><td>{{ country_name | escape }}</td><td>{{ row.value | round: 0 }}</td></tr>
+              <tr><td>{{ country_name | escape }}</td><td class="text--right"><strong>{{ row.value | round: 0 }}</strong></td></tr>
             {% endfor %}
           </tbody>
         </table>
       {% else %}
-        <div class="bg-chart" role="img" aria-label="{{ title | escape }} over the last {{ hours | plus: 0 }} hours">
+        <div class="bg-chart grow flex flex--col w--full gap--[4px] h--min-[40px]" role="img" aria-label="{{ title | escape }} over the last {{ hours | plus: 0 }} hours">
           {% assign chart_maximum = maximum | plus: 0 %}
           {% if chart_maximum <= 0 %}{% assign chart_maximum = 1 %}{% endif %}
           {% assign ticks = tick_list | split: ',' %}
@@ -478,12 +449,12 @@
             {% endif %}
             {% assign chart_ratio = chart_byte_multiplier | times: 1.0 | divided_by: chart_display_multiplier %}
           {% endif %}
-          <div class="bg-scale"><span>{% if view == 'cache' or view == 'latency' or view == 'cpu' or view == 'memory' or view == 'disk' or view == 'network' %}Average per interval{% else %}Total per interval{% endif %}</span><span>{{ chart_display_unit | escape }}</span></div>
-          <div class="bg-plot-row">
-            <div class="bg-plot">
-              {% for tick in ticks %}<div class="bg-gridline" style="top: {{ 100 | minus: tick }}%"></div>{% endfor %}
+          <div class="flex flex--row flex--between w--full text--small"><span>{% if view == 'cache' or view == 'latency' or view == 'cpu' or view == 'memory' or view == 'disk' or view == 'network' %}Average per interval{% else %}Total per interval{% endif %}</span><span>{{ chart_display_unit | escape }}</span></div>
+          <div class="flex flex--row w--full gap--small grow py--1 h--min-[20px]">
+            <div class="stretch relative w--min-[0px]">
+              {%- capture gridlines -%}{% for tick in ticks %}<line x1="0" y1="{{ 100 | minus: tick }}" x2="100" y2="{{ 100 | minus: tick }}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4" vector-effect="non-scaling-stroke" />{% endfor %}{%- endcapture -%}
               {% if view == 'cpu' or view == 'memory' or view == 'disk' %}
-                <svg class="bg-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <svg class="absolute inset--0" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible" aria-hidden="true">{{ gridlines }}
                   {% assign intervals = points.size | minus: 1 | at_least: 1 %}
                   {% assign previous_value = nil %}
                   {% for point in points %}
@@ -499,28 +470,34 @@
                   {% endfor %}
                 </svg>
               {% else %}
-                <div class="bg-bars">
-                  {% for point in points %}<div class="bg-slot"><div class="bg-bar" style="height: {{ point.value | plus: 0 | times: 100.0 | divided_by: chart_maximum | at_least: 0 | at_most: 100 }}%"></div></div>{% endfor %}
-                </div>
+                <svg class="absolute inset--0" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible" aria-hidden="true">{{ gridlines }}
+                  {% assign slot_width = 100.0 | divided_by: points.size | at_least: 0.01 %}
+                  {% assign bar_width = slot_width | times: 0.8 %}
+                  {% assign bar_offset = slot_width | minus: bar_width | divided_by: 2.0 %}
+                  {% for point in points %}
+                    {% assign bar_height = point.value | plus: 0 | times: 100.0 | divided_by: chart_maximum | at_least: 0 | at_most: 100 %}
+                    <rect x="{{ forloop.index0 | times: slot_width | plus: bar_offset | round: 3 }}" y="{{ 100 | minus: bar_height | round: 3 }}" width="{{ bar_width | round: 3 }}" height="{{ bar_height | round: 3 }}" fill="currentColor" />
+                  {% endfor %}
+                </svg>
               {% endif %}
             </div>
-            <div class="bg-values">
+            <div class="stretch-y flex flex--col flex--between text--right text--small w--min-[48px]">
               {% for tick in ticks %}
                 {% assign tick_value = chart_maximum | times: tick | divided_by: 100.0 %}
-                <span class="bg-tick" style="top: {{ 100 | minus: tick }}%">{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
+                <span class="bg-tick">{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
               {% endfor %}
             </div>
           </div>
-          <div class="bg-axis"><span>{{ date_labels[0] | escape }}</span><span>{{ date_labels[1] | escape }}</span></div>
+          <div class="flex flex--row flex--between w--full gap--small text--small"><span>{{ date_labels[0] | escape }}</span><span>{{ date_labels[1] | escape }}</span></div>
         </div>
       {% endif %}
     {% else %}
-      <div class="bg-heading"><strong>BurrowGate</strong></div>
-      <div class="bg-empty">Waiting for monitoring data.<br>Check your URL and token, then refresh.</div>
+      <div class="w--full border--h-1 pb--2"><span class="{{ title_size }}">BurrowGate</span></div>
+      <div class="grow flex flex--row flex--center-x flex--center-y w--full text--center text--large">Waiting for monitoring data.<br>Check your URL and token, then refresh.</div>
     {% endif %}
   </div>
 </div>
-<div class="title_bar bg-footer">
+<div class="title_bar">
   <span class="title">BurrowGate</span>
   <span class="instance">{% if schemaVersion == 1 %}{{ hours | plus: 0 }}h · {{ date_labels[2] | escape }}{% else %}Monitoring{% endif %}</span>
 </div>

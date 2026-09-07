@@ -1,5 +1,6 @@
 ---
 name: BurrowGate
+description: "BurrowGate reverse proxy monitoring"
 strategy: polling
 refresh_interval: 15
 polling_verb: GET
