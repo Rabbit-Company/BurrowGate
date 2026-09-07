@@ -118,8 +118,7 @@
   {%- assign value_size = 'value lg:value--xsmall' -%}
   {%- if layout == 'quadrant' -%}{%- assign value_size = 'value value--small lg:value--xsmall' -%}{%- assign stat_label_size = 'label lg:label--small' -%}{%- endif -%}
 {%- endif -%}
-<div class="layout layout--col">
-  <div class="bg-monitor bg-{{ layout }} flex flex--col w--full h--full {{ monitor_gap }}">
+<div class="bg-monitor bg-{{ layout }} flex flex--col w--full h--full {{ monitor_gap }}">
     {% if schemaVersion == 1 %}
       <div class="w--full border--h-1 pb--2 {{ heading_layout }}">
         <span class="{{ title_size }}">{{ title | escape }}</span>
@@ -496,9 +495,11 @@
       <div class="grow flex flex--row flex--center-x flex--center-y w--full text--center text--large">Waiting for monitoring data.<br>Check your URL and token, then refresh.</div>
     {% endif %}
   </div>
-</div>
+{% endtemplate %}
+{% template title_bar %}
 <div class="title_bar">
   <span class="title">BurrowGate</span>
-  <span class="instance">{% if schemaVersion == 1 %}{{ hours | plus: 0 }}h · {{ date_labels[2] | escape }}{% else %}Monitoring{% endif %}</span>
+{%- assign range_hours = hours | plus: 0 -%}
+  <span class="instance">{% if schemaVersion == 1 %}{% if range_hours >= 48 %}{{ range_hours | divided_by: 24 }}d{% else %}{{ range_hours }}h{% endif %} · {{ date_labels[2] | escape }}{% else %}Monitoring{% endif %}</span>
 </div>
 {% endtemplate %}

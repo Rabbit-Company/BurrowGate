@@ -1,2 +1,5 @@
 {%- comment -%}The markup lives in the shared body template. Liquid's render tag is isolated, so every value it needs is passed explicitly.{%- endcomment -%}
-{% render "body", layout: "half_horizontal", stat_limit: 3, row_limit: 12, tick_list: "100,50,0", date_labels: date_labels, schemaVersion: schemaVersion, title: title, scope: scope, stats: stats, hasData: hasData, view: view, rows: rows, hours: hours, maximum: maximum, unit: unit, points: points %}
+<div class="layout layout--col">
+  {% render "body", layout: "half_horizontal", stat_limit: 3, row_limit: 12, tick_list: "100,50,0", date_labels: date_labels, schemaVersion: schemaVersion, title: title, scope: scope, stats: stats, hasData: hasData, view: view, rows: rows, hours: hours, maximum: maximum, unit: unit, points: points %}
+</div>
+{% render 'title_bar', schemaVersion: schemaVersion, hours: hours, date_labels: date_labels %}
