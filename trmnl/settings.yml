@@ -18,12 +18,14 @@ custom_fields:
     email_address: info@rabbit-company.com
   - keyname: instance_url
     field_type: url
+    optional: true
     name: BurrowGate instance URL
     placeholder: https://gate.example.com
     description: Public HTTPS base URL of your BurrowGate dashboard, without /_burrowgate/admin. TRMNL must be able to reach this address.
   - keyname: api_token
     field_type: password
     name: Read-only API token
+    optional: true
     description: Create a token in BurrowGate under Account -> Read-only API tokens. Paste the bgro_ token here.
   - keyname: view
     field_type: select
