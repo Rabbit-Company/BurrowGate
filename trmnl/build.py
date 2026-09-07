@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Generate standalone TRMNL layouts and an importable ZIP, using only Python stdlib."""
+"""Bundle the TRMNL plugin into an importable ZIP, using only Python stdlib.
+
+The archive mirrors the sources: settings.yml, shared.liquid, and four layouts that are each
+a single render tag. TRMNL prepends shared markup to every layout before rendering. Pass
+--inline to do that prepending here instead, producing self-contained layouts for an import
+path that drops shared.liquid.
+"""
+import sys
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 root = Path(__file__).resolve().parent
-source = (root / "screen.liquid").read_text()
-files = ["settings.yml"]
-for layout, stats, rows in [("full", 3, 12), ("half_horizontal", 3, 12), ("half_vertical", 2, 12), ("quadrant", 2, 12)]:
-    name = f"{layout}.liquid"
-    rendered = source.replace("__LAYOUT__", layout).replace("__STAT_LIMIT__", str(stats)).replace("__ROW_LIMIT__", str(rows))
-    rendered = rendered.replace("__TICKS__", "100,50,0" if layout in ("half_horizontal", "quadrant") else "100,75,50,25,0")
-    (root / name).write_text(rendered)
-    files.append(name)
-with ZipFile(root / "burrowgate.zip", "w", ZIP_DEFLATED) as archive:
-    for name in files:
-        archive.write(root / name, name)
-print(f"Built {root / 'burrowgate.zip'}")
+layouts = ["full.liquid", "half_horizontal.liquid", "half_vertical.liquid", "quadrant.liquid"]
+inline = "--inline" in sys.argv[1:]
+shared = (root / "shared.liquid").read_text()
+archive_path = root / "burrowgate.zip"
+with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+    archive.write(root / "settings.yml", "settings.yml")
+    if not inline:
+        archive.write(root / "shared.liquid", "shared.liquid")
+    for name in layouts:
+        markup = (root / name).read_text()
+        archive.writestr(name, shared + markup if inline else markup)
+print(f"Built {archive_path}{' with shared markup inlined' if inline else ''}")

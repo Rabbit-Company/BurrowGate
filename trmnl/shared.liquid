@@ -1,8 +1,9 @@
-{% comment %}Source template. Run python3 trmnl/build.py after edits.{% endcomment %}
+{%- comment -%}Shared markup: TRMNL prepends this to every layout, so the date math and styles below run once per render and the body template is available to each layout's render tag.{%- endcomment -%}
 {%- comment -%}Compute displayed dates via pure integer calendar math (Howard Hinnant's days_from_civil/civil_from_days) instead of the date filter, so the renderer's own time zone can never leak in; trmnl.user.utc_offset is applied by hand to reach the device's local time.{%- endcomment -%}
 {%- assign date_style = trmnl.plugin_settings.custom_fields_values.date_format | default: 'iso' -%}
 {%- assign time_style = trmnl.plugin_settings.custom_fields_values.time_format | default: 'twenty_four_seconds' -%}
 {%- assign utc_offset = trmnl.user.utc_offset | default: 0 -%}
+{%- assign screen_height = trmnl.screen.height | default: trmnl.device.height | plus: 0 -%}
 {%- assign timestamps = from | append: '|' | append: to | append: '|' | append: generatedAt | split: '|' -%}
 {%- capture formatted_dates -%}
   {%- for timestamp in timestamps -%}
@@ -132,26 +133,29 @@
   .bg-monitor.bg-quadrant .bg-label, .bg-monitor.bg-quadrant .bg-unit { font-size: 12px; }
   .bg-monitor.bg-half_horizontal .bg-countries, .bg-monitor.bg-quadrant .bg-countries { font-size: 14px; }
   .bg-monitor.bg-half_horizontal .bg-countries td, .bg-monitor.bg-quadrant .bg-countries td { padding: 1px 0; }
+  .bg-frame { container-type: size; container-name: bg; }
+  .bg-monitor.bg-quadrant .bg-chart { display: var(--bg-tall-chart, none); }
+  .bg-monitor.bg-full .bg-countries tr:nth-child(n+9), .bg-monitor.bg-half_vertical .bg-countries tr:nth-child(n+7) { display: var(--bg-tall-rows, none); }
+  .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+4), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+4) { display: var(--bg-tall-rows, none); }
   .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+6), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+6) { display: none; }
-  @media (max-height: 700px) {
-    .bg-monitor.bg-full .bg-countries tr:nth-child(n+7), .bg-monitor.bg-half_vertical .bg-countries tr:nth-child(n+7) { display: none; }
-    .bg-monitor.bg-quadrant .bg-chart { display: none; }
-    .bg-monitor.bg-quadrant .bg-stats { flex: 1; align-items: center; }
-    .bg-monitor.bg-quadrant .bg-number { font-size: 30px; }
-    .bg-monitor.bg-quadrant .bg-label { font-size: 14px; }
-    .bg-monitor.bg-quadrant .bg-unit { font-size: 13px; }
-    .bg-monitor.bg-half_horizontal .bg-countries tr:nth-child(n+4), .bg-monitor.bg-quadrant .bg-countries tr:nth-child(n+4) { display: none; }
+  @container bg (min-height: 300px) {
+    .bg-monitor.bg-half_horizontal, .bg-monitor.bg-quadrant { --bg-tall-chart: flex; --bg-tall-rows: table-row; }
   }
+  @container bg (min-height: 600px) {
+    .bg-monitor.bg-full, .bg-monitor.bg-half_vertical { --bg-tall-rows: table-row; }
+  }
+  :is(.bg-tall, .screen--lg) .bg-monitor { --bg-tall-chart: flex; --bg-tall-rows: table-row; }
 </style>
-<div class="layout layout--col">
-  <div class="bg-monitor bg-__LAYOUT__">
+{% template body %}
+<div class="layout layout--col bg-frame{% if screen_height > 700 %} bg-tall{% endif %}">
+  <div class="bg-monitor bg-{{ layout }}">
     {% if schemaVersion == 1 %}
       <div class="bg-heading">
         <strong>{{ title | escape }}</strong>
         <span class="bg-scope">{{ scope | escape }}</span>
       </div>
       <div class="bg-stats">
-        {% for stat in stats limit: __STAT_LIMIT__ %}
+        {% for stat in stats limit: stat_limit %}
           {% assign stat_byte_multiplier = 0 %}
           {% case stat.unit %}
             {% when 'B' %}{% assign stat_byte_multiplier = 1 %}
@@ -187,7 +191,7 @@
       {% elsif view == 'geography' %}
         <table class="bg-countries" aria-label="Requests by country">
           <tbody>
-            {% for row in rows limit: __ROW_LIMIT__ %}
+            {% for row in rows limit: row_limit %}
               {%- assign country_code = row.label | upcase -%}
               {%- assign country_name = row.label -%}
               {%- case country_code -%}
@@ -452,7 +456,7 @@
         <div class="bg-chart" role="img" aria-label="{{ title | escape }} over the last {{ hours | plus: 0 }} hours">
           {% assign chart_maximum = maximum | plus: 0 %}
           {% if chart_maximum <= 0 %}{% assign chart_maximum = 1 %}{% endif %}
-          {% assign ticks = '__TICKS__' | split: ',' %}
+          {% assign ticks = tick_list | split: ',' %}
           {% assign chart_byte_multiplier = 0 %}
           {% case unit %}
             {% when 'B' %}{% assign chart_byte_multiplier = 1 %}
@@ -520,3 +524,4 @@
   <span class="title">BurrowGate</span>
   <span class="instance">{% if schemaVersion == 1 %}{{ hours | plus: 0 }}h · {{ date_labels[2] | escape }}{% else %}Monitoring{% endif %}</span>
 </div>
+{% endtemplate %}

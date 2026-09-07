@@ -6,7 +6,7 @@ A polling private plugin, ready to import and submit as a recipe. Users provide 
 
 1. Run the BurrowGate server.
 2. Sign in as an administrator, open **Account -> API tokens**, and create a token named `TRMNL` with the **Read-only monitoring** scope. Copy the `bgro_` value shown once.
-3. From the repository root, run `python3 trmnl/build.py`. This creates `trmnl/burrowgate.zip` with a flat `settings.yml` and four Liquid layouts.
+3. From the repository root, run `python3 trmnl/build.py`. This creates `trmnl/burrowgate.zip` with a flat `settings.yml`, `shared.liquid`, and four Liquid layouts.
 4. In TRMNL, open **Private Plugins -> Import new** and select that ZIP.
 5. Enter your instance's HTTPS base URL (for example, `https://gate.example.com`, without `/_burrowgate/admin`) and paste the token into **Read-only API token**. Select **View**, **Time range**, **Date format**, and **Time format**. Optionally supply a **Site ID**. Save and force a refresh.
 
