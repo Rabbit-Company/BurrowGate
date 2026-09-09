@@ -424,6 +424,39 @@ function siteScopeFilter(siteScope: string | string[] | undefined) {
 	return db`AND site_id=${siteScope}`;
 }
 
+export interface RequestScope {
+	prefix?: string;
+	exact?: string;
+	successfulOnly?: boolean;
+}
+
+function pathWithoutQuery(path: string): string {
+	const query = path.indexOf("?");
+	return (query === -1 ? path : path.slice(0, query)).slice(0, 2048);
+}
+
+function boundedRowLimit(limit: number) {
+	return db.unsafe(String(Math.min(1000, Math.max(1, Math.trunc(limit)))));
+}
+
+function requestScopeFilter(scope: RequestScope | undefined) {
+	if (scope === undefined) return db``;
+
+	let filter = db``;
+	if (scope.exact !== undefined && scope.exact.length > 0) {
+		const base = scope.exact.replace(/\/+$/, "");
+		filter = db`${filter} AND (path_only = ${base} OR path_only = ${`${base}/`})`;
+	} else if (scope.prefix !== undefined && scope.prefix.length > 0) {
+		const base = scope.prefix.replace(/\/+$/, "");
+		const escaped = base.replace(/([!%_])/g, "!$1");
+		filter = db`${filter} AND (path_only = ${base} OR path_only LIKE ${`${escaped}/%`} ESCAPE '!')`;
+	}
+
+	if (scope.successfulOnly === true) filter = db`${filter} AND status < 400`;
+
+	return filter;
+}
+
 function streamScopeFilter(streamScope: string | string[] | undefined) {
 	if (streamScope === undefined) return db``;
 	if (Array.isArray(streamScope)) return db`AND stream_id IN ${db(streamScope)}`;
@@ -2159,7 +2192,7 @@ export const repository = {
 		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,bot_id,bot_name,bot_category,bot_verified,network_privacy_json,request_body,request_body_truncated,request_content_type,request_headers,request_headers_truncated,response_headers,response_headers_truncated,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.asn},${event.asn_org},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.bot_id ?? null},${event.bot_name ?? null},${event.bot_category ?? null},${event.bot_verified ?? null},${event.network_privacy_json ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.request_headers ?? null},${event.request_headers_truncated ?? null},${event.response_headers ?? null},${event.response_headers_truncated ?? null},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,path_only,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,bot_id,bot_name,bot_category,bot_verified,network_privacy_json,request_body,request_body_truncated,request_content_type,request_headers,request_headers_truncated,response_headers,response_headers_truncated,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${pathWithoutQuery(event.path)},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.asn},${event.asn_org},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.bot_id ?? null},${event.bot_name ?? null},${event.bot_category ?? null},${event.bot_verified ?? null},${event.network_privacy_json ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.request_headers ?? null},${event.request_headers_truncated ?? null},${event.response_headers ?? null},${event.response_headers_truncated ?? null},${event.created_at})`;
 	},
 	async updateEventResponseBody(id: string, responseBody: string, truncated: boolean, contentType: string | null): Promise<void> {
 		await db`UPDATE request_events SET response_body=${responseBody}, response_body_truncated=${truncated ? 1 : 0}, response_content_type=${contentType} WHERE id=${id}`;
@@ -2652,12 +2685,14 @@ export const repository = {
 		since: number,
 		until: number,
 		bucketMs: number,
+		requestScope?: RequestScope,
 	): Promise<{
 		series: TrafficMetricPoint[];
 		decisions: Array<{ decision: string; count: number }>;
 		methods: Array<{ method: string; count: number }>;
 	}> {
 		const siteFilter = siteScopeFilter(siteId);
+		const pathFilter = requestScopeFilter(requestScope);
 		const bucketExpression =
 			config.databaseUrl.startsWith("mysql://") || config.databaseUrl.startsWith("mariadb://")
 				? db`FLOOR(created_at / ${bucketMs})`
@@ -2670,21 +2705,21 @@ export const repository = {
         SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
         COALESCE(AVG(latency_ms), 0) AS average_latency
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter}
       GROUP BY ${bucketExpression}
       ORDER BY bucket ASC
     `) as Array<{ bucket: number | string; requests: number | string; blocked: number | string; errors: number | string; average_latency: number | string }>;
 		const decisions = (await db`
       SELECT decision, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter}
       GROUP BY decision
       ORDER BY count DESC
     `) as Array<{ decision: string; count: number | string }>;
 		const methods = (await db`
       SELECT method, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter}
       GROUP BY method
       ORDER BY count DESC
       LIMIT 15
@@ -2711,12 +2746,14 @@ export const repository = {
 		since: number,
 		until: number,
 		bucketMs: number,
+		requestScope?: RequestScope,
 	): Promise<{
 		series: CacheMetricPoint[];
 		totals: { hits: number; misses: number; bypasses: number; hitRatio: number; originRequestsAvoided: number };
 		topPaths: Array<{ path: string; hits: number; misses: number; bypasses: number; hitRatio: number }>;
 	}> {
 		const siteFilter = siteScopeFilter(siteId);
+		const pathFilter = requestScopeFilter(requestScope);
 		const bucketExpression = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT
@@ -2725,7 +2762,7 @@ export const repository = {
         SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS misses,
         SUM(CASE WHEN cache_status='bypass' THEN 1 ELSE 0 END) AS bypasses
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter} ${pathFilter}
       GROUP BY ${bucketExpression}
       ORDER BY bucket ASC
     `) as Array<{ bucket: number | string; hits: number | string; misses: number | string; bypasses: number | string }>;
@@ -2761,7 +2798,7 @@ export const repository = {
         SUM(CASE WHEN cache_status='miss' THEN 1 ELSE 0 END) AS misses,
         SUM(CASE WHEN cache_status='bypass' THEN 1 ELSE 0 END) AS bypasses
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} AND cache_status IS NOT NULL ${siteFilter} ${pathFilter}
       GROUP BY path
       ORDER BY hits DESC, misses DESC
       LIMIT 10
@@ -2867,12 +2904,14 @@ export const repository = {
 		since: number,
 		until: number,
 		bucketMs: number,
+		requestScope?: RequestScope,
 	): Promise<{
 		series: Array<{ bucket: number; clean: number; monitored: number; blocked: number }>;
 		totals: { inspected: number; clean: number; monitored: number; blocked: number };
 		topRules: Array<{ ruleId: string; category: string; severity: string; monitored: number; blocked: number; count: number }>;
 	}> {
 		const siteFilter = siteScopeFilter(siteId);
+		const pathFilter = requestScopeFilter(requestScope);
 		const bucket = metricBucketExpression("created_at", bucketMs);
 		const rows = (await db`
       SELECT ${bucket} * ${bucketMs} AS bucket,
@@ -2880,7 +2919,7 @@ export const repository = {
         SUM(CASE WHEN protection_status='monitored' THEN 1 ELSE 0 END) AS monitored,
         SUM(CASE WHEN protection_status='blocked' THEN 1 ELSE 0 END) AS blocked
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} AND protection_status IS NOT NULL ${siteFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} AND protection_status IS NOT NULL ${siteFilter} ${pathFilter}
       GROUP BY ${bucket}
       ORDER BY bucket ASC
     `) as Array<{ bucket: number | string; clean: number | string; monitored: number | string; blocked: number | string }>;
@@ -3438,9 +3477,16 @@ export const repository = {
 		since: number,
 		until: number,
 		scope: TabMetricsScope,
+		requestScope?: RequestScope,
 	): Promise<Array<{ countryCode: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
+		const pathFilter = requestScopeFilter(requestScope);
+
+		if (requestScope !== undefined && (scope === "sessions" || scope === "bandwidth")) {
+			throw new Error("pathPrefix is not supported for session or bandwidth scopes");
+		}
+
 		if (scope === "sessions") {
 			const rows = (await db`
         SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
@@ -3467,7 +3513,7 @@ export const repository = {
 		const rows = (await db`
       SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter} ${scopeFilter}
       GROUP BY COALESCE(country_code, 'ZZ')
       ORDER BY count DESC
     `) as Array<{ country_code: string; count: number | string }>;
@@ -3508,18 +3554,21 @@ export const repository = {
 		since: number,
 		until: number,
 		scope: Exclude<TabMetricsScope, "access" | "bandwidth" | "sessions">,
+		requestScope?: RequestScope,
+		limit = 25,
 	): Promise<Array<{ refererHost: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
+		const pathFilter = requestScopeFilter(requestScope);
 		const scopeFilter = tabScopeFilter(scope);
 		const rows = (await db`
       SELECT referer_host, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
+      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter} ${scopeFilter}
         AND referer_host IS NOT NULL AND referer_host != '(same site)'
       GROUP BY referer_host
       ORDER BY count DESC
-      LIMIT 25
+      LIMIT ${boundedRowLimit(limit)}
     `) as Array<{ referer_host: string; count: number | string }>;
 		return rows.map((row) => ({ refererHost: row.referer_host, count: toNumber(row.count) }));
 	},
@@ -3606,17 +3655,20 @@ export const repository = {
 		since: number,
 		until: number,
 		scope: "protection" | "requests",
+		requestScope?: RequestScope,
+		limit = 25,
 	): Promise<Array<{ path: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
+		const pathFilter = requestScopeFilter(requestScope);
 		const scopeFilter = tabScopeFilter(scope);
 		const rows = (await db`
-      SELECT path, COUNT(*) AS count
+      SELECT path_only AS path, COUNT(*) AS count
       FROM request_events
-      WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${scopeFilter}
-      GROUP BY path
+      WHERE created_at >= ${since} AND created_at <= ${until} AND path_only IS NOT NULL ${siteFilter} ${pathFilter} ${scopeFilter}
+      GROUP BY path_only
       ORDER BY count DESC
-      LIMIT 25
+      LIMIT ${boundedRowLimit(limit)}
     `) as Array<{ path: string; count: number | string }>;
 		return rows.map((row) => ({ path: row.path, count: toNumber(row.count) }));
 	},

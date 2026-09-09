@@ -661,7 +661,7 @@ Any signed-in user can create a **Full access** token under **Account -> API tok
 
 An authenticated OpenAPI 3.2 document for the admin API is available from `GET /_burrowgate/api/admin/openapi.json`. Its server URL reflects the origin used to request the document, while its paths contain the complete `/_burrowgate/api/admin/...` routes, so it can be imported directly into API clients and code generators.
 
-Administrators can also create **Read-only monitoring** tokens. These instance-wide credentials can only access aggregate site and system metrics through `GET /_burrowgate/api/v1/sites` and `GET /_burrowgate/api/v1/monitoring`; they cannot modify BurrowGate or read secrets, raw requests, or sessions. Token plaintext is shown once, only its SHA-256 hash is stored, and every token can be given an expiry or revoked individually. See [API tokens and OpenAPI](docs/API_TOKENS.md).
+Administrators can also create **Read-only monitoring** tokens. These instance-wide credentials can only access aggregate site and system metrics through `GET /_burrowgate/api/v1/sites` and `GET /_burrowgate/api/v1/monitoring`, described by their own OpenAPI 3.2 document at `GET /_burrowgate/api/v1/openapi.json`. They cannot modify BurrowGate or read secrets, raw requests, or sessions. Token plaintext is shown once, only its SHA-256 hash is stored, and every token can be given an expiry or revoked individually. See [API tokens and OpenAPI](docs/API_TOKENS.md).
 
 The [TRMNL recipe](trmnl/README.md) accepts an instance URL and monitoring token, with selectable traffic, blocked requests, bandwidth, cache, protection, latency, geography, and system views. It supports full screens and all three mashup sizes.
 

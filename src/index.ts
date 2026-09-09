@@ -212,8 +212,10 @@ app.use(
 		],
 	}),
 );
-app.use("/_burrowgate/api/v1", rateLimit({ windowMs: 60_000, max: 60, headers: true }));
-app.use("/_burrowgate/api/challenge", rateLimit({ windowMs: 60_000, max: 30, headers: true }));
+
+app.use("/_burrowgate/api/*", rateLimit({ windowMs: 60_000, max: 6000, headers: true }));
+app.use("/_burrowgate/api/v1/*", rateLimit({ windowMs: 60_000, max: 300, headers: true }));
+app.use("/_burrowgate/api/challenge/*", rateLimit({ windowMs: 60_000, max: 120, headers: true }));
 app.use("/_burrowgate/api/access/session/introspect", rateLimit({ windowMs: 60_000, max: 600, headers: true }));
 app.use(async (ctx, next) => fullAccessTokenBoundaryResponse(ctx.req) ?? (await next()));
 app.use(async (ctx, next) => {

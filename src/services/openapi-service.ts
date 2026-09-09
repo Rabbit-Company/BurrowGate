@@ -13,6 +13,7 @@ import { opsPaths } from "../openapi/paths/ops.ts";
 import { siteAdminPaths } from "../openapi/paths/site-admin.ts";
 import { metricsPaths } from "../openapi/paths/metrics.ts";
 import { identityPaths } from "../openapi/paths/identity.ts";
+import { monitoringPaths, monitoringSchemas } from "../openapi/monitoring.ts";
 import type { JsonSchema, PathItemObject } from "../openapi/types.ts";
 
 export interface OpenApiDocument {
@@ -119,4 +120,40 @@ export function buildOpenApiDocument(serverOrigin: string): OpenApiDocument {
 		paths: prefixed,
 	};
 	return { ...cached, servers: [{ description: "This BurrowGate instance", url: serverOrigin }] };
+}
+
+const MONITORING_BASE = "/_burrowgate/api/v1";
+
+let cachedMonitoring: OpenApiDocumentTemplate | null = null;
+
+export function buildMonitoringOpenApiDocument(serverOrigin: string): OpenApiDocument {
+	if (cachedMonitoring) {
+		return { ...cachedMonitoring, servers: [{ description: "This BurrowGate instance", url: serverOrigin }] };
+	}
+	const paths: Record<string, PathItemObject> = {};
+	for (const [path, item] of Object.entries(monitoringPaths)) paths[`${MONITORING_BASE}${path}`] = item;
+
+	cachedMonitoring = {
+		openapi: "3.2.0",
+		info: {
+			title: "BurrowGate monitoring API",
+			version: "1",
+			description:
+				"Aggregate site and system metrics for read-only monitoring tokens (Account -> API tokens -> Read-only monitoring). Instance-wide and read-only: these credentials cannot modify BurrowGate, and cannot read secrets, raw requests, or sessions.",
+		},
+		security: [{ ApiTokenMonitoring: [] }],
+		components: {
+			securitySchemes: {
+				ApiTokenMonitoring: {
+					type: "http",
+					scheme: "bearer",
+					bearerFormat: "bgro_...",
+					description: "A read-only monitoring API token. Rejected on any method other than GET, and on any endpoint outside this document.",
+				},
+			},
+			schemas: monitoringSchemas,
+		},
+		paths,
+	};
+	return { ...cachedMonitoring, servers: [{ description: "This BurrowGate instance", url: serverOrigin }] };
 }

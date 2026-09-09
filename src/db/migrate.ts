@@ -269,6 +269,7 @@ CREATE TABLE IF NOT EXISTS request_events (
   ip VARCHAR(128) NOT NULL,
   method VARCHAR(16) NOT NULL,
   path TEXT NOT NULL,
+  path_only VARCHAR(2048) NULL,
   status INTEGER NOT NULL,
   decision VARCHAR(64) NOT NULL,
   latency_ms INTEGER NOT NULL,
@@ -840,6 +841,7 @@ const indexes = [
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_protection_rule_created ON request_events (site_id, protection_rule_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_referer_host_created ON request_events (site_id, referer_host, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_request_events_site_bot_created ON request_events (site_id, bot_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_request_events_site_path_created ON request_events (site_id, path_only, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_bucket ON bandwidth_minutes (site_id, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_ip_bucket ON bandwidth_minutes (site_id, ip, bucket_start)",
 	"CREATE INDEX IF NOT EXISTS idx_bandwidth_site_country_bucket ON bandwidth_minutes (site_id, country_code, bucket_start)",
@@ -1300,6 +1302,7 @@ async function ensureStreamEventColumns(): Promise<void> {
 async function ensureRequestEventColumns(): Promise<void> {
 	const largeTextType = isMySql() ? "LONGTEXT" : "TEXT";
 	for (const statement of [
+		"ALTER TABLE request_events ADD COLUMN path_only VARCHAR(2048) NULL",
 		"ALTER TABLE request_events ADD COLUMN origin_id VARCHAR(64) NULL",
 		"ALTER TABLE request_events ADD COLUMN cache_status VARCHAR(16) NULL",
 		"ALTER TABLE request_events ADD COLUMN protection_status VARCHAR(16) NULL",
@@ -1334,6 +1337,18 @@ async function ensureRequestEventColumns(): Promise<void> {
 			if (!duplicateColumnError(error)) throw error;
 		}
 	}
+	await backfillRequestEventPathOnly();
+}
+
+async function backfillRequestEventPathOnly(): Promise<void> {
+	const url = config.databaseUrl;
+	const postgres = url.startsWith("postgres://") || url.startsWith("postgresql://");
+	const pathOnly = isMySql()
+		? "LEFT(SUBSTRING_INDEX(path, '?', 1), 2048)"
+		: postgres
+			? "left(split_part(path, '?', 1), 2048)"
+			: "substr(CASE WHEN instr(path, '?') > 0 THEN substr(path, 1, instr(path, '?') - 1) ELSE path END, 1, 2048)";
+	await db.unsafe(`UPDATE request_events SET path_only = ${pathOnly} WHERE path_only IS NULL`);
 }
 
 async function ensurePrimaryOrigins(): Promise<void> {
@@ -1494,8 +1509,10 @@ function duplicateIndexError(error: unknown): boolean {
 }
 
 async function createIndexes(): Promise<void> {
+	const mysql = isMySql();
 	for (const index of indexes) {
-		const statement = isMySql() ? index.replace(" IF NOT EXISTS", "") : index;
+		const columns = mysql ? index.replace("(site_id, path_only, created_at)", "(site_id, path_only(191), created_at)") : index;
+		const statement = mysql ? columns.replace(" IF NOT EXISTS", "") : columns;
 		try {
 			await db.unsafe(statement);
 		} catch (error) {

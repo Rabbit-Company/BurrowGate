@@ -1,4 +1,4 @@
-import { repository } from "../db/repository.ts";
+import { repository, type RequestScope } from "../db/repository.ts";
 
 export const MONITORING_VIEWS = [
 	"overview",
@@ -9,21 +9,45 @@ export const MONITORING_VIEWS = [
 	"protection",
 	"latency",
 	"geography",
+	"paths",
+	"referrers",
 	"cpu",
 	"memory",
 	"disk",
 	"network",
 ] as const;
 export type MonitoringView = (typeof MONITORING_VIEWS)[number];
+
+export const PATH_FILTERABLE_VIEWS: readonly MonitoringView[] = [
+	"overview",
+	"traffic",
+	"blocked",
+	"cache",
+	"protection",
+	"latency",
+	"geography",
+	"paths",
+	"referrers",
+];
+
+const REFUSAL_VIEWS: readonly MonitoringView[] = ["blocked", "protection"];
+const TOP_ROWS = 100;
+
 type Point = { bucket: number; value: number | null };
 type Stat = { label: string; value: number | null; unit: string };
 
-export async function monitoringData(view: MonitoringView, hours: number, siteId?: string, now = Date.now()) {
+export async function monitoringData(view: MonitoringView, hours: number, siteId?: string, now = Date.now(), requestScope?: RequestScope) {
 	const since = now - hours * 3_600_000;
 	// Bound payloads and database grouping to roughly 48 intervals per screen.
 	const bucketMs = Math.max(60_000, Math.ceil((hours * 3_600_000) / 48 / 60_000) * 60_000);
 	const systemView = ["cpu", "memory", "disk", "network"].includes(view);
 	if (systemView && siteId) throw new Error("System views apply to the whole instance (leave Site ID empty)");
+	if (requestScope !== undefined && !PATH_FILTERABLE_VIEWS.includes(view))
+		throw new Error(`The ${view} view is not backed by request paths, so pathPrefix cannot be applied`);
+	if (requestScope?.prefix !== undefined && requestScope.exact !== undefined)
+		throw new Error("pathPrefix and path are mutually exclusive: pass a subtree or a single page, not both");
+	if (requestScope?.successfulOnly === true && REFUSAL_VIEWS.includes(view))
+		throw new Error(`The ${view} view counts refused requests, so successfulOnly cannot be applied`);
 	const site = siteId ? await repository.siteById(siteId) : null;
 	if (siteId && !site) throw new Error("Unknown site ID");
 	let title = "Requests";
@@ -62,7 +86,7 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 			stat("Upload", sum(metrics.series.map((p) => p.clientUpload)) / 1_048_576),
 		];
 	} else if (view === "cache") {
-		const metrics = await repository.cacheMetrics(siteId, since, now, bucketMs);
+		const metrics = await repository.cacheMetrics(siteId, since, now, bucketMs, requestScope);
 		title = "Cache hit ratio";
 		unit = "%";
 		points = metrics.series.map((p) => ({ bucket: p.bucket, value: p.hits + p.misses > 0 ? p.hitRatio : null }));
@@ -72,17 +96,27 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 			stat("Misses", metrics.totals.misses, "requests"),
 		];
 	} else if (view === "protection") {
-		const metrics = await repository.protectionMetrics(siteId, since, now, bucketMs);
+		const metrics = await repository.protectionMetrics(siteId, since, now, bucketMs, requestScope);
 		title = "Managed protection blocks";
 		points = metrics.series.map((p) => ({ bucket: p.bucket, value: p.blocked }));
 		stats = [stat("Blocked", metrics.totals.blocked), stat("Inspected", metrics.totals.inspected), stat("Would block", metrics.totals.monitored)];
+	} else if (view === "paths") {
+		title = "Top paths";
+		const paths = await repository.tabPathMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS);
+		rows = paths.map((entry) => ({ label: entry.path, value: entry.count }));
+		stats = [stat("Requests in top paths", sum(paths.map((entry) => entry.count))), stat("Paths shown", paths.length, "")];
+	} else if (view === "referrers") {
+		title = "Top referrers";
+		const referrers = await repository.tabRefererMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS);
+		rows = referrers.map((entry) => ({ label: entry.refererHost, value: entry.count }));
+		stats = [stat("Requests from top sources", sum(referrers.map((entry) => entry.count))), stat("Sources shown", referrers.length, "")];
 	} else if (view === "geography") {
 		title = "Top countries";
-		const countries = await repository.tabGeoMetrics(siteId, since, now, "requests");
+		const countries = await repository.tabGeoMetrics(siteId, since, now, "requests", requestScope);
 		rows = countries.map((c) => ({ label: c.countryCode, value: c.count }));
 		stats = [stat("Requests", sum(countries.map((c) => c.count))), stat("Countries", countries.filter((c) => c.countryCode !== "ZZ").length, "")];
 	} else {
-		const metrics = await repository.trafficMetrics(siteId, since, now, bucketMs);
+		const metrics = await repository.trafficMetrics(siteId, since, now, bucketMs, requestScope);
 		const requests = sum(metrics.series.map((p) => p.requests));
 		const blocked = sum(metrics.series.map((p) => p.blocked));
 		const errors = sum(metrics.series.map((p) => p.errors));
@@ -104,14 +138,16 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 		view,
 		title,
 		unit,
+		pathPrefix: requestScope?.prefix ?? null,
+		path: requestScope?.exact ?? null,
+		successfulOnly: requestScope?.successfulOnly === true,
 		scope: systemView ? "System" : (site?.name ?? "All sites"),
 		hours,
 		generatedAt: new Date(now).toISOString(),
 		from: new Date(since).toISOString(),
 		to: new Date(now).toISOString(),
 		bucketSeconds: bucketMs / 1000,
-		// Preserve null samples: missing system/latency data must never appear as zero.
-		hasData: view === "geography" ? rows.length > 0 : available.length > 0,
+		hasData: rows.length > 0 ? true : available.length > 0,
 		maximum,
 		stats,
 		rows,
