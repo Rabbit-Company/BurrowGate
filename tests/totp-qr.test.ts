@@ -4,10 +4,13 @@ import { enrollmentUri, generateSecret, qrSvg } from "../src/services/totp-servi
 function parseModules(svg: string): { size: number; dark: Set<string> } {
 	const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/u);
 	if (!viewBox) throw new Error("QR SVG has no viewBox");
-	const points = [...svg.matchAll(/M(\d+) (\d+)h1v1h-1z/gu)].map((match) => [Number(match[1]), Number(match[2])] as const);
-	if (points.length === 0) throw new Error("QR SVG has no dark modules");
-	const margin = Math.min(...points.map(([x]) => x), ...points.map(([, y]) => y));
-	const dark = new Set(points.map(([x, y]) => `${x - margin},${y - margin}`));
+	const runs = [...svg.matchAll(/M(\d+) (\d+)h(\d+)v\d+h-\d+z/gu)].map((match) => [Number(match[1]), Number(match[2]), Number(match[3])] as const);
+	if (runs.length === 0) throw new Error("QR SVG has no dark modules");
+	const margin = Math.min(...runs.map(([x]) => x), ...runs.map(([, y]) => y));
+	const dark = new Set<string>();
+	for (const [x, y, width] of runs) {
+		for (let offset = 0; offset < width; offset++) dark.add(`${x + offset - margin},${y - margin}`);
+	}
 	return { size: Number(viewBox[1]) - margin * 2, dark };
 }
 

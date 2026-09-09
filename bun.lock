@@ -6,7 +6,7 @@
       "name": "burrowgate",
       "dependencies": {
         "@rabbit-company/openmetrics-client": "2.0.1",
-        "@rabbit-company/qrcode": "^1.0.0",
+        "@rabbit-company/qrcode": "^1.0.1",
         "@rabbit-company/totp": "^1.0.1",
         "@rabbit-company/web": "^0.18.2",
         "@rabbit-company/web-middleware": "^0.18.2",
@@ -63,7 +63,7 @@
 
     "@rabbit-company/openmetrics-client": ["@rabbit-company/openmetrics-client@2.0.1", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-JJr8reWZwTr5vvq1txc2jEgDkLKJ/QAref8W7C7pP7fdmy1qltpu9Ujrbqariq/pJb3qTj0y89krlYZSgh/YvA=="],
 
-    "@rabbit-company/qrcode": ["@rabbit-company/qrcode@1.0.0", "", {}, "sha512-Ko4YrnKhNQSiCtkGBzBY+CpN15XsBoZcGwQEDRCi7fic7Hfbyy39wGWYJ8BPh1RiGXQVdsQpl1zC1gVW0/XmFA=="],
+    "@rabbit-company/qrcode": ["@rabbit-company/qrcode@1.0.1", "", {}, "sha512-9gv5ePCBTcofe1nHSl4GTo6Uzo0hHrz3zzPV34ejuZVx5gWW62aMBo96TjSJSdZnMHOgo6TYStEVJuGKSO4q9w=="],
 
     "@rabbit-company/rate-limiter": ["@rabbit-company/rate-limiter@3.0.1", "", { "peerDependencies": { "typescript": "^5.8.3" } }, "sha512-Wj32TPksbohww7fMbERjjSAApA9fdsneRtIpfQmY/W/BfGA9BbO08wKA1tezoVHuYEMUCwjUjaRZxjEYGMxTOw=="],
 

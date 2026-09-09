@@ -19,7 +19,7 @@
 	},
 	"dependencies": {
 		"@rabbit-company/openmetrics-client": "2.0.1",
-		"@rabbit-company/qrcode": "^1.0.0",
+		"@rabbit-company/qrcode": "^1.0.1",
 		"@rabbit-company/totp": "^1.0.1",
 		"@rabbit-company/web": "^0.18.2",
 		"@rabbit-company/web-middleware": "^0.18.2",
