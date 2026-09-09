@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@rabbit-company/openmetrics-client": "2.0.1",
+		"@rabbit-company/qrcode": "^1.0.0",
 		"@rabbit-company/totp": "^1.0.1",
 		"@rabbit-company/web": "^0.18.2",
 		"@rabbit-company/web-middleware": "^0.18.2",
@@ -26,12 +27,10 @@
 		"acme-client": "5.4.0",
 		"chart.js": "4.5.1",
 		"jose": "^6.2.12",
-		"maxmind": "5.0.7",
-		"qrcode": "^1.5.4"
+		"maxmind": "5.0.7"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.4.1",
-		"@types/qrcode": "^1.5.6",
 		"typescript": "^7.0.2"
 	},
 	"engines": {

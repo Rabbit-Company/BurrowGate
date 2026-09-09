@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { db } from "../src/db/client.ts";
-import { migrate } from "../src/db/migrate.ts";
+import { repository } from "../src/db/repository.ts";
+import { backfillEventPathOnly } from "../src/services/maintenance-service.ts";
 import { monitoringData } from "../src/services/monitoring-service.ts";
 import { createSite } from "../src/services/site-service.ts";
 
@@ -10,7 +11,7 @@ describe("request_events.path_only backfill", () => {
 		         VALUES (${`evt-legacy-${crypto.randomUUID()}`},${siteId},${null},'203.0.113.9','GET',${path},200,'allowed',10,${at})`;
 	}
 
-	test("migrate() fills path_only for rows written before the column existed", async () => {
+	test("maintenance fills path_only for rows written before the column existed", async () => {
 		const site = (await createSite({ name: "Legacy", publicHost: `legacy-${crypto.randomUUID()}.test`, originUrl: "http://o.test" })).site;
 		const at = Date.now() - 60_000;
 
@@ -23,7 +24,7 @@ describe("request_events.path_only backfill", () => {
 		}>;
 		expect(Number(before[0]!.count)).toBe(3);
 
-		await migrate();
+		await backfillEventPathOnly();
 
 		const after = (await db`SELECT COUNT(*) AS count FROM request_events WHERE site_id=${site.id} AND path_only IS NULL`) as Array<{
 			count: number | string;
@@ -36,7 +37,7 @@ describe("request_events.path_only backfill", () => {
 		const at = Date.now() - 60_000;
 
 		await legacyRow(site.id, "/creator/alice?page=2", at);
-		await migrate();
+		await backfillEventPathOnly();
 
 		const rows = (await db`SELECT path, path_only FROM request_events WHERE site_id=${site.id}`) as Array<{ path: string; path_only: string }>;
 		expect(rows).toHaveLength(1);
@@ -44,12 +45,32 @@ describe("request_events.path_only backfill", () => {
 		expect(rows[0]!.path_only).toBe("/creator/alice");
 	});
 
-	test("an over-long legacy path is truncated rather than failing the migration", async () => {
+	test("the backfill is bounded per batch and resumes on the next run", async () => {
+		const site = (await createSite({ name: "Legacy batched", publicHost: `legacy-${crypto.randomUUID()}.test`, originUrl: "http://o.test" })).site;
+		const at = Date.now() - 60_000;
+		for (let i = 0; i < 5; i++) await legacyRow(site.id, `/batched/page-${i}`, at);
+
+		const remaining = async () => {
+			const rows = (await db`SELECT COUNT(*) AS count FROM request_events WHERE site_id=${site.id} AND path_only IS NULL`) as Array<{
+				count: number | string;
+			}>;
+			return Number(rows[0]!.count);
+		};
+
+		expect(await remaining()).toBe(5);
+		expect(await repository.backfillEventPathOnly(2)).toBe(2);
+		expect(await remaining()).toBe(3);
+
+		await backfillEventPathOnly(2);
+		expect(await remaining()).toBe(0);
+	});
+
+	test("an over-long legacy path is truncated to the column width", async () => {
 		const site = (await createSite({ name: "Legacy long", publicHost: `legacy-${crypto.randomUUID()}.test`, originUrl: "http://o.test" })).site;
 		const long = `/${"a".repeat(3000)}`;
 
 		await legacyRow(site.id, long, Date.now() - 60_000);
-		await migrate();
+		await backfillEventPathOnly();
 
 		const rows = (await db`SELECT path_only FROM request_events WHERE site_id=${site.id}`) as Array<{ path_only: string }>;
 		expect(rows[0]!.path_only.length).toBe(2048);
@@ -63,7 +84,7 @@ describe("request_events.path_only backfill", () => {
 		await legacyRow(site.id, "/creator/alice/post", at);
 		await legacyRow(site.id, "/creator/alice/post?ref=x", at);
 		await legacyRow(site.id, "/creator/bob/post", at);
-		await migrate();
+		await backfillEventPathOnly();
 
 		const paths = await monitoringData("paths", 24, site.id, Date.now());
 		const labels = paths.rows.map((row) => row.label);

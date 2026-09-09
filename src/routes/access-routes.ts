@@ -319,7 +319,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 			setPendingAccessTotpSecret(session.id, secret);
 		}
 		const uri = enrollmentUri(user.username, secret, `BurrowGate (${site.name})`);
-		return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret, await qrSvg(uri), returnPath));
+		return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret, qrSvg(uri), returnPath));
 	});
 
 	app.post("/_burrowgate/access/login/enroll", async (ctx) => {
@@ -332,7 +332,7 @@ export function registerAccessRoutes(app: Web<any>): void {
 		const code = String(form.get("code") ?? "");
 		if (!secret || !(await verifyTotpCode(secret, code))) {
 			const uri = enrollmentUri(user.username, secret ?? "", `BurrowGate (${site.name})`);
-			return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret ?? "", await qrSvg(uri), returnPath, "Invalid code, try again"), 401);
+			return htmlResponse(accessTwoFactorEnrollPage(site, uri, secret ?? "", qrSvg(uri), returnPath, "Invalid code, try again"), 401);
 		}
 		await completeAccessTotpEnrollment(user.id, secret);
 		consumePendingAccessTwoFactor(session.id);

@@ -435,8 +435,15 @@ function pathWithoutQuery(path: string): string {
 	return (query === -1 ? path : path.slice(0, query)).slice(0, 2048);
 }
 
-function boundedRowLimit(limit: number) {
-	return db.unsafe(String(Math.min(1000, Math.max(1, Math.trunc(limit)))));
+function boundedRowLimit(limit: number, max = 1000) {
+	return db.unsafe(String(Math.min(max, Math.max(1, Math.trunc(limit)))));
+}
+
+function pathOnlyExpression(): string {
+	const url = config.databaseUrl;
+	if (url.startsWith("mysql://") || url.startsWith("mariadb://")) return "LEFT(SUBSTRING_INDEX(path, '?', 1), 2048)";
+	if (url.startsWith("postgres://") || url.startsWith("postgresql://")) return "left(split_part(path, '?', 1), 2048)";
+	return "substr(CASE WHEN instr(path, '?') > 0 THEN substr(path, 1, instr(path, '?') - 1) ELSE path END, 1, 2048)";
 }
 
 function requestScopeFilter(scope: RequestScope | undefined) {
@@ -2193,6 +2200,12 @@ export const repository = {
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
 		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,path_only,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,bot_id,bot_name,bot_category,bot_verified,network_privacy_json,request_body,request_body_truncated,request_content_type,request_headers,request_headers_truncated,response_headers,response_headers_truncated,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${pathWithoutQuery(event.path)},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.asn},${event.asn_org},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.bot_id ?? null},${event.bot_name ?? null},${event.bot_category ?? null},${event.bot_verified ?? null},${event.network_privacy_json ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.request_headers ?? null},${event.request_headers_truncated ?? null},${event.response_headers ?? null},${event.response_headers_truncated ?? null},${event.created_at})`;
+	},
+	async backfillEventPathOnly(batchSize: number): Promise<number> {
+		const rows = (await db`SELECT id FROM request_events WHERE path_only IS NULL LIMIT ${boundedRowLimit(batchSize, 50_000)}`) as Array<{ id: string }>;
+		if (rows.length === 0) return 0;
+		await db`UPDATE request_events SET path_only = ${db.unsafe(pathOnlyExpression())} WHERE id IN ${db(rows.map((row) => row.id))}`;
+		return rows.length;
 	},
 	async updateEventResponseBody(id: string, responseBody: string, truncated: boolean, contentType: string | null): Promise<void> {
 		await db`UPDATE request_events SET response_body=${responseBody}, response_body_truncated=${truncated ? 1 : 0}, response_content_type=${contentType} WHERE id=${id}`;

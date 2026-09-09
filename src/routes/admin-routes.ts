@@ -440,7 +440,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			setPendingLoginSecret(pending.token, secret);
 		}
 		const uri = enrollmentUri(user.username, secret);
-		return htmlResponse(twoFactorEnrollPage(uri, secret, await qrSvg(uri)));
+		return htmlResponse(twoFactorEnrollPage(uri, secret, qrSvg(uri)));
 	});
 
 	app.post("/_burrowgate/admin/login/enroll", async (ctx) => {
@@ -454,7 +454,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const code = String(form.get("code") ?? "");
 		const uri = enrollmentUri(user.username, secret);
 		if (!(await verifyTotpCode(secret, code))) {
-			return htmlResponse(twoFactorEnrollPage(uri, secret, await qrSvg(uri), "Invalid code, try again"), 401);
+			return htmlResponse(twoFactorEnrollPage(uri, secret, qrSvg(uri), "Invalid code, try again"), 401);
 		}
 		const now = Date.now();
 		await repository.updateAdminUser({

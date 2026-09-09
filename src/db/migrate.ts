@@ -1337,18 +1337,6 @@ async function ensureRequestEventColumns(): Promise<void> {
 			if (!duplicateColumnError(error)) throw error;
 		}
 	}
-	await backfillRequestEventPathOnly();
-}
-
-async function backfillRequestEventPathOnly(): Promise<void> {
-	const url = config.databaseUrl;
-	const postgres = url.startsWith("postgres://") || url.startsWith("postgresql://");
-	const pathOnly = isMySql()
-		? "LEFT(SUBSTRING_INDEX(path, '?', 1), 2048)"
-		: postgres
-			? "left(split_part(path, '?', 1), 2048)"
-			: "substr(CASE WHEN instr(path, '?') > 0 THEN substr(path, 1, instr(path, '?') - 1) ELSE path END, 1, 2048)";
-	await db.unsafe(`UPDATE request_events SET path_only = ${pathOnly} WHERE path_only IS NULL`);
 }
 
 async function ensurePrimaryOrigins(): Promise<void> {

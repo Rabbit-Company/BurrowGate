@@ -11,6 +11,9 @@ const DAY_MS = 86_400_000;
 let cleanupRunning = false;
 let housekeepingRunning = false;
 let cleanupRotation = 0;
+let pathBackfillRunning = false;
+const PATH_BACKFILL_BATCH_SIZE = 2_000;
+const PATH_BACKFILL_TIME_BUDGET_MS = 2_000;
 
 export interface CleanupTask {
 	name: string;
@@ -217,6 +220,28 @@ export async function runRetentionCleanup(): Promise<void> {
 	}
 }
 
+export async function backfillEventPathOnly(batchSize = PATH_BACKFILL_BATCH_SIZE): Promise<number> {
+	if (pathBackfillRunning) return 0;
+	pathBackfillRunning = true;
+	let total = 0;
+	try {
+		if (batchSize <= 0) return 0;
+		const deadline = performance.now() + PATH_BACKFILL_TIME_BUDGET_MS;
+		for (;;) {
+			const updated = await repository.backfillEventPathOnly(batchSize);
+			total += updated;
+			if (updated < batchSize || performance.now() >= deadline) break;
+		}
+		if (total > 0) Logger.debug(`Backfilled the request path of ${total} recorded request(s)`);
+		return total;
+	} catch (error) {
+		Logger.error("Request path backfill failed", { error });
+		return total;
+	} finally {
+		pathBackfillRunning = false;
+	}
+}
+
 async function runHousekeeping(): Promise<void> {
 	if (housekeepingRunning) return;
 	housekeepingRunning = true;
@@ -245,4 +270,6 @@ export function startMaintenance(): void {
 	const housekeepingIntervalSeconds = Math.min(config.maintenance.intervalSeconds, config.acme.checkIntervalSeconds);
 	const housekeepingTimer = setInterval(() => void runHousekeeping(), housekeepingIntervalSeconds * 1_000);
 	(housekeepingTimer as unknown as { unref?: () => void }).unref?.();
+	const pathBackfillTimer = setInterval(() => void backfillEventPathOnly(), config.maintenance.cleanupIntervalSeconds * 1_000);
+	(pathBackfillTimer as unknown as { unref?: () => void }).unref?.();
 }

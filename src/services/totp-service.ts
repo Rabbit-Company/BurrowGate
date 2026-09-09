@@ -1,5 +1,5 @@
 import { generateTOTPSecret, generateTOTPURI, verifyTOTP } from "@rabbit-company/totp";
-import QRCode from "qrcode";
+import { toSVG } from "@rabbit-company/qrcode";
 import { randomToken, sha256Hex } from "../utils/crypto.ts";
 
 const ISSUER = "BurrowGate";
@@ -12,8 +12,8 @@ export function enrollmentUri(username: string, secret: string, issuer: string =
 	return generateTOTPURI({ accountName: username, issuer, secret });
 }
 
-export async function qrSvg(uri: string): Promise<string> {
-	return QRCode.toString(uri, { type: "svg" });
+export function qrSvg(uri: string): string {
+	return toSVG(uri, { title: "TOTP enrollment QR code", margin: 1 });
 }
 
 export async function verifyCode(secret: string, token: string): Promise<boolean> {
