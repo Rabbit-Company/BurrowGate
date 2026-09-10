@@ -4,14 +4,31 @@ import { enrollmentUri, generateSecret, qrSvg } from "../src/services/totp-servi
 function parseModules(svg: string): { size: number; dark: Set<string> } {
 	const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/u);
 	if (!viewBox) throw new Error("QR SVG has no viewBox");
-	const runs = [...svg.matchAll(/M(\d+) (\d+)h(\d+)v\d+h-\d+z/gu)].map((match) => [Number(match[1]), Number(match[2]), Number(match[3])] as const);
-	if (runs.length === 0) throw new Error("QR SVG has no dark modules");
-	const margin = Math.min(...runs.map(([x]) => x), ...runs.map(([, y]) => y));
-	const dark = new Set<string>();
-	for (const [x, y, width] of runs) {
-		for (let offset = 0; offset < width; offset++) dark.add(`${x + offset - margin},${y - margin}`);
+	const path = svg.match(/<path stroke="[^"]*" d="([^"]+)"/u);
+	if (!path) throw new Error("QR SVG has no stroked module path, so the renderer's output format changed");
+
+	const painted: Array<[number, number]> = [];
+	let x = 0;
+	let y = 0;
+	for (const [, command, first, second] of path[1]!.matchAll(/([Mmh])\s*(-?[\d.]+)(?:[\s,]*(-?[\d.]+))?/gu)) {
+		const value = Number(first);
+		if (command === "M") {
+			x = value;
+			y = Number(second);
+		} else if (command === "m") {
+			x += value;
+			y += Number(second);
+		} else {
+			// A stroke one unit wide centred on y covers the module row above it.
+			const row = Math.round(y - 0.5);
+			for (let step = Math.min(x, x + value); step < Math.max(x, x + value); step++) painted.push([step, row]);
+			x += value;
+		}
 	}
-	return { size: Number(viewBox[1]) - margin * 2, dark };
+	if (painted.length === 0) throw new Error("QR SVG has no dark modules");
+
+	const margin = Math.min(...painted.map(([cx]) => cx), ...painted.map(([, cy]) => cy));
+	return { size: Number(viewBox[1]) - margin * 2, dark: new Set(painted.map(([cx, cy]) => `${cx - margin},${cy - margin}`)) };
 }
 
 function isFinderPatternAt(modules: { dark: Set<string> }, originX: number, originY: number): boolean {
