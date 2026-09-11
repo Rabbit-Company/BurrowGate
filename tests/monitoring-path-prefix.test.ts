@@ -8,7 +8,7 @@ import { createApiToken } from "../src/services/api-token-service.ts";
 import { createSite } from "../src/services/site-service.ts";
 import type { RequestEventRecord } from "../src/types.ts";
 
-const NOW = Date.UTC(2026, 8, 9, 12, 0, 0);
+const NOW = Date.now();
 const HOUR = 3_600_000;
 
 let siteId: string;
@@ -291,6 +291,7 @@ describe("monitoring pathPrefix over HTTP", () => {
 
 		expect(scoped.status).toBe(200);
 		expect(scoped.body.pathPrefix).toBe("/creator/alice");
+		expect(scoped.body.rows.map((row: { label: string }) => row.label)).toContain("/creator/alice/post-one");
 		expect(scoped.body.rows.some((row: { label: string }) => row.label.includes("bob"))).toBe(false);
 	});
 

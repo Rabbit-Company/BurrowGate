@@ -57,6 +57,8 @@ BurrowGate always removes client-provided copies of these headers. The identity 
 <username>
 ```
 
+`<path-and-query>` is the path and query the origin receives. When the origin URL has a path prefix (for example `http://app:3000/api`), the prefix is included (`/api/items?page=2` for a public request to `/items?page=2`).
+
 `X-BurrowGate-Signature` uses the same canonical value, minus the trailing `<username>` line. An origin that uses the username should verify the normal origin signature and the identity signature, require a recent timestamp, and prevent direct public access to the origin.
 
 Passwords are never sent upstream.

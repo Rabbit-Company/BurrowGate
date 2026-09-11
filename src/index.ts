@@ -1,9 +1,9 @@
 import { Web } from "@rabbit-company/web";
 import { logger } from "@rabbit-company/web-middleware/logger";
 import { rateLimit } from "@rabbit-company/web-middleware/rate-limit";
-import { IP_EXTRACTION_PRESETS, getClientIp, ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
+import { getClientIp, ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
 import { challengeRegistry } from "./challenges/index.ts";
-import { config, requestIsSecure } from "./config.ts";
+import { SUPPORTED_IP_EXTRACTION_PRESETS, config, requestIsSecure, supportedIpExtractionPreset } from "./config.ts";
 import { migrate } from "./db/migrate.ts";
 import { repository } from "./db/repository.ts";
 import { registerAdminRoutes } from "./routes/admin-routes.ts";
@@ -168,7 +168,7 @@ if (config.openMetrics.enabled && !config.openMetrics.token) {
 
 const app = new Web<GatewayState>();
 const clientIpExtractors = new Map<IpExtractionPreset, ReturnType<typeof ipExtract>>(
-	(Object.keys(IP_EXTRACTION_PRESETS) as IpExtractionPreset[]).map((preset) => [preset, ipExtract(preset)]),
+	SUPPORTED_IP_EXTRACTION_PRESETS.map((preset) => [preset, ipExtract(preset)]),
 );
 
 function isDashboardRequest(request: Request): boolean {
@@ -194,7 +194,7 @@ app.use(async (ctx, next) => {
 	if (!isDashboardRequest(ctx.req)) {
 		const site = await resolveSiteForHost(normalizeHost(requestHost(ctx.req)));
 		if (site) ctx.state.site = site;
-		preset = site?.ip_extraction_preset ?? "direct";
+		preset = supportedIpExtractionPreset(site?.ip_extraction_preset);
 	}
 	await clientIpExtractors.get(preset)!(ctx, next);
 });

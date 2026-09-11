@@ -1,4 +1,4 @@
-import { IP_EXTRACTION_PRESETS, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
+import { type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { hostname } from "node:os";
 import {
@@ -35,11 +35,47 @@ function envBoolean(name: string, fallback: boolean): boolean {
 	throw new Error(`${name} must be true or false`);
 }
 
+/**
+ * Presets BurrowGate offers, pinned rather than derived from the library's own list. A preset
+ * decides which forwarding headers are believed, so admitting one is a security decision: the
+ * library's `burrowgate` preset, for example, trusts `x-burrowgate-client-ip` from any caller,
+ * which lets a visitor of an internet-facing site choose their own IP. Deriving this list meant
+ * every preset a library release added was accepted here without review.
+ *
+ * `satisfies` keeps the names honest, so a typo or a preset the library drops fails to compile.
+ * Anything added here must also be listed in the dashboard's site form and in the OpenAPI schema,
+ * which tests/ip-extraction-presets.test.ts enforces.
+ */
+export const SUPPORTED_IP_EXTRACTION_PRESETS = [
+	"direct",
+	"cloudflare",
+	"aws",
+	"gcp",
+	"azure",
+	"vercel",
+	"nginx",
+	"development",
+] as const satisfies readonly IpExtractionPreset[];
+
+export type SupportedIpExtractionPreset = (typeof SUPPORTED_IP_EXTRACTION_PRESETS)[number];
+
+/**
+ * Resolves a stored preset without throwing, for the request path. A row written before a preset
+ * was withdrawn, or edited outside the API, must not break the site it belongs to. Falling back to
+ * "direct" believes no forwarding header, which is the safe direction when the intent is unclear.
+ */
+export function supportedIpExtractionPreset(value: unknown): SupportedIpExtractionPreset {
+	const preset = String(value ?? "")
+		.trim()
+		.toLowerCase();
+	return (SUPPORTED_IP_EXTRACTION_PRESETS as readonly string[]).includes(preset) ? (preset as SupportedIpExtractionPreset) : "direct";
+}
+
 export function parseIpExtractionPreset(value: unknown, fallback: IpExtractionPreset = "direct", label = "IP extraction preset"): IpExtractionPreset {
 	const preset = String(value ?? fallback)
 		.trim()
 		.toLowerCase() as IpExtractionPreset;
-	if (!Object.keys(IP_EXTRACTION_PRESETS).includes(preset)) {
+	if (!(SUPPORTED_IP_EXTRACTION_PRESETS as readonly string[]).includes(preset)) {
 		throw new Error(`Unsupported ${label}: ${preset}`);
 	}
 	return preset;

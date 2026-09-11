@@ -1,5 +1,5 @@
-import { IP_EXTRACTION_PRESETS, ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
-import { config, type RequestTransport } from "../config.ts";
+import { ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
+import { SUPPORTED_IP_EXTRACTION_PRESETS, config, supportedIpExtractionPreset, type RequestTransport } from "../config.ts";
 import { repository } from "../db/repository.ts";
 import type { AccessSessionRecord, SiteRecord } from "../types.ts";
 import { jsonResponse, normalizeHost, requestHost } from "../utils/http.ts";
@@ -91,8 +91,20 @@ export async function websocketUpstreamHeaders(
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
 	countryCode: string | null = null,
+	target: URL = new URL(request.url),
 ): Promise<Headers> {
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream, countryCode);
+	const headers = await upstreamHeaders(
+		request,
+		site,
+		ip,
+		session,
+		accessStatus,
+		transport,
+		authenticatedUsername,
+		sendUsernameToUpstream,
+		countryCode,
+		target,
+	);
 
 	// Bun creates a fresh upstream WebSocket handshake. Never reuse key/version
 	// or compression negotiation from the downstream handshake. Compression is
@@ -216,12 +228,12 @@ function flushPreOpenQueue(bridge: WebSocketBridgeData): void {
 }
 
 const websocketIpExtractors = new Map<IpExtractionPreset, ReturnType<typeof ipExtract>>(
-	(Object.keys(IP_EXTRACTION_PRESETS) as IpExtractionPreset[]).map((preset) => [preset, ipExtract(preset)]),
+	SUPPORTED_IP_EXTRACTION_PRESETS.map((preset) => [preset, ipExtract(preset)]),
 );
 
 export async function clientIpForUpgrade(request: Request, server: WebSocketUpgradeServer, preset: IpExtractionPreset): Promise<string> {
 	const directIp = server.requestIP(request)?.address;
-	const extractor = websocketIpExtractors.get(preset)!;
+	const extractor = websocketIpExtractors.get(supportedIpExtractionPreset(preset))!;
 	const context = { req: request, clientIp: directIp } as Parameters<typeof extractor>[0];
 
 	try {
@@ -634,8 +646,9 @@ export async function handleWebSocketUpgrade(
 		});
 	}
 	let target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
-	try {
-		const headers = await websocketUpstreamHeaders(
+	// Signed per target: each origin may have its own path prefix
+	const headersFor = (upstreamTarget: URL) =>
+		websocketUpstreamHeaders(
 			request,
 			site,
 			ip,
@@ -645,7 +658,10 @@ export async function handleWebSocketUpgrade(
 			accessUser?.username ?? null,
 			accessSettings.send_username_to_upstream === 1,
 			eventBase.countryCode ?? null,
+			upstreamTarget,
 		);
+	try {
+		const headers = await headersFor(target);
 		let upstream: WebSocket;
 		try {
 			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
@@ -677,7 +693,7 @@ export async function handleWebSocketUpgrade(
 			}
 			selectedOrigin = replacement;
 			target = websocketUpstreamUrl(site, request, selectedOrigin.origin_url);
-			upstream = await openUpstreamWebSocket(target, headers, request, route.websocket.connectTimeoutMs);
+			upstream = await openUpstreamWebSocket(target, await headersFor(target), request, route.websocket.connectTimeoutMs);
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 			Logger.info("WebSocket origin failover succeeded", {
 				requestId: eventBase.requestId,

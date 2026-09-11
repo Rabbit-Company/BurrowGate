@@ -50,6 +50,10 @@ export function upstreamUrlForOrigin(originUrl: string, request: Request): URL {
  * accepted response encodings explicit. Bun fetch() otherwise supplies its own
  * Accept-Encoding header when one is absent, which could make the origin send
  * an encoding that the downstream client never advertised.
+ *
+ * `target` is the URL the request is sent to. The signatures cover its path and
+ * query (what the origin actually receives), so an origin URL with a path
+ * prefix can still be verified. It defaults to the incoming request URL.
  */
 export async function upstreamHeaders(
 	request: Request,
@@ -61,6 +65,7 @@ export async function upstreamHeaders(
 	authenticatedUsername: string | null = null,
 	sendUsernameToUpstream = false,
 	countryCode: string | null = null,
+	target: URL = new URL(request.url),
 ): Promise<Headers> {
 	const headers = copyProxyHeaders(request.headers);
 
@@ -96,7 +101,6 @@ export async function upstreamHeaders(
 	const acceptedEncoding = request.headers.get("accept-encoding");
 	headers.set("accept-encoding", acceptedEncoding?.trim() || "identity");
 
-	const incoming = new URL(request.url);
 	const externalTransport = transport ?? requestTransport(request);
 	const externalHost = requestHost(request);
 	let externalPort = externalTransport === "https" ? "443" : "80";
@@ -118,7 +122,8 @@ export async function upstreamHeaders(
 	const timestamp = Math.floor(Date.now() / 1_000).toString();
 	const sessionId = session?.id ?? accessStatus;
 	const country = countryCode ?? UNKNOWN_COUNTRY_CODE;
-	const canonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, country, timestamp].join("\n");
+	const signedPath = target.pathname + target.search;
+	const canonical = [request.method, signedPath, sessionId, ip, country, timestamp].join("\n");
 
 	headers.set("x-burrowgate-verified", accessStatus === "bypass" ? "false" : "true");
 	headers.set("x-burrowgate-access-mode", accessStatus);
@@ -128,7 +133,7 @@ export async function upstreamHeaders(
 	headers.set("x-burrowgate-timestamp", timestamp);
 	headers.set("x-burrowgate-signature", await hmacSha256Hex(site.origin_signing_secret, canonical));
 	if (sendUsernameToUpstream && authenticatedUsername) {
-		const identityCanonical = [request.method, incoming.pathname + incoming.search, sessionId, ip, country, timestamp, authenticatedUsername].join("\n");
+		const identityCanonical = [request.method, signedPath, sessionId, ip, country, timestamp, authenticatedUsername].join("\n");
 		headers.set("x-burrowgate-authenticated-user", authenticatedUsername);
 		headers.set("x-burrowgate-identity-signature", await hmacSha256Hex(site.origin_signing_secret, identityCanonical));
 	}
@@ -274,7 +279,18 @@ export async function proxyRequest(
 	const incoming = new URL(request.url);
 	const transport = requestTransport(request);
 	const target = upstreamUrlForOrigin(originUrl, request);
-	const headers = await upstreamHeaders(request, site, ip, session, accessStatus, transport, authenticatedUsername, sendUsernameToUpstream, countryCode);
+	const headers = await upstreamHeaders(
+		request,
+		site,
+		ip,
+		session,
+		accessStatus,
+		transport,
+		authenticatedUsername,
+		sendUsernameToUpstream,
+		countryCode,
+		target,
+	);
 	applyHeaderPolicy(headers, httpPolicy.requestHeaders);
 	const bandwidth: BandwidthContext = { siteId: site.id, ip, countryCode, protocol: "http" };
 	const bodyCaptureActive = isBodyCaptureActive(httpPolicy.bodyCapture);

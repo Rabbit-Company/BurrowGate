@@ -1,6 +1,6 @@
 {
 	"name": "burrowgate",
-	"version": "1.48.0",
+	"version": "1.48.1",
 	"private": true,
 	"type": "module",
 	"description": "Self-hosted reverse proxy with route policies, GeoIP, rate limiting, managed WAF, browser challenges, TLS termination, and traffic monitoring.",
@@ -21,8 +21,8 @@
 		"@rabbit-company/openmetrics-client": "2.0.1",
 		"@rabbit-company/qrcode": "^1.1.0",
 		"@rabbit-company/totp": "^1.0.1",
-		"@rabbit-company/web": "^0.18.2",
-		"@rabbit-company/web-middleware": "^0.18.2",
+		"@rabbit-company/web": "^0.19.0",
+		"@rabbit-company/web-middleware": "^0.19.0",
 		"@simplewebauthn/server": "^14.0.1",
 		"acme-client": "5.4.0",
 		"chart.js": "4.5.1",
