@@ -238,7 +238,12 @@ describe("read-only monitoring API tokens", () => {
 				VALUES (${crypto.randomUUID()},${i === 4 ? "other-site" : site.id},'192.0.2.1','GET','/private-path',${i === 3 ? 503 : 200},${i === 2 ? "blocked" : "proxied"},${i * 100},'SI',${i < 3 ? "hit" : "miss"},${now - 1000})`;
 		}
 		const traffic = await monitoringData("traffic", 1, site.id, now);
-		expect(traffic.stats.map((s) => s.value)).toEqual([4, 1, 1]);
+		expect(Object.fromEntries(traffic.stats.map((stat) => [stat.label, stat.value]))).toEqual({
+			Requests: 4,
+			"Unique IPs": 1,
+			Blocked: 1,
+			"Server errors": 1,
+		});
 		expect(traffic.points.reduce((sum, p) => sum + (p.value ?? 0), 0)).toBe(4);
 		const cache = await monitoringData("cache", 1, site.id, now);
 		expect(cache.stats[0]!.value).toBe(75);

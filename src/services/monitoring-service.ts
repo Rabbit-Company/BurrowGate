@@ -1,4 +1,4 @@
-import { repository, type RequestScope } from "../db/repository.ts";
+import { repository, type RequestMetric, type RequestScope } from "../db/repository.ts";
 
 export const MONITORING_VIEWS = [
 	"overview",
@@ -18,6 +18,9 @@ export const MONITORING_VIEWS = [
 ] as const;
 export type MonitoringView = (typeof MONITORING_VIEWS)[number];
 
+export const MONITORING_METRICS = ["requests", "uniqueIps"] as const satisfies readonly RequestMetric[];
+export type MonitoringMetric = (typeof MONITORING_METRICS)[number];
+
 export const PATH_FILTERABLE_VIEWS: readonly MonitoringView[] = [
 	"overview",
 	"traffic",
@@ -31,12 +34,20 @@ export const PATH_FILTERABLE_VIEWS: readonly MonitoringView[] = [
 ];
 
 const REFUSAL_VIEWS: readonly MonitoringView[] = ["blocked", "protection"];
+const METRIC_VIEWS: readonly MonitoringView[] = ["overview", "traffic", "geography", "paths", "referrers"];
 const TOP_ROWS = 100;
 
 type Point = { bucket: number; value: number | null };
 type Stat = { label: string; value: number | null; unit: string };
 
-export async function monitoringData(view: MonitoringView, hours: number, siteId?: string, now = Date.now(), requestScope?: RequestScope) {
+export async function monitoringData(
+	view: MonitoringView,
+	hours: number,
+	siteId?: string,
+	now = Date.now(),
+	requestScope?: RequestScope,
+	metric: MonitoringMetric = "requests",
+) {
 	const since = now - hours * 3_600_000;
 	// Bound payloads and database grouping to roughly 48 intervals per screen.
 	const bucketMs = Math.max(60_000, Math.ceil((hours * 3_600_000) / 48 / 60_000) * 60_000);
@@ -48,6 +59,7 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 		throw new Error("pathPrefix and path are mutually exclusive: pass a subtree or a single page, not both");
 	if (requestScope?.successfulOnly === true && REFUSAL_VIEWS.includes(view))
 		throw new Error(`The ${view} view counts refused requests, so successfulOnly cannot be applied`);
+	if (metric === "uniqueIps" && !METRIC_VIEWS.includes(view)) throw new Error(`The ${view} view does not support metric=uniqueIps`);
 	const site = siteId ? await repository.siteById(siteId) : null;
 	if (siteId && !site) throw new Error("Unknown site ID");
 	let title = "Requests";
@@ -101,41 +113,64 @@ export async function monitoringData(view: MonitoringView, hours: number, siteId
 		points = metrics.series.map((p) => ({ bucket: p.bucket, value: p.blocked }));
 		stats = [stat("Blocked", metrics.totals.blocked), stat("Inspected", metrics.totals.inspected), stat("Would block", metrics.totals.monitored)];
 	} else if (view === "paths") {
-		title = "Top paths";
-		const paths = await repository.tabPathMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS);
+		const unique = metric === "uniqueIps";
+		title = unique ? "Top paths by unique IPs" : "Top paths";
+		unit = unique ? "unique IPs" : "requests";
+		const paths = await repository.tabPathMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS, metric);
 		rows = paths.map((entry) => ({ label: entry.path, value: entry.count }));
-		stats = [stat("Requests in top paths", sum(paths.map((entry) => entry.count))), stat("Paths shown", paths.length, "")];
+		stats = unique
+			? [stat("Pages shown", paths.length, "")]
+			: [stat("Requests in top paths", sum(paths.map((entry) => entry.count))), stat("Paths shown", paths.length, "")];
 	} else if (view === "referrers") {
-		title = "Top referrers";
-		const referrers = await repository.tabRefererMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS);
+		const unique = metric === "uniqueIps";
+		title = unique ? "Top referrers by unique IPs" : "Top referrers";
+		unit = unique ? "unique IPs" : "requests";
+		const referrers = await repository.tabRefererMetrics(siteId, since, now, "requests", requestScope, TOP_ROWS, metric);
 		rows = referrers.map((entry) => ({ label: entry.refererHost, value: entry.count }));
-		stats = [stat("Requests from top sources", sum(referrers.map((entry) => entry.count))), stat("Sources shown", referrers.length, "")];
+		stats = unique
+			? [stat("Sources shown", referrers.length, "")]
+			: [stat("Requests from top sources", sum(referrers.map((entry) => entry.count))), stat("Sources shown", referrers.length, "")];
 	} else if (view === "geography") {
-		title = "Top countries";
-		const countries = await repository.tabGeoMetrics(siteId, since, now, "requests", requestScope);
+		const unique = metric === "uniqueIps";
+		title = unique ? "Top countries by unique IPs" : "Top countries";
+		unit = unique ? "unique IPs" : "requests";
+		const countries = await repository.tabGeoMetrics(siteId, since, now, "requests", requestScope, metric);
 		rows = countries.map((c) => ({ label: c.countryCode, value: c.count }));
-		stats = [stat("Requests", sum(countries.map((c) => c.count))), stat("Countries", countries.filter((c) => c.countryCode !== "ZZ").length, "")];
+		stats = unique
+			? [stat("Countries", countries.filter((c) => c.countryCode !== "ZZ").length, "")]
+			: [stat("Requests", sum(countries.map((c) => c.count))), stat("Countries", countries.filter((c) => c.countryCode !== "ZZ").length, "")];
 	} else {
 		const metrics = await repository.trafficMetrics(siteId, since, now, bucketMs, requestScope);
+		const unique = metric === "uniqueIps";
 		const requests = sum(metrics.series.map((p) => p.requests));
 		const blocked = sum(metrics.series.map((p) => p.blocked));
 		const errors = sum(metrics.series.map((p) => p.errors));
-		title = view === "overview" ? "Traffic overview" : view === "blocked" ? "Blocked requests" : view === "latency" ? "Request latency" : "Request traffic";
-		unit = view === "latency" ? "ms" : "requests";
+		title = unique
+			? "Unique IPs over time"
+			: view === "overview"
+				? "Traffic overview"
+				: view === "blocked"
+					? "Blocked requests"
+					: view === "latency"
+						? "Request latency"
+						: "Request traffic";
+		unit = unique ? "unique IPs" : view === "latency" ? "ms" : "requests";
 		points = metrics.series.map((p) => ({
 			bucket: p.bucket,
-			value: view === "latency" ? (p.requests ? p.averageLatency : null) : view === "blocked" ? p.blocked : p.requests,
+			value: unique ? p.uniqueIps : view === "latency" ? (p.requests ? p.averageLatency : null) : view === "blocked" ? p.blocked : p.requests,
 		}));
-		stats =
-			view === "latency"
+		stats = unique
+			? [stat("Unique IPs", metrics.uniqueIps, ""), stat("Requests", requests, "requests")]
+			: view === "latency"
 				? [stat("Average latency", requests ? sum(metrics.series.map((p) => p.averageLatency * p.requests)) / requests : null)]
-				: [stat("Requests", requests), stat("Blocked", blocked), stat("Server errors", errors)];
+				: [stat("Requests", requests), stat("Unique IPs", metrics.uniqueIps, ""), stat("Blocked", blocked), stat("Server errors", errors)];
 	}
 	const available = points.map((p) => p.value).filter((value): value is number => value !== null && Number.isFinite(value));
 	const maximum = Math.max(0, ...available);
 	return {
 		schemaVersion: 1,
 		view,
+		metric,
 		title,
 		unit,
 		pathPrefix: requestScope?.prefix ?? null,

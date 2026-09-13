@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { Web } from "@rabbit-company/web";
 import { registerMonitoringRoutes } from "../src/routes/monitoring-routes.ts";
 import { buildMonitoringOpenApiDocument } from "../src/services/openapi-service.ts";
-import { MONITORING_VIEWS } from "../src/services/monitoring-service.ts";
+import { MONITORING_METRICS, MONITORING_VIEWS } from "../src/services/monitoring-service.ts";
 import { createAdminUser } from "../src/services/admin-user-service.ts";
 import { createApiToken } from "../src/services/api-token-service.ts";
 
@@ -79,6 +79,14 @@ describe("OpenAPI monitoring document", () => {
 		const view = parameters.find((parameter) => parameter.name === "view");
 
 		expect(view?.schema.enum).toEqual([...MONITORING_VIEWS]);
+	});
+
+	test("the documented metric list cannot drift from the one the service accepts", () => {
+		const doc = buildMonitoringOpenApiDocument("http://gateway.test");
+		const parameters = doc.paths["/_burrowgate/api/v1/monitoring"]?.get?.parameters ?? [];
+		const metric = parameters.find((parameter) => parameter.name === "metric");
+
+		expect(metric?.schema.enum).toEqual([...MONITORING_METRICS]);
 	});
 
 	test("the document is not writable", async () => {

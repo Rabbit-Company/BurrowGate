@@ -1,4 +1,4 @@
-import { MONITORING_VIEWS, PATH_FILTERABLE_VIEWS } from "../services/monitoring-service.ts";
+import { MONITORING_METRICS, MONITORING_VIEWS, PATH_FILTERABLE_VIEWS } from "../services/monitoring-service.ts";
 import { errorResponse, jsonResponse, ref, type JsonSchema, type PathItemObject } from "./types.ts";
 
 export const MONITORING_TOKEN_SECURITY: readonly Record<string, readonly string[]>[] = [{ ApiTokenMonitoring: [] }];
@@ -48,6 +48,7 @@ export const monitoringSchemas: Record<string, JsonSchema> = {
 		required: [
 			"schemaVersion",
 			"view",
+			"metric",
 			"title",
 			"scope",
 			"pathPrefix",
@@ -68,6 +69,7 @@ export const monitoringSchemas: Record<string, JsonSchema> = {
 		properties: {
 			schemaVersion: { type: "integer", const: 1, description: "Increments only on a breaking change to this shape." },
 			view: { type: "string", enum: [...MONITORING_VIEWS] },
+			metric: { type: "string", enum: [...MONITORING_METRICS], description: "The aggregation applied to request-backed charts and rows." },
 			title: { type: "string", description: "Human-readable name of the view, for a chart heading." },
 			scope: { type: "string", description: 'The site name, "All sites", or "System".' },
 			pathPrefix: {
@@ -133,6 +135,12 @@ export const monitoringPaths: Record<string, PathItemObject> = {
 					in: "query",
 					description: "Whole hours to look back. Defaults to 24.",
 					schema: { type: "integer", minimum: 1, maximum: MAX_HOURS, default: 24 },
+				},
+				{
+					name: "metric",
+					in: "query",
+					description: "Aggregate request-backed traffic, geography, path, and referrer results as raw requests or distinct client IPs. Defaults to requests.",
+					schema: { type: "string", enum: [...MONITORING_METRICS], default: "requests" },
 				},
 				{ name: "siteId", in: "query", description: "From the sites endpoint. Omit for all sites.", schema: { type: "string" } },
 				{

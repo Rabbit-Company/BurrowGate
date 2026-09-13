@@ -10,7 +10,7 @@
         "@rabbit-company/totp": "^1.0.1",
         "@rabbit-company/web": "^0.19.0",
         "@rabbit-company/web-middleware": "^0.19.0",
-        "@simplewebauthn/server": "^14.0.1",
+        "@simplewebauthn/server": "^14.0.2",
         "acme-client": "5.4.0",
         "chart.js": "4.5.1",
         "jose": "^6.2.12",
@@ -75,7 +75,7 @@
 
     "@rabbit-company/web-middleware": ["@rabbit-company/web-middleware@0.19.0", "", { "dependencies": { "@rabbit-company/burrowgate-auth": "^1.2.0", "@rabbit-company/logger": "^5.6.1", "@rabbit-company/rate-limiter": "^3.0.1" }, "peerDependencies": { "@rabbit-company/web": "^0.19.0" } }, "sha512-GfuCrlmG8VR6uXc5sYz9VZfwsbX1OWpR8amfnMXnEOFxPlPER+parOQN9TTZneHRprttnMobMNYUERU6jQ5aRg=="],
 
-    "@simplewebauthn/server": ["@simplewebauthn/server@14.0.1", "", { "dependencies": { "@hexagon/base64": "^1.1.27", "@levischuck/tiny-cbor": "^0.2.2", "@peculiar/asn1-android": "^2.6.0", "@peculiar/asn1-ecc": "^2.6.1", "@peculiar/asn1-rsa": "^2.6.1", "@peculiar/asn1-schema": "^2.6.0", "@peculiar/asn1-x509": "^2.6.1", "@peculiar/asn1-x509-post-quantum": "^2.9.4", "@peculiar/x509": "^2.1.0", "reflect-metadata": "^0.2.2" } }, "sha512-kjWgcm9NdSv+Tobo4Swxd1WnEawsBogpYFMjg9pKsVLPN3FdCmR6BipkL+DcPDgmQ7UKbbBZqRqn3E3YaA7NBw=="],
+    "@simplewebauthn/server": ["@simplewebauthn/server@14.0.2", "", { "dependencies": { "@hexagon/base64": "^1.1.27", "@levischuck/tiny-cbor": "^0.2.2", "@peculiar/asn1-android": "^2.6.0", "@peculiar/asn1-ecc": "^2.6.1", "@peculiar/asn1-rsa": "^2.6.1", "@peculiar/asn1-schema": "^2.6.0", "@peculiar/asn1-x509": "^2.6.1", "@peculiar/asn1-x509-post-quantum": "^2.9.4", "@peculiar/x509": "^2.1.0", "reflect-metadata": "^0.2.2" } }, "sha512-g+m/xv9/8FRWsDY22CwsTYRzt3WwS9fJrR3P7eY3Ti01FXH5FQ36Xn55v6D+5tb6VajlqOj4hywP/Vxsb6a3Sg=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 

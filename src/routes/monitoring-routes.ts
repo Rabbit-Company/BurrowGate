@@ -1,7 +1,7 @@
 import type { Web } from "@rabbit-company/web";
 import { repository } from "../db/repository.ts";
 import { authenticateApiToken, fullAccessTokenBoundaryResponse } from "../services/api-token-service.ts";
-import { monitoringData, MONITORING_VIEWS, type MonitoringView } from "../services/monitoring-service.ts";
+import { monitoringData, MONITORING_METRICS, MONITORING_VIEWS, type MonitoringMetric, type MonitoringView } from "../services/monitoring-service.ts";
 import { buildMonitoringOpenApiDocument } from "../services/openapi-service.ts";
 import { requestTransport } from "../config.ts";
 import { jsonResponse, requestHost } from "../utils/http.ts";
@@ -46,7 +46,9 @@ export function registerMonitoringRoutes(app: Web<any>): void {
 		const url = new URL(ctx.req.url);
 		const view = url.searchParams.get("view") ?? "overview";
 		const hours = Number(url.searchParams.get("hours") ?? 24);
+		const metric = url.searchParams.get("metric") ?? "requests";
 		if (!(MONITORING_VIEWS as readonly string[]).includes(view)) return response({ error: "Unknown view", views: MONITORING_VIEWS }, 400);
+		if (!(MONITORING_METRICS as readonly string[]).includes(metric)) return response({ error: "Unknown metric", metrics: MONITORING_METRICS }, 400);
 		if (!Number.isInteger(hours) || hours < 1 || hours > MAX_HOURS) return response({ error: `Hours must be a whole number between 1 and ${MAX_HOURS}` }, 400);
 
 		const readPath = (name: string): string | undefined | Response => {
@@ -71,12 +73,21 @@ export function registerMonitoringRoutes(app: Web<any>): void {
 			prefix === undefined && exact === undefined && !successfulOnly ? undefined : { prefix, exact, successfulOnly: successfulOnly || undefined };
 
 		try {
-			return response(await monitoringData(view as MonitoringView, hours, url.searchParams.get("siteId")?.trim() || undefined, undefined, requestScope));
+			return response(
+				await monitoringData(
+					view as MonitoringView,
+					hours,
+					url.searchParams.get("siteId")?.trim() || undefined,
+					undefined,
+					requestScope,
+					metric as MonitoringMetric,
+				),
+			);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 			if (
 				["Unknown site ID", "System views apply to the whole instance (leave Site ID empty)"].includes(error.message) ||
-				/pathPrefix|successfulOnly/.test(error.message)
+				/pathPrefix|successfulOnly|metric=/.test(error.message)
 			)
 				return response({ error: error.message }, 400);
 			throw error;

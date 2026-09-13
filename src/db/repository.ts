@@ -256,6 +256,7 @@ export interface StreamBandwidthRow {
 export interface TrafficMetricPoint {
 	bucket: number;
 	requests: number;
+	uniqueIps: number;
 	blocked: number;
 	errors: number;
 	averageLatency: number;
@@ -290,6 +291,7 @@ export function fillTrafficMetricSeries(rows: TrafficMetricPoint[], startBucket:
 			byBucket.get(bucket) ?? {
 				bucket,
 				requests: 0,
+				uniqueIps: 0,
 				blocked: 0,
 				errors: 0,
 				averageLatency: 0,
@@ -429,6 +431,8 @@ export interface RequestScope {
 	exact?: string;
 	successfulOnly?: boolean;
 }
+
+export type RequestMetric = "requests" | "uniqueIps";
 
 function pathWithoutQuery(path: string): string {
 	const query = path.indexOf("?");
@@ -2703,6 +2707,7 @@ export const repository = {
 		series: TrafficMetricPoint[];
 		decisions: Array<{ decision: string; count: number }>;
 		methods: Array<{ method: string; count: number }>;
+		uniqueIps: number;
 	}> {
 		const siteFilter = siteScopeFilter(siteId);
 		const pathFilter = requestScopeFilter(requestScope);
@@ -2713,7 +2718,8 @@ export const repository = {
 		const rows = (await db`
       SELECT
         ${bucketExpression} * ${bucketMs} AS bucket,
-        COUNT(*) AS requests,
+		COUNT(*) AS requests,
+		COUNT(DISTINCT ip) AS unique_ips,
 		SUM(CASE WHEN decision IN ('blocked','route-blocked','bot-blocked','managed-protection-blocked','websocket-policy-denied','rate-limited','request-limited') THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END) AS errors,
         COALESCE(AVG(latency_ms), 0) AS average_latency
@@ -2721,7 +2727,14 @@ export const repository = {
       WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter}
       GROUP BY ${bucketExpression}
       ORDER BY bucket ASC
-    `) as Array<{ bucket: number | string; requests: number | string; blocked: number | string; errors: number | string; average_latency: number | string }>;
+		`) as Array<{
+			bucket: number | string;
+			requests: number | string;
+			unique_ips: number | string;
+			blocked: number | string;
+			errors: number | string;
+			average_latency: number | string;
+		}>;
 		const decisions = (await db`
       SELECT decision, COUNT(*) AS count
       FROM request_events
@@ -2737,11 +2750,17 @@ export const repository = {
       ORDER BY count DESC
       LIMIT 15
     `) as Array<{ method: string; count: number | string }>;
+		const [uniqueIpRow] = (await db`
+			SELECT COUNT(DISTINCT ip) AS count
+			FROM request_events
+			WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter}
+		`) as Array<{ count: number | string }>;
 		return {
 			series: fillTrafficMetricSeries(
 				rows.map((row) => ({
 					bucket: toNumber(row.bucket),
 					requests: toNumber(row.requests),
+					uniqueIps: toNumber(row.unique_ips),
 					blocked: toNumber(row.blocked),
 					errors: toNumber(row.errors),
 					averageLatency: Math.round(toNumber(row.average_latency)),
@@ -2752,6 +2771,7 @@ export const repository = {
 			),
 			decisions: decisions.map((row) => ({ decision: row.decision, count: toNumber(row.count) })),
 			methods: methods.map((row) => ({ method: row.method, count: toNumber(row.count) })),
+			uniqueIps: toNumber(uniqueIpRow?.count),
 		};
 	},
 	async cacheMetrics(
@@ -3491,6 +3511,7 @@ export const repository = {
 		until: number,
 		scope: TabMetricsScope,
 		requestScope?: RequestScope,
+		metric: RequestMetric = "requests",
 	): Promise<Array<{ countryCode: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
@@ -3523,8 +3544,9 @@ export const repository = {
 			return rows.map((row) => ({ countryCode: row.country_code, count: toNumber(row.count) }));
 		}
 		const scopeFilter = tabScopeFilter(scope);
+		const count = metric === "uniqueIps" ? db`COUNT(DISTINCT ip)` : db`COUNT(*)`;
 		const rows = (await db`
-      SELECT COALESCE(country_code, 'ZZ') AS country_code, COUNT(*) AS count
+			SELECT COALESCE(country_code, 'ZZ') AS country_code, ${count} AS count
       FROM request_events
       WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter} ${scopeFilter}
       GROUP BY COALESCE(country_code, 'ZZ')
@@ -3569,13 +3591,15 @@ export const repository = {
 		scope: Exclude<TabMetricsScope, "access" | "bandwidth" | "sessions">,
 		requestScope?: RequestScope,
 		limit = 25,
+		metric: RequestMetric = "requests",
 	): Promise<Array<{ refererHost: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
 		const pathFilter = requestScopeFilter(requestScope);
 		const scopeFilter = tabScopeFilter(scope);
+		const count = metric === "uniqueIps" ? db`COUNT(DISTINCT ip)` : db`COUNT(*)`;
 		const rows = (await db`
-      SELECT referer_host, COUNT(*) AS count
+			SELECT referer_host, ${count} AS count
       FROM request_events
       WHERE created_at >= ${since} AND created_at <= ${until} ${siteFilter} ${pathFilter} ${scopeFilter}
         AND referer_host IS NOT NULL AND referer_host != '(same site)'
@@ -3670,13 +3694,15 @@ export const repository = {
 		scope: "protection" | "requests",
 		requestScope?: RequestScope,
 		limit = 25,
+		metric: RequestMetric = "requests",
 	): Promise<Array<{ path: string; count: number }>> {
 		if (Array.isArray(siteScope) && siteScope.length === 0) return [];
 		const siteFilter = siteScopeFilter(siteScope);
 		const pathFilter = requestScopeFilter(requestScope);
 		const scopeFilter = tabScopeFilter(scope);
+		const count = metric === "uniqueIps" ? db`COUNT(DISTINCT ip)` : db`COUNT(*)`;
 		const rows = (await db`
-      SELECT path_only AS path, COUNT(*) AS count
+			SELECT path_only AS path, ${count} AS count
       FROM request_events
       WHERE created_at >= ${since} AND created_at <= ${until} AND path_only IS NOT NULL ${siteFilter} ${pathFilter} ${scopeFilter}
       GROUP BY path_only

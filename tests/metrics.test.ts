@@ -3,7 +3,7 @@ import { fillCacheMetricSeries, fillTrafficMetricSeries, repository, type CacheM
 import { createSite } from "../src/services/site-service.ts";
 
 function point(bucket: number, requests: number): TrafficMetricPoint {
-	return { bucket, requests, blocked: 0, errors: 0, averageLatency: requests ? 25 : 0 };
+	return { bucket, requests, uniqueIps: requests ? 1 : 0, blocked: 0, errors: 0, averageLatency: requests ? 25 : 0 };
 }
 
 describe("traffic metric bucket completion", () => {
@@ -18,6 +18,7 @@ describe("traffic metric bucket completion", () => {
 		expect(series[1]).toEqual({
 			bucket: start + minute,
 			requests: 0,
+			uniqueIps: 0,
 			blocked: 0,
 			errors: 0,
 			averageLatency: 0,

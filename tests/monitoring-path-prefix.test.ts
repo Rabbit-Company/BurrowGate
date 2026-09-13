@@ -13,12 +13,12 @@ const HOUR = 3_600_000;
 
 let siteId: string;
 
-function event(path: string, country: string, referer: string | null, at: number, status = 200): RequestEventRecord {
+function event(path: string, country: string, referer: string | null, at: number, status = 200, ip = "203.0.113.10"): RequestEventRecord {
 	return {
 		id: `evt-${Math.random().toString(36).slice(2)}-${at}`,
 		site_id: siteId,
 		session_id: null,
-		ip: "203.0.113.10",
+		ip,
 		method: "GET",
 		path,
 		status,
@@ -75,6 +75,13 @@ describe("monitoring pathPrefix", () => {
 		expect(requests(all)).toBe(36);
 		expect(requests(alice)).toBe(22);
 		expect(requests(bob)).toBe(7);
+	});
+
+	test("traffic reports one unique IP despite repeated page views", async () => {
+		const alice = await monitoringData("overview", 24, siteId, NOW, { prefix: "/creator/alice", successfulOnly: true });
+
+		expect(alice.stats.find((stat) => stat.label === "Requests")?.value).toBe(13);
+		expect(alice.stats.find((stat) => stat.label === "Unique IPs")?.value).toBe(1);
 	});
 
 	test("top paths are scoped, and never leak another tenant", async () => {
@@ -269,6 +276,56 @@ describe("monitoring path scoping with query strings", () => {
 	});
 });
 
+describe("monitoring metric selector", () => {
+	let metricSiteId: string;
+
+	beforeAll(async () => {
+		metricSiteId = (await createSite({ name: "Metrics", publicHost: `metrics-${crypto.randomUUID()}.test`, originUrl: "http://origin.test" })).site.id;
+		const at = NOW - HOUR / 2;
+		const record = (path: string, country: string, referer: string | null, ip: string) =>
+			repository.insertEvent({ ...event(path, country, referer, at, 200, ip), site_id: metricSiteId });
+
+		for (let i = 0; i < 3; i++) await record("/creator/alice/post-one", "SI", "news.example", "203.0.113.10");
+		await record("/creator/alice/post-one", "SI", "news.example", "203.0.113.11");
+		for (let i = 0; i < 2; i++) await record("/creator/alice/post-two", "DE", "social.example", "203.0.113.10");
+		await record("/creator/alice", "SI", null, "203.0.113.12");
+	});
+
+	const scope = { prefix: "/creator/alice", successfulOnly: true };
+
+	test("paths switch from page views to distinct IPs per page", async () => {
+		const requests = await monitoringData("paths", 24, metricSiteId, NOW, scope);
+		const uniqueIps = await monitoringData("paths", 24, metricSiteId, NOW, scope, "uniqueIps");
+
+		expect(requests.rows.find((row) => row.label.endsWith("post-one"))?.value).toBe(4);
+		expect(uniqueIps.rows.find((row) => row.label.endsWith("post-one"))?.value).toBe(2);
+		expect(uniqueIps.rows.find((row) => row.label.endsWith("post-two"))?.value).toBe(1);
+	});
+
+	test("countries count distinct IPs within each country", async () => {
+		const uniqueIps = await monitoringData("geography", 24, metricSiteId, NOW, scope, "uniqueIps");
+
+		expect(uniqueIps.rows.find((row) => row.label === "SI")?.value).toBe(3);
+		expect(uniqueIps.rows.find((row) => row.label === "DE")?.value).toBe(1);
+	});
+
+	test("referrers count distinct IPs within each source", async () => {
+		const requests = await monitoringData("referrers", 24, metricSiteId, NOW, scope);
+		const uniqueIps = await monitoringData("referrers", 24, metricSiteId, NOW, scope, "uniqueIps");
+
+		expect(requests.rows.find((row) => row.label === "news.example")?.value).toBe(4);
+		expect(uniqueIps.rows.find((row) => row.label === "news.example")?.value).toBe(2);
+	});
+
+	test("traffic returns distinct IPs per bucket and echoes the metric", async () => {
+		const uniqueIps = await monitoringData("overview", 24, metricSiteId, NOW, scope, "uniqueIps");
+
+		expect(uniqueIps.metric).toBe("uniqueIps");
+		expect(uniqueIps.maximum).toBe(3);
+		expect(uniqueIps.stats.find((stat) => stat.label === "Unique IPs")?.value).toBe(3);
+	});
+});
+
 describe("monitoring pathPrefix over HTTP", () => {
 	const app = new Web();
 	registerMonitoringRoutes(app);
@@ -352,6 +409,19 @@ describe("monitoring pathPrefix over HTTP", () => {
 		expect(all.body.successfulOnly).toBe(false);
 		expect(readers.body.successfulOnly).toBe(true);
 		expect(readers.body.stats.find((s: { label: string }) => s.label === "Requests").value).toBe(13);
+	});
+
+	test("the route forwards and echoes the selected metric", async () => {
+		const uniqueIps = await get(`view=paths&hours=24&siteId=${siteId}&pathPrefix=/creator/alice&successfulOnly=true&metric=uniqueIps`);
+
+		expect(uniqueIps.status).toBe(200);
+		expect(uniqueIps.body.metric).toBe("uniqueIps");
+		expect(uniqueIps.body.rows.find((row: { label: string }) => row.label.endsWith("post-one")).value).toBe(1);
+	});
+
+	test("an unknown or inapplicable metric is refused", async () => {
+		expect((await get(`view=paths&hours=24&siteId=${siteId}&metric=people`)).status).toBe(400);
+		expect((await get(`view=cache&hours=24&siteId=${siteId}&metric=uniqueIps`)).status).toBe(400);
 	});
 
 	test("asking for both a prefix and an exact path is a 400", async () => {
