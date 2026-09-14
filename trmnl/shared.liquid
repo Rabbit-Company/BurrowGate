@@ -109,14 +109,14 @@
 {%- assign title_size = 'title' -%}{%- if compact -%}{%- assign title_size = 'title title--small' -%}{%- endif -%}
 {%- assign scope_size = 'label' -%}{%- if narrow -%}{%- assign scope_size = 'label label--small' -%}{%- endif -%}
 {%- assign stats_gap = 'gap--large' -%}{%- if narrow -%}{%- assign stats_gap = 'gap--small' -%}{%- endif -%}
-{%- assign value_size = 'value' -%}{%- if layout == 'half_vertical' -%}{%- assign value_size = 'value value--small' -%}{%- elsif compact -%}{%- assign value_size = 'value value--xsmall' -%}{%- endif -%}
+{%- assign value_size = 'value lg:value--large' -%}{%- if layout == 'half_vertical' -%}{%- assign value_size = 'value value--small' -%}{%- elsif compact -%}{%- assign value_size = 'value value--xsmall' -%}{%- endif -%}
 {%- assign stat_label_size = 'label' -%}{%- if layout == 'quadrant' -%}{%- assign stat_label_size = 'label label--small' -%}{%- endif -%}
 {%- assign table_size = 'table--small' -%}{%- if compact -%}{%- assign table_size = 'table--xsmall' -%}{%- endif -%}
 {%- assign stats_fill = '' -%}
 {%- if compact and hasData != false and view != 'geography' -%}
   {%- assign stats_fill = 'bg-stats-fill' -%}
-  {%- assign value_size = 'value lg:value--xsmall' -%}
-  {%- if layout == 'quadrant' -%}{%- assign value_size = 'value value--small lg:value--xsmall' -%}{%- assign stat_label_size = 'label lg:label--small' -%}{%- endif -%}
+  {%- assign value_size = 'value lg:value--small' -%}
+  {%- if layout == 'quadrant' -%}{%- assign value_size = 'value value--small lg:value--small' -%}{%- assign stat_label_size = 'label lg:label--small' -%}{%- endif -%}
 {%- endif -%}
 <div class="bg-monitor bg-{{ layout }} flex flex--col w--full h--full {{ monitor_gap }}">
     {% if schemaVersion == 1 %}
@@ -134,6 +134,8 @@
             {% when 'GiB' %}{% assign stat_byte_multiplier = 1073741824 %}
             {% when 'TiB' %}{% assign stat_byte_multiplier = 1099511627776 %}
           {% endcase %}
+          {% assign stat_is_count = false %}
+          {% if stat.unit == 'requests' or stat.unit == 'unique IPs' or stat.unit == '' %}{% assign stat_is_count = true %}{% endif %}
           <div class="grow basis--0 w--min-[0px]">
             <div class="bg-number {{ value_size }} value--tnums">
               {% if stat.value == nil %}
@@ -149,6 +151,7 @@
               {% elsif stat.value >= 1000000000 %}{{ stat.value | divided_by: 1000000000.0 | round: 1 }}B <span class="label label--small ">{{ stat.unit | escape }}</span>
               {% elsif stat.value >= 1000000 %}{{ stat.value | divided_by: 1000000.0 | round: 1 }}M <span class="label label--small ">{{ stat.unit | escape }}</span>
               {% elsif stat.value >= 10000 %}{{ stat.value | divided_by: 1000.0 | round: 1 }}k <span class="label label--small ">{{ stat.unit | escape }}</span>
+              {% elsif stat_is_count %}{{ stat.value | round: 0 }} <span class="label label--small ">{{ stat.unit | escape }}</span>
               {% else %}{{ stat.value | round: 1 }} <span class="label label--small ">{{ stat.unit | escape }}</span>
               {% endif %}
             </div>
@@ -435,6 +438,8 @@
             {% when 'GiB' %}{% assign chart_byte_multiplier = 1073741824 %}
             {% when 'TiB' %}{% assign chart_byte_multiplier = 1099511627776 %}
           {% endcase %}
+          {% assign chart_is_count = false %}
+          {% if unit == 'requests' or unit == 'unique IPs' %}{% assign chart_is_count = true %}{% endif %}
           {% assign chart_display_unit = unit %}
           {% assign chart_ratio = 1.0 %}
           {% if chart_byte_multiplier > 0 %}
@@ -483,7 +488,7 @@
             <div class="stretch-y flex flex--col flex--between text--right text--small w--min-[48px]">
               {% for tick in ticks %}
                 {% assign tick_value = chart_maximum | times: tick | divided_by: 100.0 %}
-                <span>{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
+                <span>{% if chart_byte_multiplier > 0 %}{% assign display_tick = tick_value | times: chart_ratio %}{% if display_tick >= 100 %}{{ display_tick | round: 0 }}{% elsif display_tick >= 10 %}{{ display_tick | round: 1 }}{% else %}{{ display_tick | round: 2 }}{% endif %}{% elsif chart_is_count %}{% if tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% else %}{{ tick_value | round: 0 }}{% endif %}{% elsif tick_value >= 1000000000 %}{{ tick_value | divided_by: 1000000000.0 | round: 2 }}B{% elsif tick_value >= 1000000 %}{{ tick_value | divided_by: 1000000.0 | round: 2 }}M{% elsif tick_value >= 10000 %}{{ tick_value | divided_by: 1000.0 | round: 2 }}k{% elsif tick_value >= 1 %}{{ tick_value | round: 2 }}{% else %}{{ tick_value | round: 4 }}{% endif %}</span>
               {% endfor %}
             </div>
           </div>
