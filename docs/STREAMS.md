@@ -11,12 +11,15 @@ Each stream contains:
 - a forward host and port;
 - TCP, UDP, or both protocols;
 - optional PROXY protocol client-address forwarding;
+- optional incoming PROXY v1/v2 from trusted load balancers on TCP.
 - an optional certificate for incoming TCP TLS termination;
 - monitoring-data retention from 1 to 365 days.
 
 TCP and UDP use separate operating-system port namespaces, so one stream may enable both on the same numeric port. Two streams cannot claim the same protocol and incoming port. TCP stream ports also cannot conflict with BurrowGate's HTTP or HTTPS listener.
 
-Changing the incoming port, forward host/port, certificate, PROXY protocol mode, or a TCP/UDP toggle swaps the stream's listener. That can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. See [`SCHEDULED_CHANGES.md`](SCHEDULED_CHANGES.md).
+Changing the incoming port, forward host/port, certificate, outgoing or incoming PROXY protocol settings, or a TCP/UDP toggle swaps the stream's listener. That can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. See [`SCHEDULED_CHANGES.md`](SCHEDULED_CHANGES.md).
+
+For load balancer traffic coming into BurrowGate, enable **Accept PROXY protocol from a load balancer** and supply its trusted IPs/CIDRs. BurrowGate reads v1 and v2 headers before TLS or TCP application data and uses the original client IP for policy checks and monitoring. Configure outgoing forwarding separately as described below. Direct connections remain available unless `BG_PROXY_PROTOCOL_ALLOW_DIRECT=false`. See [`PROXY_PROTOCOL.md`](PROXY_PROTOCOL.md).
 
 ## Client IP forwarding
 

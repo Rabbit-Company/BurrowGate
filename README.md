@@ -318,6 +318,10 @@ BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPD
 | `BG_HTTPS_PORT`                           | `443`                                | Internal HTTPS port                                                                             |
 | `BG_HTTPS_PUBLIC_PORT`                    | `443`                                | Public HTTPS port used in redirects                                                             |
 | `BG_TLS_LISTENER_DRAIN_TIMEOUT_MS`        | `5000`                               | Grace period before the previous HTTPS listener is force-closed after a certificate reload      |
+| `BG_HTTP_PROXY_PROTOCOL`                  | `false`                              | Accept incoming PROXY v1/v2 on the shared HTTP listener from trusted load balancers             |
+| `BG_HTTPS_PROXY_PROTOCOL`                 | `false`                              | Accept incoming PROXY v1/v2 before TLS on the shared HTTPS listener                             |
+| `BG_PROXY_PROTOCOL_TRUSTED_CIDRS`         | empty                                | Load balancer IPs or CIDRs, separated by commas or whitespace. Required when enabled            |
+| `BG_PROXY_PROTOCOL_ALLOW_DIRECT`          | `true`                               | Allow direct connections alongside incoming PROXY traffic on Sites and Streams                  |
 | `BG_HTTP2_ENABLED`                        | `false`                              | (Experimental) Serve HTTP/2 over the same HTTPS port/connection via TLS ALPN; see `docs/TLS.md` |
 | `BG_HTTP3_ENABLED`                        | `false`                              | (Experimental) Add a UDP HTTP/3 listener next to HTTPS; see `docs/TLS.md`                       |
 | `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                            |
@@ -638,7 +642,9 @@ With the default `network_mode: host` Compose configuration, every stream port y
 
 Selecting a certificate terminates incoming TCP TLS and forwards decrypted bytes. Leaving the certificate empty performs raw TCP forwarding and therefore supports TLS passthrough. TLS/DTLS termination is not available for UDP.
 
-Changing the incoming port, forward host/port, certificate, PROXY protocol mode, or a TCP/UDP toggle swaps the stream's listener; that can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. Every other stream setting still applies immediately. See [`docs/SCHEDULED_CHANGES.md`](docs/SCHEDULED_CHANGES.md).
+Changing the incoming port, forward host/port, certificate, outgoing or incoming PROXY protocol settings, or a TCP/UDP toggle swaps the stream's listener. That can be scheduled for a chosen time instead of applying immediately, so it doesn't land in the middle of active connections. Every other stream setting still applies immediately. See [`docs/SCHEDULED_CHANGES.md`](docs/SCHEDULED_CHANGES.md).
+
+Sites and TCP Streams can also accept incoming PROXY v1/v2 from a trusted load balancer, including before TLS termination. The forwarded client IP is used for logging, network policies, rate limits, and upstream forwarding. Direct HA/admin and health-check connections remain available by default. See [`docs/PROXY_PROTOCOL.md`](docs/PROXY_PROTOCOL.md) for load balancer configuration.
 
 See [`docs/STREAMS.md`](docs/STREAMS.md).
 

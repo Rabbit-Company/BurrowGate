@@ -42,7 +42,7 @@ Because UniFi rejects an empty traffic matching list, an otherwise-empty list is
 
 ### Local nftables
 
-Works on any Linux host, including the VPS BurrowGate itself runs on - useful specifically because [Hetzner Cloud Firewall and similar cloud "firewall" products are allow-list only](https://docs.hetzner.cloud/) and have no primitive for blocking a specific source IP, so local packet filtering is the only way to actually drop traffic before it reaches BurrowGate's process on those providers.
+Works on any Linux host, including the VPS running BurrowGate. Local packet filtering can block specific source IPs before traffic reaches BurrowGate, even when an upstream firewall supports only allow rules.
 
 BurrowGate creates and owns an isolated `inet burrowgate` table with its own chain (hooked into `input`) and IPv4/IPv6 sets, entirely separate from any existing `ufw`, `firewalld`, or other nftables configuration on the host - it never touches rules outside its own table. Deleting the provider removes the whole table in one step.
 

@@ -4,6 +4,8 @@ import { bootstrapTlsOption, type TlsCertificateOption } from "./bootstrap-tls-s
 import { certificateTlsOptions } from "./certificate-service.ts";
 import { handleWebSocketUpgrade, isWebSocketUpgrade, websocketProxyHandler, type WebSocketUpgradeServer } from "./websocket-proxy-service.ts";
 import { Logger } from "../logger.ts";
+import { ProxyProtocolIngress } from "./proxy-protocol-ingress.ts";
+import { normalizeProxyAddress, setIncomingProxyConnection } from "./incoming-proxy-protocol.ts";
 
 interface StoppableServer {
 	stop(closeActiveConnections?: boolean): Promise<void>;
@@ -37,15 +39,34 @@ export class TlsListenerManager {
 	private httpsServer: StoppableServer | null = null;
 	private reloading: Promise<void> | null = null;
 	private readonly drainingServers = new Set<StoppableServer>();
+	private httpIngress: ProxyProtocolIngress | null = null;
+	private httpsIngress: ProxyProtocolIngress | null = null;
+	private readonly unregisterReload: () => void;
 
 	constructor(
 		private readonly app: Web<any>,
 		private readonly dependencies: ListenerDependencies = {},
 	) {
-		registerTlsReloadHandler(async () => await this.reloadHttps());
+		this.unregisterReload = registerTlsReloadHandler(async () => await this.reloadHttps());
 	}
 
 	private async dispatch(request: Request, server: WebSocketUpgradeServer, transport: RequestTransport): Promise<Response | undefined> {
+		const ingress = transport === "https" ? this.httpsIngress : this.httpIngress;
+		if (ingress) {
+			const peer = server.requestIP(request) as { address: string; port: number } | null;
+			if (!peer) return new Response("Invalid connection", { status: 400 });
+			try {
+				const connection = await ingress.connectionForPeer(peer.port, (server as unknown as { port: number }).port);
+				if (connection.proxyProtocol) setIncomingProxyConnection(request, connection);
+				const original = server;
+				server = {
+					requestIP: () => ({ address: normalizeProxyAddress(connection.sourceAddress), port: connection.sourcePort }),
+					upgrade: original.upgrade.bind(original),
+				};
+			} catch {
+				return new Response("Invalid connection", { status: 400 });
+			}
+		}
 		if (isWebSocketUpgrade(request)) {
 			// Bun requires the original Request object for server.upgrade(). Pass the
 			// listener transport separately rather than cloning the upgrade request.
@@ -55,12 +76,17 @@ export class TlsListenerManager {
 		return await withRequestTransport(transport, async () => await web.handleBun(request, server));
 	}
 
-	private serve(options: { port: number; tls?: Bun.TLSOptions | Bun.TLSOptions[]; reusePort?: boolean }): StoppableServer {
+	private async serve(options: { port: number; tls?: Bun.TLSOptions | Bun.TLSOptions[]; reusePort?: boolean }): Promise<StoppableServer> {
 		const transport: RequestTransport = options.tls ? "https" : "http";
+		const proxyProtocol = config[transport].proxyProtocol;
+		if (proxyProtocol && !config.proxyProtocol.trustedCidrs.length)
+			throw new Error("BG_PROXY_PROTOCOL_TRUSTED_CIDRS is required when incoming PROXY protocol is enabled");
+		if (proxyProtocol && options.tls && config.https.http3Enabled)
+			throw new Error("Incoming PROXY protocol supports TCP; disable BG_HTTP3_ENABLED for this HTTPS listener");
 		const serve = this.dependencies.serve ?? ((serveOptions: Bun.Serve.Options<any>) => Bun.serve(serveOptions));
-		return serve({
-			hostname: config.host,
-			port: options.port,
+		const backend = serve({
+			hostname: proxyProtocol ? "127.0.0.1" : config.host,
+			port: proxyProtocol ? 0 : options.port,
 			idleTimeout: REQUEST_IDLE_TIMEOUT_SECONDS,
 			...(options.reusePort ? { reusePort: true } : {}),
 			...(options.tls ? { tls: options.tls } : {}),
@@ -69,6 +95,29 @@ export class TlsListenerManager {
 			fetch: async (request, server) => await this.dispatch(request, server as unknown as WebSocketUpgradeServer, transport),
 			websocket: websocketProxyHandler,
 		});
+		if (proxyProtocol) {
+			const port = (backend as StoppableServer & { port: number }).port;
+			const previous = transport === "https" ? this.httpsIngress : this.httpIngress;
+			if (previous) previous.setTarget(port);
+			else {
+				const ingress = new ProxyProtocolIngress({
+					hostname: config.host,
+					port: options.port,
+					targetPort: port,
+					trustedCidrs: config.proxyProtocol.trustedCidrs,
+					allowDirect: config.proxyProtocol.allowDirect,
+				});
+				try {
+					await ingress.start();
+				} catch (error) {
+					await backend.stop(true);
+					throw error;
+				}
+				if (transport === "https") this.httpsIngress = ingress;
+				else this.httpIngress = ingress;
+			}
+		}
+		return backend;
 	}
 
 	async start(): Promise<void> {
@@ -76,7 +125,7 @@ export class TlsListenerManager {
 			throw new Error("At least one of BG_HTTP_ENABLED or BG_HTTPS_ENABLED must be true");
 		}
 		if (config.http.enabled) {
-			this.httpServer = this.serve({ port: config.http.port });
+			this.httpServer = await this.serve({ port: config.http.port });
 			Logger.info(`HTTP listening on http://${config.host}:${config.http.port}`);
 		}
 		if (config.https.enabled) await this.reloadHttps();
@@ -137,7 +186,7 @@ export class TlsListenerManager {
 			// Every HTTPS listener uses SO_REUSEPORT so a replacement can bind before
 			// the current listener is drained. Starting the replacement first prevents
 			// a failed reload from taking port 443 offline.
-			replacement = this.serve({
+			replacement = await this.serve({
 				port: config.https.port,
 				tls,
 				reusePort: true,
@@ -158,5 +207,11 @@ export class TlsListenerManager {
 		// itself be running on the previous HTTPS listener and must be allowed to
 		// finish before that listener is force-closed.
 		if (previous) this.drainServer(previous);
+	}
+
+	async stop(): Promise<void> {
+		this.unregisterReload();
+		await Promise.all([this.httpIngress?.stop(true), this.httpsIngress?.stop(true)]);
+		await Promise.all([this.httpServer?.stop(true), this.httpsServer?.stop(true), ...[...this.drainingServers].map((server) => server.stop(true))]);
 	}
 }

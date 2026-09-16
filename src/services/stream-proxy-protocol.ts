@@ -25,7 +25,7 @@ function addressBytes(value: bigint, byteLength: number): Buffer {
 	return result;
 }
 
-function canonicalIpv6(value: bigint): string {
+export function canonicalIpv6(value: bigint): string {
 	const groups: number[] = [];
 	for (let shift = 112n; shift >= 0n; shift -= 16n) groups.push(Number((value >> shift) & 0xffffn));
 	let bestStart = -1;

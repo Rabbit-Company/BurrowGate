@@ -13,6 +13,8 @@ export const streamSchemas: Record<string, JsonSchema> = {
 			"tcpEnabled",
 			"udpEnabled",
 			"proxyProtocol",
+			"incomingProxyProtocol",
+			"trustedProxyCidrs",
 			"certificateId",
 			"eventRetentionDays",
 			"defaultIpAction",
@@ -35,6 +37,17 @@ export const streamSchemas: Record<string, JsonSchema> = {
 			tcpEnabled: { type: "boolean" },
 			udpEnabled: { type: "boolean", description: "At least one of tcpEnabled/udpEnabled is always true." },
 			proxyProtocol: { type: "string", enum: ["disabled", "v1", "v2"], description: "v1 is only available when TCP is enabled; use v2 for UDP." },
+			incomingProxyProtocol: {
+				type: "boolean",
+				description:
+					"Accepts incoming PROXY v1 or v2 before TCP application data or TLS, only from trustedProxyCidrs. Direct connections follow BG_PROXY_PROTOCOL_ALLOW_DIRECT.",
+			},
+			trustedProxyCidrs: {
+				type: "array",
+				maxItems: 256,
+				items: { type: "string" },
+				description: "Trusted load balancer IP addresses or CIDRs. Must be nonempty when incomingProxyProtocol is enabled.",
+			},
 			certificateId: { type: ["string", "null"], description: "Only set (and only usable) when TCP is enabled." },
 			eventRetentionDays: { type: "integer", minimum: 1, maximum: 365 },
 			defaultIpAction: { type: "string", enum: ["inherit", "allow", "block"] },
@@ -88,6 +101,18 @@ export const streamSchemas: Record<string, JsonSchema> = {
 			tcpEnabled: { type: "boolean", default: true },
 			udpEnabled: { type: "boolean", default: false },
 			proxyProtocol: { type: "string", enum: ["disabled", "v1", "v2"], default: "disabled" },
+			incomingProxyProtocol: {
+				type: "boolean",
+				default: false,
+				description:
+					"Requires TCP. Accepts incoming PROXY v1 and v2 from trustedProxyCidrs before TLS or application data. Independent of outgoing proxyProtocol.",
+			},
+			trustedProxyCidrs: {
+				type: "array",
+				maxItems: 256,
+				items: { type: "string" },
+				description: "Trusted load balancer IP addresses or CIDRs. At least one is required when incomingProxyProtocol is enabled.",
+			},
 			certificateId: {
 				type: ["string", "null"],
 				description: "Must reference an active, unexpired certificate with usable TLS material. Requires tcpEnabled.",

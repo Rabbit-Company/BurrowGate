@@ -7,6 +7,7 @@ import { resolveStreamProtectionPolicy } from "./stream-protection-policy-servic
 import { storedNetworkPrivacyPolicy } from "./network-privacy-service.ts";
 import { streamHealthManager } from "./stream-health-service.ts";
 import { streamProxyManager } from "./stream-proxy-service.ts";
+import { parseTrustedProxyCidrs } from "./incoming-proxy-protocol.ts";
 
 export interface StreamInput {
 	name?: unknown;
@@ -16,6 +17,8 @@ export interface StreamInput {
 	tcpEnabled?: unknown;
 	udpEnabled?: unknown;
 	proxyProtocol?: unknown;
+	incomingProxyProtocol?: unknown;
+	trustedProxyCidrs?: unknown;
 	certificateId?: unknown;
 	eventRetentionDays?: unknown;
 	maxConnectionsPerIp?: unknown;
@@ -44,10 +47,16 @@ export const STREAM_RESTART_FIELDS = [
 	"forward_port",
 	"certificate_id",
 	"proxy_protocol",
+	"incoming_proxy_protocol",
+	"proxy_protocol_trusted_cidrs_json",
 ] as const satisfies readonly (keyof StreamRecord)[];
 
 export function streamRestartDiffers(a: StreamRecord, b: StreamRecord): boolean {
-	return STREAM_RESTART_FIELDS.some((field) => a[field] !== b[field]);
+	return STREAM_RESTART_FIELDS.some((field) => {
+		if (field === "incoming_proxy_protocol") return (a[field] ?? 0) !== (b[field] ?? 0);
+		if (field === "proxy_protocol_trusted_cidrs_json") return (a[field] || "[]") !== (b[field] || "[]");
+		return a[field] !== b[field];
+	});
 }
 
 export function pickStreamRestartFields(record: StreamRecord): Pick<StreamRecord, (typeof STREAM_RESTART_FIELDS)[number]> {
@@ -152,6 +161,8 @@ export function streamView(stream: StreamRecord) {
 		tcpEnabled: stream.tcp_enabled === 1,
 		udpEnabled: stream.udp_enabled === 1,
 		proxyProtocol: stream.proxy_protocol ?? "disabled",
+		incomingProxyProtocol: stream.incoming_proxy_protocol === 1,
+		trustedProxyCidrs: JSON.parse(stream.proxy_protocol_trusted_cidrs_json || "[]") as string[],
 		certificateId: stream.certificate_id,
 		eventRetentionDays: Number(stream.event_retention_days),
 		defaultIpAction: stream.default_ip_action ?? "inherit",
@@ -189,6 +200,11 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 	if (tcpEnabled && config.http.enabled && incomingPort === config.http.port) throw new Error("Incoming TCP port conflicts with BurrowGate's HTTP listener");
 	if (tcpEnabled && config.https.enabled && incomingPort === config.https.port) throw new Error("Incoming TCP port conflicts with BurrowGate's HTTPS listener");
 	const now = Date.now();
+	const incomingProxyProtocol = booleanValue(input.incomingProxyProtocol, existing?.incoming_proxy_protocol === 1);
+	const trustedProxyCidrs = parseTrustedProxyCidrs(input.trustedProxyCidrs ?? JSON.parse(existing?.proxy_protocol_trusted_cidrs_json || "[]"));
+	if (incomingProxyProtocol && !tcpEnabled) throw new Error("Incoming PROXY protocol requires TCP to be enabled");
+	if (incomingProxyProtocol && !trustedProxyCidrs.length)
+		throw new Error("Incoming PROXY protocol requires at least one trusted load balancer IP address or CIDR");
 	return {
 		id: existing?.id ?? randomId("stream"),
 		name: requiredString(input.name ?? existing?.name, "Stream name", 255),
@@ -198,6 +214,8 @@ export async function buildStream(input: StreamInput, existing?: StreamRecord): 
 		tcp_enabled: tcpEnabled ? 1 : 0,
 		udp_enabled: udpEnabled ? 1 : 0,
 		proxy_protocol: proxyProtocol(input.proxyProtocol, existing?.proxy_protocol ?? "disabled", tcpEnabled),
+		incoming_proxy_protocol: incomingProxyProtocol ? 1 : 0,
+		proxy_protocol_trusted_cidrs_json: JSON.stringify(trustedProxyCidrs),
 		certificate_id: await certificateId(input.certificateId === undefined ? existing?.certificate_id : input.certificateId, tcpEnabled),
 		event_retention_days: retentionDays(input.eventRetentionDays, existing?.event_retention_days ?? config.eventRetentionDays),
 		default_ip_action: existing?.default_ip_action ?? "inherit",

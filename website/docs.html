@@ -593,7 +593,26 @@ docker compose up -d</code></pre>
 									<path d="M9 6l6 6-6 6" />
 								</svg>
 							</div>
-							<p>TCP/UDP proxying, TLS termination, origin health checks, and host networking.</p>
+							<p>TCP/UDP proxying, incoming and outgoing PROXY protocol, TLS termination, origin health checks, and host networking.</p>
+						</a>
+
+						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/PROXY_PROTOCOL.md" target="_blank" rel="noopener">
+							<div class="row">
+								<h3>Incoming PROXY Protocol</h3>
+								<svg
+									class="arrow"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M9 6l6 6-6 6" />
+								</svg>
+							</div>
+							<p>PROXY protocol v1 and v2 for HTTP, HTTPS, and TCP Streams, with trusted load balancer settings and direct connections.</p>
 						</a>
 
 						<a class="doc-card" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/SCHEDULED_CHANGES.md" target="_blank" rel="noopener">
@@ -810,6 +829,21 @@ docker compose up -d</code></pre>
 									<td><code>BG_HTTP_PORT</code> / <code>BG_HTTPS_PORT</code></td>
 									<td class="default"><code>80</code> / <code>443</code></td>
 									<td>Internal listener ports</td>
+								</tr>
+								<tr>
+									<td><code>BG_HTTP_PROXY_PROTOCOL</code> / <code>BG_HTTPS_PROXY_PROTOCOL</code></td>
+									<td class="default"><code>false</code></td>
+									<td>Accept incoming PROXY v1/v2 from trusted load balancers on the HTTP or HTTPS listener</td>
+								</tr>
+								<tr>
+									<td><code>BG_PROXY_PROTOCOL_TRUSTED_CIDRS</code></td>
+									<td class="default"><code>empty</code></td>
+									<td>Load balancer connection IPs or CIDRs, separated by commas or whitespace. Required when listener PROXY support is enabled</td>
+								</tr>
+								<tr>
+									<td><code>BG_PROXY_PROTOCOL_ALLOW_DIRECT</code></td>
+									<td class="default"><code>true</code></td>
+									<td>Allow direct connections on enabled incoming PROXY listeners, including TCP Streams</td>
 								</tr>
 								<tr>
 									<td><code>DATABASE_URL</code></td>

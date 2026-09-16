@@ -23,6 +23,7 @@ import {
 import { resolveSiteForHost } from "./site-service.ts";
 import type { HeadersInit } from "bun";
 import { Logger } from "../logger.ts";
+import { incomingProxyConnection, normalizeProxyAddress } from "./incoming-proxy-protocol.ts";
 import { recordBandwidth } from "./bandwidth-service.ts";
 import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import type { ResolvedHttpPolicy } from "./http-policy-service.ts";
@@ -232,6 +233,8 @@ const websocketIpExtractors = new Map<IpExtractionPreset, ReturnType<typeof ipEx
 );
 
 export async function clientIpForUpgrade(request: Request, server: WebSocketUpgradeServer, preset: IpExtractionPreset): Promise<string> {
+	const proxyConnection = incomingProxyConnection(request);
+	if (proxyConnection) return normalizeProxyAddress(proxyConnection.sourceAddress);
 	const directIp = server.requestIP(request)?.address;
 	const extractor = websocketIpExtractors.get(supportedIpExtractionPreset(preset))!;
 	const context = { req: request, clientIp: directIp } as Parameters<typeof extractor>[0];

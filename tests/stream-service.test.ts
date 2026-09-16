@@ -4,6 +4,41 @@ import { buildStream, pickStreamRestartFields, streamRestartDiffers, streamView 
 import { serializeNetworkPrivacyPolicy } from "../src/services/network-privacy-service.ts";
 
 describe("stream configuration", () => {
+	test("persists incoming trust settings independently from outgoing forwarding and preserves them on partial updates", async () => {
+		const stream = await buildStream({
+			name: "Load balancer stream",
+			incomingPort: 39002,
+			forwardHost: "localhost",
+			forwardPort: 39003,
+			incomingProxyProtocol: true,
+			trustedProxyCidrs: ["10.0.0.2/32", "2001:db8::2", "10.0.0.2/32"],
+		});
+		await repository.saveStream(stream);
+		try {
+			const stored = (await repository.streamById(stream.id))!;
+			expect(streamView(stored)).toMatchObject({ incomingProxyProtocol: true, trustedProxyCidrs: ["10.0.0.2/32", "2001:db8::2"], proxyProtocol: "disabled" });
+			const updated = await buildStream({ name: "Renamed" }, stored);
+			expect(streamRestartDiffers(stored, updated)).toBe(false);
+			expect(updated.proxy_protocol_trusted_cidrs_json).toBe(stored.proxy_protocol_trusted_cidrs_json);
+		} finally {
+			await repository.deleteStream(stream.id);
+		}
+	});
+
+	test("rejects incoming PROXY without trusted addresses, malformed trust entries, and UDP-only enablement", async () => {
+		const base = { name: "Load balancer stream", incomingPort: 39004, forwardHost: "localhost", forwardPort: 39005, incomingProxyProtocol: true };
+		await expect(buildStream(base)).rejects.toThrow("at least one trusted");
+		await expect(buildStream({ ...base, trustedProxyCidrs: ["not-an-ip"] })).rejects.toThrow("Invalid trusted");
+		await expect(buildStream({ ...base, trustedProxyCidrs: ["10.0.0.2"], tcpEnabled: false, udpEnabled: true })).rejects.toThrow("requires TCP");
+	});
+
+	test("legacy missing/null incoming fields do not restart a listener on a name edit", async () => {
+		const stream = await buildStream({ name: "Legacy stream", incomingPort: 39006, forwardHost: "localhost", forwardPort: 39007 });
+		const legacy = { ...stream, incoming_proxy_protocol: undefined, proxy_protocol_trusted_cidrs_json: null };
+		expect(streamRestartDiffers(legacy, await buildStream({ name: "Renamed" }, legacy))).toBe(false);
+		expect(streamRestartDiffers(stream, await buildStream({ incomingProxyProtocol: true, trustedProxyCidrs: ["10.0.0.2"] }, stream))).toBe(true);
+	});
+
 	test("requires at least one transport protocol", async () => {
 		await expect(
 			buildStream({ name: "Test stream", incomingPort: 9000, forwardHost: "127.0.0.1", forwardPort: 9001, tcpEnabled: false, udpEnabled: false }),
@@ -156,6 +191,8 @@ describe("pickStreamRestartFields", () => {
 			forward_port: stream.forward_port,
 			certificate_id: stream.certificate_id,
 			proxy_protocol: stream.proxy_protocol,
+			incoming_proxy_protocol: stream.incoming_proxy_protocol,
+			proxy_protocol_trusted_cidrs_json: stream.proxy_protocol_trusted_cidrs_json,
 		});
 	});
 });

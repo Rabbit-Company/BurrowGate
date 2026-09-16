@@ -37,6 +37,7 @@ import {
 } from "./services/access-list-service.ts";
 import { siteHostname } from "./services/certificate-service.ts";
 import { TlsListenerManager } from "./services/tls-listener-service.ts";
+import { incomingProxyConnection, normalizeProxyAddress } from "./services/incoming-proxy-protocol.ts";
 import type { GatewayState } from "./types.ts";
 import { appendSetCookies, jsonResponse, normalizeHost, requestHost } from "./utils/http.ts";
 import { Logger } from "./logger.ts";
@@ -195,6 +196,12 @@ app.use(async (ctx, next) => {
 		const site = await resolveSiteForHost(normalizeHost(requestHost(ctx.req)));
 		if (site) ctx.state.site = site;
 		preset = supportedIpExtractionPreset(site?.ip_extraction_preset);
+	}
+	const proxyConnection = incomingProxyConnection(ctx.req);
+	if (proxyConnection) {
+		ctx.clientIp = normalizeProxyAddress(proxyConnection.sourceAddress);
+		await next();
+		return;
 	}
 	await clientIpExtractors.get(preset)!(ctx, next);
 });

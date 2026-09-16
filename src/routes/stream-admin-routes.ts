@@ -277,6 +277,10 @@ function summarizeStreamRestartChange(previous: StreamRecord, candidate: StreamR
 	if (previous.forward_port !== candidate.forward_port) parts.push(`Forward port: ${previous.forward_port} -> ${candidate.forward_port}`);
 	if (previous.certificate_id !== candidate.certificate_id) parts.push("Certificate changed");
 	if (previous.proxy_protocol !== candidate.proxy_protocol) parts.push(`PROXY protocol: ${previous.proxy_protocol} -> ${candidate.proxy_protocol}`);
+	if ((previous.incoming_proxy_protocol ?? 0) !== (candidate.incoming_proxy_protocol ?? 0))
+		parts.push(`Incoming PROXY protocol ${candidate.incoming_proxy_protocol === 1 ? "enabled" : "disabled"}`);
+	if ((previous.proxy_protocol_trusted_cidrs_json || "[]") !== (candidate.proxy_protocol_trusted_cidrs_json || "[]"))
+		parts.push("Trusted load balancer addresses changed");
 	return parts.join(", ") || "Listener configuration changed";
 }
 

@@ -2280,6 +2280,8 @@ async function bulkDeleteStreamIpRules() {
 	}
 }
 
+byId("streamIncomingProxyProtocol").addEventListener("change", updateProtocolControls);
+
 function updateProtocolControls() {
 	const valid = byId("streamTcp").checked || byId("streamUdp").checked;
 	byId("streamProtocolError").classList.toggle("hidden", valid);
@@ -2289,6 +2291,9 @@ function updateProtocolControls() {
 	const proxyV1Option = byId("streamProxyProtocol").querySelector('option[value="v1"]');
 	proxyV1Option.disabled = !byId("streamTcp").checked;
 	if (!byId("streamTcp").checked && byId("streamProxyProtocol").value === "v1") byId("streamProxyProtocol").value = "disabled";
+	byId("streamIncomingProxyProtocol").disabled = !byId("streamTcp").checked;
+	if (!byId("streamTcp").checked) byId("streamIncomingProxyProtocol").checked = false;
+	byId("streamTrustedProxyCidrs").required = byId("streamIncomingProxyProtocol").checked;
 	const rateEnabled = byId("streamRateLimitEnabled").checked;
 	byId("streamRateLimitSettings").classList.toggle("hidden", !rateEnabled);
 	const algorithm = byId("streamRateLimitAlgorithm").value;
@@ -2308,6 +2313,8 @@ function resetForm() {
 	byId("streamTcp").checked = true;
 	byId("streamUdp").checked = false;
 	byId("streamProxyProtocol").value = "disabled";
+	byId("streamIncomingProxyProtocol").checked = false;
+	byId("streamTrustedProxyCidrs").value = "";
 	byId("streamRetentionDays").value = "7";
 	byId("streamMaxConnectionsPerIp").value = "0";
 	byId("streamRateLimitEnabled").checked = false;
@@ -2344,6 +2351,8 @@ function editStream(id) {
 	byId("streamTcp").checked = stream.tcpEnabled;
 	byId("streamUdp").checked = stream.udpEnabled;
 	byId("streamProxyProtocol").value = stream.proxyProtocol ?? "disabled";
+	byId("streamIncomingProxyProtocol").checked = stream.incomingProxyProtocol === true;
+	byId("streamTrustedProxyCidrs").value = (stream.trustedProxyCidrs ?? []).join("\n");
 	byId("streamCertificate").value = stream.certificateId || "";
 	byId("streamFormTitle").textContent = `Edit ${stream.name}`;
 	byId("saveStream").textContent = "Save";
@@ -2363,6 +2372,10 @@ async function saveStream(event) {
 		tcpEnabled: byId("streamTcp").checked,
 		udpEnabled: byId("streamUdp").checked,
 		proxyProtocol: byId("streamProxyProtocol").value,
+		incomingProxyProtocol: byId("streamIncomingProxyProtocol").checked,
+		trustedProxyCidrs: byId("streamTrustedProxyCidrs")
+			.value.split(/[\s,]+/u)
+			.filter(Boolean),
 		certificateId: byId("streamCertificate").value || null,
 		eventRetentionDays: Number(byId("streamRetentionDays").value),
 		maxConnectionsPerIp: Number(byId("streamMaxConnectionsPerIp").value),

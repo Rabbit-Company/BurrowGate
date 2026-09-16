@@ -16,6 +16,8 @@ import { resolveStreamBandwidthPolicy, type StreamBandwidthLimitPolicy } from ".
 import { inspectStreamConnection, streamDecodeConfigFor, streamDecodeProtocols, type StreamRuleFieldValue } from "./stream-protection-service.ts";
 import { streamProtocolDecoder } from "./stream-protocol-decoders/index.ts";
 import { proxyProtocolDatagram, proxyProtocolHeader } from "./stream-proxy-protocol.ts";
+import { ProxyProtocolIngress } from "./proxy-protocol-ingress.ts";
+import { normalizeProxyAddress, type IncomingProxyConnection } from "./incoming-proxy-protocol.ts";
 import {
 	computeStreamLiveRates,
 	pruneStaleStreamBandwidthLimitEntries,
@@ -41,6 +43,10 @@ interface TcpConnection {
 	lastActivityAt: number;
 	clientIp: string;
 	clientPort: number;
+	/** Original source address for outgoing PROXY headers. */
+	proxySourceIp?: string;
+	destinationIp: string;
+	destinationPort: number;
 	countryCode: string | null;
 	asn: number | null;
 	asnOrg: string | null;
@@ -69,6 +75,7 @@ interface TcpRuntime {
 	record: StreamRecord;
 	fingerprint: string;
 	listener: Bun.TCPSocketListener<TcpConnection>;
+	ingress?: ProxyProtocolIngress;
 }
 
 interface UdpPeer {
@@ -193,7 +200,15 @@ function privacyBlockedReason(category: ReturnType<typeof streamPrivacyEvaluatio
 }
 
 function tcpFingerprint(record: StreamRecord): string {
-	return JSON.stringify([record.incoming_port, record.forward_host, record.forward_port, record.certificate_id, record.proxy_protocol]);
+	return JSON.stringify([
+		record.incoming_port,
+		record.forward_host,
+		record.forward_port,
+		record.certificate_id,
+		record.proxy_protocol,
+		record.incoming_proxy_protocol ?? 0,
+		record.proxy_protocol_trusted_cidrs_json ?? "[]",
+	]);
 }
 
 function udpFingerprint(record: StreamRecord): string {
@@ -842,10 +857,10 @@ export class StreamProxyManager {
 			const mode = connection.record.proxy_protocol ?? "disabled";
 			if (mode !== "disabled") {
 				connection.proxyHeader = proxyProtocolHeader(mode, "tcp", {
-					sourceAddress: connection.clientIp,
-					destinationAddress: connection.client.localAddress,
+					sourceAddress: connection.proxySourceIp ?? connection.clientIp,
+					destinationAddress: connection.destinationIp,
 					sourcePort: connection.clientPort,
-					destinationPort: connection.client.localPort,
+					destinationPort: connection.destinationPort,
 				});
 				connection.proxyHeaderOffset = 0;
 			}
@@ -892,14 +907,27 @@ export class StreamProxyManager {
 	private async startTcp(record: StreamRecord): Promise<void> {
 		const listen = this.dependencies.listen ?? ((options) => Bun.listen(options));
 		const tls = record.certificate_id ? await (this.dependencies.tlsOption ?? streamCertificateTlsOption)(record.certificate_id) : undefined;
+		let ingress: ProxyProtocolIngress | undefined;
 		const listener = listen({
-			hostname: config.host,
-			port: record.incoming_port,
+			hostname: record.incoming_proxy_protocol === 1 ? "127.0.0.1" : config.host,
+			port: record.incoming_proxy_protocol === 1 ? 0 : record.incoming_port,
 			...(tls ? { tls } : {}),
 			allowHalfOpen: true,
 			socket: {
 				open: async (client) => {
-					const clientIp = client.remoteAddress;
+					let proxyConnection: IncomingProxyConnection | undefined;
+					if (record.incoming_proxy_protocol === 1) {
+						client.pause();
+						try {
+							if (!ingress) throw new Error("Unregistered stream backend connection");
+							proxyConnection = await ingress.connectionForPeer(client.remotePort);
+						} catch {
+							client.terminate();
+							return;
+						}
+						if (client.readyState === -1) return;
+					}
+					const clientIp = normalizeProxyAddress(proxyConnection?.sourceAddress ?? client.remoteAddress);
 					recordStreamConnectionAttempt(record.id, clientIp);
 					const asnLookup = lookupAsn(clientIp);
 					const connection: TcpConnection = {
@@ -910,7 +938,10 @@ export class StreamProxyManager {
 						openedAt: Date.now(),
 						lastActivityAt: Date.now(),
 						clientIp,
-						clientPort: client.remotePort,
+						clientPort: proxyConnection?.sourcePort ?? client.remotePort,
+						proxySourceIp: proxyConnection?.sourceAddress ?? client.remoteAddress,
+						destinationIp: proxyConnection?.destinationAddress ?? client.localAddress,
+						destinationPort: proxyConnection?.destinationPort ?? client.localPort,
 						countryCode: lookupCountryCode(clientIp),
 						asn: asnLookup?.asn ?? null,
 						asnOrg: asnLookup?.org ?? null,
@@ -932,6 +963,7 @@ export class StreamProxyManager {
 						username: null,
 					};
 					client.data = connection;
+					if (proxyConnection) client.resume();
 					client.timeout(config.streams.idleTimeoutSeconds);
 					this.tcpConnections.set(connection.id, connection);
 					this.updateCounts(record.id);
@@ -939,20 +971,45 @@ export class StreamProxyManager {
 				},
 				data: (client, data) => {
 					const connection = client.data;
+					if (!connection) return;
 					if (connection.protectionDecodeProtocol) this.handleProtectionDecodeChunk(connection, data);
 					else this.writeTcp(connection, "upstream", data);
 				},
-				drain: (client) => this.flushTcp(client.data, "client"),
+				drain: (client) => {
+					if (client.data) this.flushTcp(client.data, "client");
+				},
 				end: (client) => {
+					if (!client.data) return;
 					client.data.clientEnded = true;
 					client.data.upstream?.end();
 				},
-				close: (client, error) => this.finishTcp(client.data, "client closed", error),
-				error: (client, error) => this.finishTcp(client.data, "client error", error),
-				timeout: (client) => this.finishTcp(client.data, "client idle timeout"),
+				close: (client, error) => {
+					if (client.data) this.finishTcp(client.data, "client closed", error);
+				},
+				error: (client, error) => {
+					if (client.data) this.finishTcp(client.data, "client error", error);
+				},
+				timeout: (client) => {
+					if (client.data) this.finishTcp(client.data, "client idle timeout");
+				},
 			},
 		});
-		this.tcpRuntimes.set(record.id, { record, fingerprint: tcpFingerprint(record), listener });
+		if (record.incoming_proxy_protocol === 1) {
+			try {
+				ingress = new ProxyProtocolIngress({
+					hostname: config.host,
+					port: record.incoming_port,
+					targetPort: listener.port,
+					trustedCidrs: JSON.parse(record.proxy_protocol_trusted_cidrs_json || "[]"),
+					allowDirect: config.proxyProtocol.allowDirect,
+				});
+				await ingress.start();
+			} catch (error) {
+				listener.stop(true);
+				throw error;
+			}
+		}
+		this.tcpRuntimes.set(record.id, { record, fingerprint: tcpFingerprint(record), listener, ingress });
 		Logger.info(
 			`TCP stream listening on ${config.host}:${record.incoming_port} -> ${record.forward_host}:${record.forward_port}${tls ? " with TLS termination" : ""}`,
 		);
@@ -961,6 +1018,7 @@ export class StreamProxyManager {
 	private stopTcp(streamId: string): void {
 		const runtime = this.tcpRuntimes.get(streamId);
 		if (!runtime) return;
+		void runtime.ingress?.stop(false).catch((error) => Logger.error("Unable to stop incoming PROXY protocol listener", { error }));
 		runtime.listener.stop(false);
 		this.tcpRuntimes.delete(streamId);
 	}

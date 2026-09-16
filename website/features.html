@@ -87,6 +87,8 @@
 								<li>Automatic Let's Encrypt certificates via ACME HTTP-01 or DNS-01 (RFC 2136 dynamic updates), or upload your own PEM chain</li>
 								<li>SNI certificate selection for multiple domains on one listener</li>
 								<li>Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying</li>
+								<li>Incoming PROXY protocol v1 and v2 from trusted load balancers on HTTP and HTTPS, read before TLS or application data</li>
+								<li>Original client IPs for policies, rate limiting, monitoring, and WebSockets, with direct connections allowed by default</li>
 								<li>Signed <code>X-BurrowGate-*</code> origin verification headers (HMAC-SHA256)</li>
 								<li>
 									Hostname changes on a site with an active certificate can be scheduled for a chosen time instead of rebuilding the HTTPS listener immediately
@@ -279,12 +281,14 @@
 								<li>Named streams shown throughout the dashboard instead of a bare port number</li>
 								<li>Native TCP and UDP stream proxying independent of the HTTP path</li>
 								<li>Optional incoming TCP TLS termination, or raw passthrough</li>
+								<li>Incoming PROXY protocol v1 and v2 on TCP from configured load balancer IPs or CIDRs, including TLS connections</li>
+								<li>Separate outgoing PROXY protocol forwarding to upstream servers, with v1 for TCP and v2 for TCP or UDP</li>
 								<li>Live TCP connection lists and synthetic UDP peer sessions</li>
 								<li>Connect, disconnect, and error logs with GeoIP-enriched client country and ASN</li>
 								<li>Per-stream monitoring retention and bandwidth grouped by IP and port</li>
 								<li>Optional per-stream TCP origin health checks with a connect-latency graph and webhook notifications</li>
 								<li>Per-stream TCP/UDP bandwidth-threshold auto-bans, applied live without restarting the listener</li>
-								<li>Port, forward target, certificate, and protocol changes can be scheduled for a chosen time instead of swapping the listener immediately</li>
+								<li>Port, forward target, certificate, and incoming or outgoing PROXY protocol changes can be scheduled along with TCP and UDP toggles</li>
 							</ul>
 						</div>
 
@@ -414,6 +418,9 @@
 								<li>Automatic majority-quorum election and failover once a cluster has 3 or more nodes (a 2-node cluster promotes manually instead)</li>
 								<li>Cluster epoch and quorum-loss self-fencing stop a stale or partitioned primary from staying writable once it's no longer authoritative</li>
 								<li>Sessions, logins, and IP bans replicate from whichever node handles them, so the load balancer doesn't need sticky sessions</li>
+								<li>
+									Trusted incoming PROXY protocol keeps client IPs available behind a load balancer while allowing direct HA admin requests and health checks
+								</li>
 								<li>
 									Add a node with a one-time join code from the Cluster dashboard tab - promote, forget, or monitor nodes from the same place, no env vars or
 									restarts

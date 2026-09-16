@@ -11,6 +11,7 @@ import {
 	HA_REPLICA_LIVENESS_TIMEOUT_MS,
 } from "./ha-timing.ts";
 import { isSecureHaUrl } from "./ha-url.ts";
+import { parseTrustedProxyCidrs } from "./services/incoming-proxy-protocol.ts";
 
 export type CookieSecureMode = "auto" | "always" | "never";
 export type RequestTransport = "http" | "https";
@@ -132,14 +133,20 @@ export const config = {
 		enabled: envBoolean("BG_HTTP_ENABLED", true),
 		port: envNumber("BG_HTTP_PORT", legacyPort, 1, 65535),
 		publicPort: envNumber("BG_HTTP_PUBLIC_PORT", 80, 1, 65535),
+		proxyProtocol: envBoolean("BG_HTTP_PROXY_PROTOCOL", false),
 	},
 	https: {
 		enabled: envBoolean("BG_HTTPS_ENABLED", true),
 		port: envNumber("BG_HTTPS_PORT", 443, 1, 65535),
 		publicPort: envNumber("BG_HTTPS_PUBLIC_PORT", 443, 1, 65535),
+		proxyProtocol: envBoolean("BG_HTTPS_PROXY_PROTOCOL", false),
 		listenerDrainTimeoutMs: envNumber("BG_TLS_LISTENER_DRAIN_TIMEOUT_MS", 5_000, 100, 60_000),
 		http2Enabled: envBoolean("BG_HTTP2_ENABLED", false),
 		http3Enabled: envBoolean("BG_HTTP3_ENABLED", false),
+	},
+	proxyProtocol: {
+		allowDirect: envBoolean("BG_PROXY_PROTOCOL_ALLOW_DIRECT", true),
+		trustedCidrs: parseTrustedProxyCidrs((process.env.BG_PROXY_PROTOCOL_TRUSTED_CIDRS ?? "").split(/[\s,]+/u).filter(Boolean)),
 	},
 	databaseUrl: process.env.DATABASE_URL ?? "sqlite://./data/burrowgate.db",
 	dashboardProxyPreset: parseIpExtractionPreset(process.env.BG_PROXY_PRESET, "direct", "BG_PROXY_PRESET"),

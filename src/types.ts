@@ -482,6 +482,8 @@ export interface StreamRecord {
 	tcp_enabled: number;
 	udp_enabled: number;
 	proxy_protocol: StreamProxyProtocol;
+	incoming_proxy_protocol?: number;
+	proxy_protocol_trusted_cidrs_json?: string | null;
 	certificate_id: string | null;
 	event_retention_days: number;
 	default_ip_action: StreamDefaultNetworkAction;
