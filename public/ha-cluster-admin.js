@@ -222,11 +222,15 @@ byId("identityForm").addEventListener("submit", async (event) => {
 	submit.disabled = true;
 	try {
 		const data = Object.fromEntries(new FormData(form));
-		await api("/identity", {
+		const result = await api("/identity", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ nodeName: data.nodeName || undefined, selfAdminUrl: data.selfAdminUrl }),
 		});
+		if (result.restarting) {
+			await waitForRestartThenReload();
+			return;
+		}
 		showToast("Saved.");
 		await loadStatus();
 	} catch (error) {

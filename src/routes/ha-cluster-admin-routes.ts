@@ -120,7 +120,7 @@ export function registerHaClusterAdminRoutes(app: Web<any>): void {
 		try {
 			const body = (await ctx.req.json()) as { nodeName?: string; selfAdminUrl?: string };
 			if (!body.selfAdminUrl) return jsonResponse({ error: "selfAdminUrl is required" }, 400);
-			await updateNodeIdentity({ nodeName: body.nodeName, selfAdminUrl: body.selfAdminUrl });
+			const { restarting } = await updateNodeIdentity({ nodeName: body.nodeName, selfAdminUrl: body.selfAdminUrl });
 			await recordAdminAudit({
 				actor: user,
 				action: "ha.update_identity",
@@ -129,7 +129,8 @@ export function registerHaClusterAdminRoutes(app: Web<any>): void {
 				summary: "Updated this node's HA identity",
 				ip: getClientIp(ctx) ?? "unknown",
 			});
-			return jsonResponse({ ok: true });
+			if (restarting) scheduleRestartAfterResponse("ha-identity-certificate-change");
+			return jsonResponse({ ok: true, restarting });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to update this node's identity" }, 400);
 		}

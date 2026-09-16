@@ -146,6 +146,32 @@ describe("haTlsCertificate caches for the life of the process", () => {
 });
 
 describe("the generated certificate's SAN covers this node's actual reachable address", () => {
+	test("does not mistake a longer IP SAN for coverage of a shorter address", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "bg-ha-tls-test-"));
+		config.dataDirectory = tempDir;
+		config.ha.tlsCertFile = null;
+		config.ha.tlsKeyFile = null;
+		config.ha.selfAdminUrl = "https://10.20.30.40";
+		const initial = await haTlsCertificate();
+		resetHaTlsCertificateCache();
+		config.ha.selfAdminUrl = "https://10.20.30.4";
+		const regenerated = await haTlsCertificate();
+		expect(regenerated.cert).not.toBe(initial.cert);
+		expect(new X509Certificate(regenerated.cert).checkIP("10.20.30.4")).toBe("10.20.30.4");
+	});
+
+	test("generates and reuses an IP SAN for a bracketed IPv6 admin URL", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "bg-ha-tls-test-"));
+		config.dataDirectory = tempDir;
+		config.ha.tlsCertFile = null;
+		config.ha.tlsKeyFile = null;
+		config.ha.selfAdminUrl = "https://[::1]";
+		const initial = await haTlsCertificate();
+		expect(new X509Certificate(initial.cert).checkIP("::1")).toBe("::1");
+		resetHaTlsCertificateCache();
+		expect((await haTlsCertificate()).cert).toBe(initial.cert);
+	});
+
 	test("includes this node's configured admin URL host as an IP SAN entry when it's an IP literal", async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "bg-ha-tls-test-"));
 		config.dataDirectory = tempDir;

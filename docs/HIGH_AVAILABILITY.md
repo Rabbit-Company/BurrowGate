@@ -73,7 +73,7 @@ This closes the write side of the race; a second, narrower gap remains on the re
 
 The fastest way to form a cluster is through the **Cluster** tab in the dashboard - no `BG_MASTER_KEY` pre-provisioning required (see below). HA is always on, so a fresh node is already a primary of a cluster of one the first time this tab loads; there's no separate "enable HA" step:
 
-1. On a fresh node, open the Cluster tab's **"This node's identity"** card and give it a name and its own reachable **HTTPS** admin URL, then **Save**. This applies immediately, no restart - it's a plain identity edit, not a role change.
+1. On a fresh node, open the Cluster tab's **"This node's identity"** card and give it a name and its own reachable **HTTPS** admin URL, then **Save**. If the running self-signed certificate does not cover that address, the node restarts automatically to regenerate it. Wait for the dashboard to reload before generating a join code. Edits to the name or an address already covered by the certificate apply immediately.
 2. Click **Generate join code** (shown once this node is a primary with its identity set) to get a copy-pasteable code bundling everything a second node needs to enroll: the primary's mesh and admin URLs, its public mesh certificate, and a short-lived (15 minute), single-use enrollment credential - never a standing secret itself (see below).
 3. On a second, fresh node, open its own Cluster tab's **"Join an existing cluster"** card, paste the code in, and give that node's own reachable admin URL, then **Join cluster**. This makes a real network call back to the primary (redeeming the enrollment credential for a bearer credential of this node's own over `/_ha/enroll`, gated on the enrollment credential rather than anything it exists to hand out) - so unlike the rest of this step, it genuinely requires the primary to be reachable at join time.
 
@@ -122,6 +122,8 @@ A primary needs no HA env vars at all - a fresh node defaults to `primary` and g
 ## Transport security
 
 `BG_HA_PORT` runs TLS, not plain HTTP/WS - some replicated data (admin/access password hashes, in particular) shouldn't cross the network in the clear. This works with no manual certificate handling in the common case:
+
+The certificate endpoint accepts valid per-node credentials from enrolled nodes even before their first successful mesh connection activates them. This lets a joining replica recover its pin after a TLS failure without getting stuck on `401` while waiting for the connection that needs that certificate. Revoked and unknown credentials are rejected, and other internal admin endpoints still require active membership.
 
 Every admin/topology URL used by HA must also be absolute `https://` without embedded URL credentials. This is enforced when identity is saved, when a node joins or announces itself, on election/redirect/discovery messages, and again from persisted configuration at startup. A node upgraded with an old `http://` HA URL refuses to start until that address is corrected; `BG_HA_CA_FILE` secures the dedicated mesh certificate but does not make a plaintext admin API safe.
 

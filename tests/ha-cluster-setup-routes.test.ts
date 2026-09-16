@@ -14,6 +14,7 @@ import { createAdminUser } from "../src/services/admin-user-service.ts";
 import { createAdminSession } from "../src/services/session-service.ts";
 import { APP_VERSION } from "../src/ui/layout.ts";
 import { sha256Hex } from "../src/utils/crypto.ts";
+import { haTlsCertificate, resetHaTlsCertificateCache } from "../src/services/ha-tls-service.ts";
 
 const mesh = haMeshService as unknown as {
 	handlePrimaryMessage(ws: unknown, data: string): Promise<void>;
@@ -36,12 +37,14 @@ const originalDataDirectory = config.dataDirectory;
 let tlsDataDirectory = "";
 
 beforeEach(async () => {
+	resetHaTlsCertificateCache();
 	restartCalls = [];
 	tlsDataDirectory = await mkdtemp(join(tmpdir(), "burrowgate-ha-routes-test-"));
 	config.dataDirectory = tlsDataDirectory;
 });
 
 afterEach(async () => {
+	resetHaTlsCertificateCache();
 	Object.assign(config.ha, originalHa);
 	config.dataDirectory = originalDataDirectory;
 	await db`DELETE FROM ha_cluster_config`;
@@ -115,8 +118,10 @@ describe("PUT /ha/identity", () => {
 		expect(response.status).toBe(400);
 	});
 
-	test("updates this node's identity immediately, with no restart", async () => {
+	test("updates this node's identity without a restart when the live certificate already covers the address", async () => {
 		await freshPrimaryNode();
+		config.ha.selfAdminUrl = "https://primary-node.test";
+		await haTlsCertificate();
 		const cookie = await administratorCookie();
 		const response = await app.handle(
 			req("/identity", cookie, {
@@ -131,6 +136,26 @@ describe("PUT /ha/identity", () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 350));
 		expect(restartCalls).toEqual([]);
+	});
+
+	test("restarts after saving an address missing from the live certificate, so the next boot regenerates it", async () => {
+		await freshPrimaryNode();
+		const initial = await haTlsCertificate();
+		const response = await app.handle(
+			req("/identity", await administratorCookie(), {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ selfAdminUrl: "https://127.0.0.2" }),
+			}),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ restarting: true });
+		expect((await repository.haClusterConfigRow())?.self_admin_url).toBe("https://127.0.0.2");
+		expect((await haTlsCertificate()).cert).toBe(initial.cert);
+		await new Promise((resolve) => setTimeout(resolve, 350));
+		expect(restartCalls).toEqual(["ha-identity-certificate-change"]);
+		resetHaTlsCertificateCache();
+		expect((await haTlsCertificate()).cert).not.toBe(initial.cert);
 	});
 
 	test("also works on an existing replica - it's an identity edit, not a role change", async () => {

@@ -17,17 +17,20 @@ import {
 import { decryptSecret, encryptSecret } from "../src/services/secret-encryption-service.ts";
 import { APP_VERSION } from "../src/ui/layout.ts";
 import { fromBase64Url, sha256Hex, toBase64Url } from "../src/utils/crypto.ts";
+import { resetHaTlsCertificateCache } from "../src/services/ha-tls-service.ts";
 
 const originalHa = { ...config.ha };
 const originalDataDirectory = config.dataDirectory;
 let tlsDataDirectory = "";
 
 beforeEach(async () => {
+	resetHaTlsCertificateCache();
 	tlsDataDirectory = await mkdtemp(join(tmpdir(), "burrowgate-ha-config-test-"));
 	config.dataDirectory = tlsDataDirectory;
 });
 
 afterEach(async () => {
+	resetHaTlsCertificateCache();
 	Object.assign(config.ha, originalHa);
 	config.dataDirectory = originalDataDirectory;
 	await db`DELETE FROM ha_cluster_config`;

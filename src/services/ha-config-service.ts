@@ -3,7 +3,7 @@ import { repository, type HaClusterConfigInsert } from "../db/repository.ts";
 import { Logger } from "../logger.ts";
 import { APP_VERSION } from "../ui/layout.ts";
 import { encryptSecret, resolveSharedTokenPlaintext } from "./secret-encryption-service.ts";
-import { haTlsCertificate, pinPrimaryHaCertificate } from "./ha-tls-service.ts";
+import { haCertificateCoversAddress, haTlsCertificate, pinPrimaryHaCertificate } from "./ha-tls-service.ts";
 import { fromBase64Url, randomToken, sha256Hex, toBase64Url } from "../utils/crypto.ts";
 import { requireSecureHaUrl } from "../ha-url.ts";
 
@@ -147,12 +147,14 @@ function applyLiveAndLogPendingRestart(patch: Partial<HaClusterConfigInsert>, sh
 	Logger.warn(`HA: ${summary} - restarting to apply`);
 }
 
-export async function updateNodeIdentity(input: { nodeName?: string; selfAdminUrl: string }): Promise<void> {
+export async function updateNodeIdentity(input: { nodeName?: string; selfAdminUrl: string }): Promise<{ restarting: boolean }> {
 	const selfAdminUrl = requireSecureHaUrl(input.selfAdminUrl, "This node's admin URL");
 	const nodeName = input.nodeName?.trim() || config.ha.nodeName;
+	const restarting = config.ha.enabled && !config.ha.tlsCertFile && !haCertificateCoversAddress((await haTlsCertificate()).cert, selfAdminUrl);
 	const patch: Partial<HaClusterConfigInsert> = { nodeName, selfAdminUrl };
 	await repository.updateHaClusterConfig(patch);
 	applyLive(patch, undefined);
+	return { restarting };
 }
 
 export async function joinCluster(input: { joinCode: string; selfAdminUrl: string; nodeName?: string }): Promise<void> {

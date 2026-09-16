@@ -16,7 +16,7 @@ import { repository, type SortDirection, type TabMetricsScope } from "../db/repo
 import { Logger } from "../logger.ts";
 import { addAsnRule, addCountryRule, addIpRule, invalidateNetworkPolicy } from "../services/ip-rule-service.ts";
 import { addRouteAsnRule, addRouteCountryRule, addRouteIpRule, invalidateRouteNetworkPolicy } from "../services/route-ip-rule-service.ts";
-import { isAuthorized as isHaAuthorized, withDurability } from "../services/ha-mesh-service.ts";
+import { authenticateHaRequest, isAuthorized as isHaAuthorized, withDurability } from "../services/ha-mesh-service.ts";
 import { haTlsCertificate } from "../services/ha-tls-service.ts";
 import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
 import {
@@ -4057,7 +4057,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 
 	app.get("/_burrowgate/api/admin/ha/certificate", async (ctx) => {
 		if (!config.ha.enabled) return jsonResponse({ error: "Not found" }, 404);
-		if (!(await isHaAuthorized(ctx.req))) return jsonResponse({ error: "Unauthorized" }, 401);
+		if (!(await authenticateHaRequest(ctx.req, true))) return jsonResponse({ error: "Unauthorized" }, 401);
 		const { cert } = await haTlsCertificate();
 		return jsonResponse({ cert });
 	});

@@ -49,25 +49,25 @@ function haCertificateSubjectAltName(): string {
 	const entries = ["DNS:localhost", "IP:127.0.0.1"];
 	if (config.ha.selfAdminUrl) {
 		try {
-			const host = new URL(config.ha.selfAdminUrl).hostname;
+			const host = new URL(config.ha.selfAdminUrl).hostname.replace(/^\[|\]$/gu, "");
 			if (host && host !== "localhost" && host !== "127.0.0.1") entries.push(isIP(host) ? `IP:${host}` : `DNS:${host}`);
 		} catch {}
 	}
 	return entries.join(",");
 }
 
-function certificateCoversConfiguredAddress(certPem: string): boolean {
-	if (!config.ha.selfAdminUrl) return true;
+export function haCertificateCoversAddress(certPem: string, adminUrl: string | null): boolean {
+	if (!adminUrl) return true;
 	let host: string;
 	try {
-		host = new URL(config.ha.selfAdminUrl).hostname;
+		host = new URL(adminUrl).hostname.replace(/^\[|\]$/gu, "");
 	} catch {
 		return true;
 	}
-	if (!host || host === "localhost" || host === "127.0.0.1") return true;
-	const expectedEntry = isIP(host) ? `IP Address:${host}` : `DNS:${host}`;
+	if (!host) return true;
 	try {
-		return (new X509Certificate(certPem).subjectAltName ?? "").includes(expectedEntry);
+		const certificate = new X509Certificate(certPem);
+		return !!(isIP(host) ? certificate.checkIP(host) : certificate.checkHost(host));
 	} catch {
 		return false;
 	}
@@ -112,7 +112,7 @@ async function resolveHaTlsCertificate(): Promise<HaTlsCertificate> {
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 
 	const existing = await readablePair(certPath, keyPath);
-	if (existing && certificateCoversConfiguredAddress(existing.cert)) return existing;
+	if (existing && haCertificateCoversAddress(existing.cert, config.ha.selfAdminUrl)) return existing;
 	if (existing) Logger.info("HA: the existing self-signed certificate does not cover this node's current admin URL, regenerating.");
 
 	await Promise.all([rm(certPath, { force: true }), rm(keyPath, { force: true })]);
