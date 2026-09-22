@@ -308,6 +308,15 @@
 										<td>⚠️ External module/custom signing</td>
 									</tr>
 									<tr>
+										<th scope="row">CrowdSec remediation component</th>
+										<td class="burrowgate-col">✅ Built in, HTTP and TCP/UDP, ban/captcha/AppSec per site, route, and Stream</td>
+										<td>⚠️ Third-party plugin</td>
+										<td>❌</td>
+										<td>⚠️ Third-party module</td>
+										<td>⚠️ Official bouncer</td>
+										<td>⚠️ Third-party bouncer</td>
+									</tr>
+									<tr>
 										<th scope="row">Firewall sync</th>
 										<td class="burrowgate-col">✅ Push bans to UniFi, nftables, OVH, or AWS</td>
 										<td>⚠️ External automation</td>
@@ -320,9 +329,10 @@
 							</table>
 						</div>
 						<p>
-							BurrowGate's distinction is the integration: bot and privacy-network identity and blocking, protection decisions, browser challenges, local or
-							OIDC-backed access accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit surface. Its small
-							bundled ruleset does not inspect request bodies and is not a replacement for the OWASP Core Rule Set. Read the
+							BurrowGate's distinction is the integration: bot and privacy-network identity and blocking, protection decisions, CrowdSec decisions, browser
+							challenges, local or OIDC-backed access accounts, signed upstream identity, bans, traffic records, and firewall updates share one policy and audit
+							surface. Its small bundled ruleset does not inspect request bodies and is not a replacement for the OWASP Core Rule Set, though CrowdSec's AppSec
+							component can be enabled per route for that. Read the
 							<a class="link-accent" href="https://github.com/Rabbit-Company/BurrowGate/blob/main/docs/BOT_MANAGEMENT.md" target="_blank" rel="noopener"
 								>bot management documentation</a
 							>, the

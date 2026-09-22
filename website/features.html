@@ -129,6 +129,29 @@
 						<div class="feature-card">
 							<div class="feature-icon">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M12 3l8 4v5c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V7l8-4z" />
+									<path d="M12 8v4" />
+									<path d="M12 15h.01" />
+								</svg>
+							</div>
+							<h3>CrowdSec</h3>
+							<p>Act on a shared threat feed, and optionally on CrowdSec's WAF.</p>
+							<ul>
+								<li>Acts as a CrowdSec remediation component, pulling decisions from a Local API in stream mode</li>
+								<li>Decisions are held in memory and indexed, so a lookup costs the same at half a million decisions as at ten thousand</li>
+								<li>Nothing on the request path waits on the Local API, and an outage leaves the decisions already loaded in force</li>
+								<li>Separate ban and captcha modes per site and per route, with captcha decisions served by the built-in challenge chain</li>
+								<li>TCP and UDP streams enforce the same decisions, and live connections are re-checked when new ones arrive</li>
+								<li>Optional CrowdSec AppSec (WAF) inspection, off by default and opted into per route because it costs a round-trip</li>
+								<li>Explicit IP and ASN allow rules override CrowdSec, so a community-list false positive cannot lock you out</li>
+								<li>Every site starts in identify-only mode, so matches are visible before anything is blocked</li>
+								<li>Decisions are node-local and never replicated, so a replica keeps enforcing while the primary is unreachable</li>
+							</ul>
+						</div>
+
+						<div class="feature-card">
+							<div class="feature-icon">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 									<path d="M4 5h16l-6 7v6l-4 2v-8z" />
 								</svg>
 							</div>
