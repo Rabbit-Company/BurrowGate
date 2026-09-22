@@ -1,12 +1,12 @@
 import { APP_VERSION, dashboardSwitchNav, escapeHtml, page, tablerIcon } from "./layout.ts";
 
-interface NotificationEventTypeOption {
+export interface NotificationEventTypeOption {
 	value: string;
 	label: string;
 	description: string;
 }
 
-const SITE_EVENT_TYPES: NotificationEventTypeOption[] = [
+export const SITE_EVENT_TYPES: NotificationEventTypeOption[] = [
 	{ value: "origin_unhealthy", label: "Origin unhealthy", description: "A configured origin failed its health check." },
 	{ value: "origin_recovered", label: "Origin recovered", description: "A previously unhealthy origin passed its health check again." },
 	{ value: "pool_unhealthy", label: "All origins down", description: "Every origin for this site is unavailable." },
@@ -26,9 +26,15 @@ const SITE_EVENT_TYPES: NotificationEventTypeOption[] = [
 	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
 	{ value: "ha_node_down", label: "HA node down", description: "This node lost contact with a replica (primary) or with the primary (replica)." },
 	{ value: "ha_node_up", label: "HA node up", description: "A previously lost HA connection was restored." },
+	{
+		value: "crowdsec_lapi_down",
+		label: "CrowdSec Local API unreachable",
+		description: "Polling the CrowdSec Local API has been failing. The decisions already loaded stay in force until they expire.",
+	},
+	{ value: "crowdsec_lapi_up", label: "CrowdSec Local API reachable", description: "Polling the CrowdSec Local API recovered after an outage." },
 ];
 
-const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
+export const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
 	{ value: "stream_origin_unhealthy", label: "Origin unhealthy", description: "The stream's forward host/port stopped accepting TCP connections." },
 	{ value: "stream_origin_recovered", label: "Origin recovered", description: "The stream's forward host/port started accepting TCP connections again." },
 	{ value: "stream_ip_banned", label: "IP auto-banned", description: "An IP address was automatically blocked (bandwidth limit or WAF match)." },
@@ -46,6 +52,12 @@ const STREAM_EVENT_TYPES: NotificationEventTypeOption[] = [
 	{ value: "system_resource_normal", label: "System resource normal", description: "A previously high system resource returned below its alert threshold." },
 	{ value: "ha_node_down", label: "HA node down", description: "This node lost contact with a replica (primary) or with the primary (replica)." },
 	{ value: "ha_node_up", label: "HA node up", description: "A previously lost HA connection was restored." },
+	{
+		value: "crowdsec_lapi_down",
+		label: "CrowdSec Local API unreachable",
+		description: "Polling the CrowdSec Local API has been failing. The decisions already loaded stay in force until they expire.",
+	},
+	{ value: "crowdsec_lapi_up", label: "CrowdSec Local API reachable", description: "Polling the CrowdSec Local API recovered after an outage." },
 ];
 
 function sortButton(label: string, key: string): string {

@@ -49,6 +49,7 @@ import { streamProxyManager } from "./services/stream-proxy-service.ts";
 import { registerStreamAdminRoutes } from "./routes/stream-admin-routes.ts";
 import { registerNotificationAdminRoutes } from "./routes/notification-admin-routes.ts";
 import { registerFirewallSyncAdminRoutes } from "./routes/firewall-sync-admin-routes.ts";
+import { registerCrowdSecAdminRoutes } from "./routes/crowdsec-admin-routes.ts";
 import { registerDnsAdminRoutes } from "./routes/dns-admin-routes.ts";
 import { registerHaClusterAdminRoutes } from "./routes/ha-cluster-admin-routes.ts";
 import { registerHostAdminRoutes } from "./routes/host-admin-routes.ts";
@@ -106,6 +107,9 @@ import {
 	resolvedNetworkPrivacyPolicy,
 	startNetworkPrivacyRefresh,
 } from "./services/network-privacy-service.ts";
+import { crowdSecService } from "./services/crowdsec-service.ts";
+import { bufferBodyForAppSec, inspectWithAppSec, type AppSecResult } from "./services/crowdsec-appsec-service.ts";
+import { crowdSecEventDetail, crowdSecReason, evaluateCrowdSec, resolvedCrowdSecPolicy, type CrowdSecEventDetail } from "./services/crowdsec-policy-service.ts";
 
 process.on("SIGTERM", () => void processLifecycle.gracefulRestart("SIGTERM", 0));
 process.on("SIGINT", () => void processLifecycle.gracefulRestart("SIGINT", 0));
@@ -147,6 +151,10 @@ connectivityMonitor.start();
 systemMonitor.start();
 notificationService.start();
 firewallSyncService.start();
+// Every node polls the LAPI itself. Decisions are never replicated, so a replica keeps enforcing
+// while the primary is unreachable.
+crowdSecService.onDecisionsChanged(() => streamProxyManager.enforceCrowdSecDecisions());
+await crowdSecService.start();
 updateCheckManager.start();
 await haMeshService.start();
 haElectionService.start();
@@ -269,6 +277,7 @@ registerAdminRoutes(app);
 registerStreamAdminRoutes(app);
 registerNotificationAdminRoutes(app);
 registerFirewallSyncAdminRoutes(app);
+registerCrowdSecAdminRoutes(app);
 registerDnsAdminRoutes(app);
 registerHaClusterAdminRoutes(app);
 registerHostAdminRoutes(app);
@@ -289,7 +298,7 @@ app.get("/_burrowgate/health", () => {
 
 async function gateway(ctx: any): Promise<Response> {
 	const started = performance.now();
-	const request: Request = ctx.req;
+	let request: Request = ctx.req;
 	const host = normalizeHost(requestHost(request));
 	const site = ctx.state.site ?? (await resolveSiteForHost(host));
 	if (!site) return jsonResponse({ error: `No BurrowGate site is configured for ${host}` }, 421);
@@ -322,6 +331,8 @@ async function gateway(ctx: any): Promise<Response> {
 		botCategory?: string | null;
 		botVerified?: boolean | null;
 		networkPrivacy?: string[] | null;
+		crowdsec?: CrowdSecEventDetail | null;
+		appsec?: { status: string; action: string | null; mode: string; body: string; durationMs: number } | null;
 	} = {
 		siteId: site.id,
 		ip,
@@ -413,6 +424,33 @@ async function gateway(ctx: any): Promise<Response> {
 				reason: `This request was classified as ${label} and blocked by network privacy policy.`,
 			},
 			{ "x-burrowgate-error-code": "network_privacy_blocked" },
+		);
+	}
+
+	// Placed after the site's own IP rules, which outrank it, but ahead of the WAF and challenge
+	// machinery, so a remote blocklist decision never travels the whole pipeline.
+	const crowdSec = evaluateCrowdSec(ip, ipRule.countryCode, ipRule.asn, resolvedCrowdSecPolicy(site, route.policy), ipRule.source, ipRule.action);
+	if (crowdSec.decision) eventBase.crowdsec = crowdSecEventDetail(crowdSec);
+	if (crowdSec.enforcement === "block" && crowdSec.decision) {
+		await recordEvent({ ...eventBase, sessionId: null, status: 403, decision: "crowdsec-blocked", latencyMs: Math.round(performance.now() - started) });
+		const retryAfterSeconds = crowdSec.decision.expiresAt ? Math.max(1, Math.ceil((crowdSec.decision.expiresAt - Date.now()) / 1_000)) : null;
+		const baseReason = crowdSecReason(crowdSec.decision);
+		return siteErrorResponse(
+			site,
+			request,
+			{
+				status: 403,
+				code: "crowdsec_blocked",
+				error: "Access blocked by BurrowGate",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: crowdSec.decision.expiresAt ? `${baseReason} This decision expires at ${formatBanExpiry(crowdSec.decision.expiresAt)}.` : baseReason,
+				...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
+			},
+			{
+				"x-burrowgate-error-code": "crowdsec_blocked",
+				...(retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : {}),
+			},
 		);
 	}
 
@@ -511,6 +549,58 @@ async function gateway(ctx: any): Promise<Response> {
 			retryAfterSeconds !== null ? { "retry-after": String(retryAfterSeconds) } : undefined,
 		);
 	}
+	// CrowdSec AppSec runs after BurrowGate's own WAF so a request the local ruleset already
+	// rejects never pays for a round-trip. Off unless the route opts in and an endpoint is set.
+	const appSecMode = resolvedCrowdSecPolicy(site, route.policy).appsec;
+	const appSecConnection = appSecMode === "disabled" ? null : crowdSecService.appSecConnection();
+	if (appSecConnection) {
+		const buffered = await bufferBodyForAppSec(request, appSecConnection.maxBodyBytes);
+		// Rebuilt so the consumed body can still be forwarded to the origin.
+		if (buffered.body) request = new Request(request, { body: buffered.body });
+		const appSec: AppSecResult = await inspectWithAppSec(
+			{
+				ip,
+				url,
+				method: request.method,
+				headers: request.headers,
+				httpVersion: ctx.req?.httpVersion ?? null,
+				body: buffered.body,
+			},
+			appSecConnection,
+		);
+		eventBase.appsec = { status: appSec.status, action: appSec.action, mode: appSecMode, body: buffered.outcome, durationMs: Math.round(appSec.durationMs) };
+		if (appSec.status === "error") {
+			Logger.warn("CrowdSec AppSec: inspection failed", { error: appSec.error, failOpen: appSecConnection.failOpen });
+			if (!appSecConnection.failOpen) {
+				await recordEvent({ ...eventBase, sessionId: null, status: 503, decision: "appsec-unavailable", latencyMs: Math.round(performance.now() - started) });
+				return siteErrorResponse(site, request, {
+					status: 503,
+					code: "appsec_unavailable",
+					error: "Request inspection is unavailable",
+					clientIp: ip,
+					routePolicy: route.policy?.name,
+					reason: "The CrowdSec AppSec component did not answer and this route is configured to refuse requests it cannot inspect.",
+				});
+			}
+		} else if (appSec.status === "blocked" && appSecMode === "block") {
+			const status = appSec.httpStatus ?? 403;
+			await recordEvent({ ...eventBase, sessionId: null, status, decision: "appsec-blocked", latencyMs: Math.round(performance.now() - started) });
+			return siteErrorResponse(
+				site,
+				request,
+				{
+					status,
+					code: "appsec_blocked",
+					error: "Request blocked by BurrowGate",
+					clientIp: ip,
+					routePolicy: route.policy?.name,
+					reason: "The request matched a CrowdSec AppSec rule.",
+				},
+				{ "x-burrowgate-error-code": "appsec_blocked" },
+			);
+		}
+	}
+
 	const accessSettings = await accessSettingsForSite(site.id);
 	const accessAuthenticationEnabled = accessSettings.enabled === 1;
 
@@ -518,17 +608,28 @@ async function gateway(ctx: any): Promise<Response> {
 	// browser verification challenge and the access-list login form.
 	const apiTokenAccess = accessAuthenticationEnabled ? await resolveApiTokenAccess(request, site, ip) : null;
 
+	// A captcha decision runs the site's challenge chain, even on a bypass route, so a suspected
+	// visitor can prove themselves instead of being dropped.
+	const crowdSecChallenge = crowdSec.enforcement === "challenge";
+
 	// A session is required for challenge-protected routes, access-list login,
 	// and optionally as the route rate-limit identity.
 	const needsSession =
 		accessAuthenticationEnabled ||
 		route.accessMode === "challenge" ||
 		ipRule.action === "challenge" ||
+		crowdSecChallenge ||
 		route.policy?.rate_limit_key_mode === "session-or-ip" ||
 		site.load_balancing_affinity !== 0;
 	const candidateSession = apiTokenAccess ? apiTokenAccess.session : needsSession ? await findAccessSession(request, site, ip) : null;
 
-	const effectiveAccess = ipRule.action === "allow" ? "bypass" : ipRule.action === "challenge" ? "challenge" : route.accessMode;
+	const effectiveAccess = crowdSecChallenge
+		? "challenge"
+		: ipRule.action === "allow"
+			? "bypass"
+			: ipRule.action === "challenge"
+				? "challenge"
+				: route.accessMode;
 	const session = apiTokenAccess ? apiTokenAccess.session : effectiveAccess === "challenge" || accessAuthenticationEnabled ? candidateSession : null;
 
 	if (!apiTokenAccess && (effectiveAccess === "challenge" || accessAuthenticationEnabled) && !session) {

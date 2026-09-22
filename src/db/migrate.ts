@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS sites (
   http_policy_json TEXT NULL,
 	bot_policy_json TEXT NULL,
   network_privacy_policy_json TEXT NULL,
+  crowdsec_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS route_policies (
   http_policy_json TEXT NULL,
 	bot_policy_json TEXT NULL,
   network_privacy_policy_json TEXT NULL,
+  crowdsec_policy_json TEXT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at BIGINT NOT NULL,
@@ -293,6 +295,7 @@ CREATE TABLE IF NOT EXISTS request_events (
 	bot_category VARCHAR(32) NULL,
 	bot_verified INTEGER NULL,
 	network_privacy_json TEXT NULL,
+	crowdsec_json TEXT NULL,
   created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bandwidth_minutes (
@@ -472,6 +475,7 @@ CREATE TABLE IF NOT EXISTS streams (
   udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0,
   protection_policy_json TEXT NULL,
   network_privacy_policy_json TEXT NULL,
+  crowdsec_policy_json TEXT NULL,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
@@ -495,6 +499,7 @@ CREATE TABLE IF NOT EXISTS stream_events (
   asn BIGINT NULL,
   asn_org VARCHAR(255) NULL,
   network_privacy_json TEXT NULL,
+  crowdsec_json TEXT NULL,
   reason VARCHAR(255) NULL,
   error TEXT NULL,
   protection_rule_id VARCHAR(128) NULL,
@@ -729,6 +734,30 @@ CREATE TABLE IF NOT EXISTS firewall_sync_whitelist_cidrs (
   network_cidr VARCHAR(160) NOT NULL,
   note TEXT NULL,
   created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS crowdsec_settings (
+  id VARCHAR(64) PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  lapi_url TEXT NULL,
+  api_key_encrypted TEXT NULL,
+  verify_tls INTEGER NOT NULL DEFAULT 1,
+  poll_interval_seconds INTEGER NOT NULL DEFAULT 10,
+  full_sync_interval_seconds INTEGER NOT NULL DEFAULT 1800,
+  request_timeout_ms INTEGER NOT NULL DEFAULT 5000,
+  scopes VARCHAR(128) NOT NULL DEFAULT 'ip,range',
+  unknown_remediation VARCHAR(16) NOT NULL DEFAULT 'ban',
+  alert_after_minutes INTEGER NOT NULL DEFAULT 15,
+  last_polled_at BIGINT NULL,
+  last_success_at BIGINT NULL,
+  last_poll_status VARCHAR(16) NULL,
+  last_poll_error TEXT NULL,
+  last_decision_count INTEGER NOT NULL DEFAULT 0,
+  appsec_url TEXT NULL,
+  appsec_timeout_ms INTEGER NOT NULL DEFAULT 200,
+  appsec_fail_open INTEGER NOT NULL DEFAULT 1,
+  appsec_max_body_bytes INTEGER NOT NULL DEFAULT 65536,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dns_providers (
   id VARCHAR(64) PRIMARY KEY,
@@ -985,6 +1014,7 @@ async function ensureSiteColumns(): Promise<void> {
 		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_enabled INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_max_failures INTEGER NOT NULL DEFAULT 5",
 		"ALTER TABLE sites ADD COLUMN challenge_auto_ban_seconds INTEGER NOT NULL DEFAULT 3600",
+		"ALTER TABLE sites ADD COLUMN crowdsec_policy_json TEXT NULL",
 	];
 	for (const statement of statements) {
 		try {
@@ -1001,6 +1031,21 @@ async function ensureSiteColumns(): Promise<void> {
 	await db`UPDATE sites SET notification_event_types_json='{}' WHERE notification_event_types_json IS NULL`;
 }
 
+async function ensureCrowdSecSettingsColumns(): Promise<void> {
+	for (const statement of [
+		"ALTER TABLE crowdsec_settings ADD COLUMN appsec_url TEXT NULL",
+		"ALTER TABLE crowdsec_settings ADD COLUMN appsec_timeout_ms INTEGER NOT NULL DEFAULT 200",
+		"ALTER TABLE crowdsec_settings ADD COLUMN appsec_fail_open INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE crowdsec_settings ADD COLUMN appsec_max_body_bytes INTEGER NOT NULL DEFAULT 65536",
+	]) {
+		try {
+			await db.unsafe(statement);
+		} catch (error) {
+			if (!duplicateColumnError(error)) throw error;
+		}
+	}
+}
+
 async function ensureRoutePolicyColumns(): Promise<void> {
 	for (const statement of [
 		"ALTER TABLE route_policies ADD COLUMN websocket_policy_json TEXT NULL",
@@ -1009,6 +1054,7 @@ async function ensureRoutePolicyColumns(): Promise<void> {
 		"ALTER TABLE route_policies ADD COLUMN network_privacy_policy_json TEXT NULL",
 		"ALTER TABLE route_policies ADD COLUMN default_ip_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
 		"ALTER TABLE route_policies ADD COLUMN default_country_action VARCHAR(32) NOT NULL DEFAULT 'inherit'",
+		"ALTER TABLE route_policies ADD COLUMN crowdsec_policy_json TEXT NULL",
 	]) {
 		try {
 			await db.unsafe(statement);
@@ -1120,6 +1166,7 @@ async function ensureStreamColumns(): Promise<void> {
 		"ALTER TABLE streams ADD COLUMN udp_amplification_max_ratio INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN protection_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN network_privacy_policy_json TEXT NULL",
+		"ALTER TABLE streams ADD COLUMN crowdsec_policy_json TEXT NULL",
 		"ALTER TABLE streams ADD COLUMN proxy_protocol VARCHAR(16) NOT NULL DEFAULT 'disabled'",
 		"ALTER TABLE streams ADD COLUMN incoming_proxy_protocol INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE streams ADD COLUMN proxy_protocol_trusted_cidrs_json TEXT NULL",
@@ -1294,6 +1341,7 @@ async function ensureStreamEventColumns(): Promise<void> {
 		"ALTER TABLE stream_events ADD COLUMN duration_ms BIGINT NULL",
 		"ALTER TABLE stream_events ADD COLUMN username VARCHAR(255) NULL",
 		"ALTER TABLE stream_events ADD COLUMN network_privacy_json TEXT NULL",
+		"ALTER TABLE stream_events ADD COLUMN crowdsec_json TEXT NULL",
 	]) {
 		try {
 			await db.unsafe(statement);
@@ -1324,6 +1372,7 @@ async function ensureRequestEventColumns(): Promise<void> {
 		"ALTER TABLE request_events ADD COLUMN bot_category VARCHAR(32) NULL",
 		"ALTER TABLE request_events ADD COLUMN bot_verified INTEGER NULL",
 		"ALTER TABLE request_events ADD COLUMN network_privacy_json TEXT NULL",
+		"ALTER TABLE request_events ADD COLUMN crowdsec_json TEXT NULL",
 		`ALTER TABLE request_events ADD COLUMN request_body ${largeTextType} NULL`,
 		"ALTER TABLE request_events ADD COLUMN request_body_truncated INTEGER NULL",
 		"ALTER TABLE request_events ADD COLUMN request_content_type VARCHAR(255) NULL",
@@ -1517,6 +1566,7 @@ export async function migrate(): Promise<void> {
 	await db.unsafe(schema);
 	await ensureSiteColumns();
 	await ensureRoutePolicyColumns();
+	await ensureCrowdSecSettingsColumns();
 	await ensureIpRuleColumns();
 	await ensureStreamColumns();
 	await ensureGeoIpColumns();

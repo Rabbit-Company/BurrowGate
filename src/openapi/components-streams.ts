@@ -25,6 +25,7 @@ export const streamSchemas: Record<string, JsonSchema> = {
 			"originHealthCheck",
 			"protection",
 			"networkPrivacyPolicy",
+			"crowdSecPolicy",
 			"createdAt",
 			"updatedAt",
 		],
@@ -80,6 +81,7 @@ export const streamSchemas: Record<string, JsonSchema> = {
 			},
 			protection: { $ref: "#/components/schemas/StreamProtectionPolicy" },
 			networkPrivacyPolicy: { $ref: "#/components/schemas/NetworkPrivacyPolicy" },
+			crowdSecPolicy: { $ref: "#/components/schemas/StreamCrowdSecPolicy" },
 			createdAt: { type: "integer", description: "Unix milliseconds." },
 			updatedAt: { type: "integer", description: "Unix milliseconds." },
 		},
@@ -498,6 +500,16 @@ export const streamSchemas: Record<string, JsonSchema> = {
 		required: ["asn"],
 		properties: {
 			asn: { $ref: "#/components/schemas/GeoIpDatabaseStatus" },
+		},
+	},
+	StreamCrowdSecPolicy: {
+		type: "object",
+		description:
+			"How a stream reacts to a matching CrowdSec decision. A stream has no challenge chain, so a captcha decision can only be identified or blocked, and both default to monitor.",
+		required: ["ban", "captcha"],
+		properties: {
+			ban: { type: "string", enum: ["disabled", "monitor", "block"] },
+			captcha: { type: "string", enum: ["disabled", "monitor", "block"] },
 		},
 	},
 };

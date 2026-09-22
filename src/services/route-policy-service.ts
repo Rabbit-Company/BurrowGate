@@ -24,6 +24,7 @@ import { resolveHttpPolicy, routeHttpPolicyView, serializeRouteHttpPolicy, type 
 import { staticAssetCache } from "./static-cache-service.ts";
 import { serializeRouteBotPolicy, storedBotPolicy, type BotPolicy } from "./bot-service.ts";
 import { serializeRouteNetworkPrivacyPolicy, storedNetworkPrivacyPolicy, type NetworkPrivacyPolicy } from "./network-privacy-service.ts";
+import { serializeRouteCrowdSecPolicy, storedCrowdSecPolicy, type CrowdSecPolicy } from "./crowdsec-policy-service.ts";
 
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 
@@ -53,6 +54,7 @@ export interface RoutePolicyInput {
 	defaultCountryAction?: unknown;
 	botPolicy?: unknown;
 	networkPrivacyPolicy?: unknown;
+	crowdSecPolicy?: unknown;
 }
 
 export interface RoutePolicyView {
@@ -81,6 +83,7 @@ export interface RoutePolicyView {
 	defaultCountryAction: DefaultNetworkAction;
 	botPolicy: BotPolicy | null;
 	networkPrivacyPolicy: NetworkPrivacyPolicy | null;
+	crowdSecPolicy: CrowdSecPolicy | null;
 	priority: number;
 	enabled: boolean;
 	createdAt: number;
@@ -222,6 +225,7 @@ export function routePolicyView(policy: RoutePolicyRecord): RoutePolicyView {
 		defaultCountryAction: policy.default_country_action ?? "inherit",
 		botPolicy: policy.bot_policy_json ? storedBotPolicy(policy.bot_policy_json) : null,
 		networkPrivacyPolicy: policy.network_privacy_policy_json ? storedNetworkPrivacyPolicy(policy.network_privacy_policy_json) : null,
+		crowdSecPolicy: policy.crowdsec_policy_json ? storedCrowdSecPolicy(policy.crowdsec_policy_json) : null,
 		priority: Number(policy.priority),
 		enabled: policy.enabled === 1,
 		createdAt: Number(policy.created_at),
@@ -273,6 +277,7 @@ async function buildRecord(siteId: string, input: RoutePolicyInput, existing?: R
 		default_country_action: parseDefaultNetworkAction(input.defaultCountryAction, existing?.default_country_action ?? "inherit"),
 		bot_policy_json: serializeRouteBotPolicy(input.botPolicy, existing?.bot_policy_json),
 		network_privacy_policy_json: serializeRouteNetworkPrivacyPolicy(input.networkPrivacyPolicy, existing?.network_privacy_policy_json),
+		crowdsec_policy_json: serializeRouteCrowdSecPolicy(input.crowdSecPolicy, existing?.crowdsec_policy_json),
 		priority: integerValue(input.priority, "Priority", existing?.priority ?? 0, -100_000, 100_000),
 		enabled: booleanValue(input.enabled, existing?.enabled === 1) ? 1 : 0,
 		created_at: existing?.created_at ?? now,

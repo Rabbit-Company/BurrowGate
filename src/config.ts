@@ -250,6 +250,12 @@ export const config = {
 		defaultUnifiMaxEntries: envNumber("BG_FIREWALL_SYNC_UNIFI_DEFAULT_MAX_ENTRIES", 2_000, 1, 1_000_000),
 		defaultNftablesMaxEntries: envNumber("BG_FIREWALL_SYNC_NFTABLES_DEFAULT_MAX_ENTRIES", 100_000, 1, 10_000_000),
 	},
+	crowdsec: {
+		enabled: envBoolean("BG_CROWDSEC_ENABLED", true),
+		maxDecisions: envNumber("BG_CROWDSEC_MAX_DECISIONS", 1_000_000, 1_000, 20_000_000),
+		snapshotChunkSize: envNumber("BG_CROWDSEC_SNAPSHOT_CHUNK_SIZE", 4_000, 100, 200_000),
+		sweepIntervalMs: envNumber("BG_CROWDSEC_SWEEP_INTERVAL_MS", 300_000, 10_000, 3_600_000),
+	},
 	ha: {
 		enabled: true,
 		role: haRole(process.env.BG_HA_ROLE),

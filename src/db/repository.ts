@@ -27,6 +27,8 @@ import type {
 	CountryRuleRecord,
 	AsnRuleRecord,
 	ChallengeStepRecord,
+	CrowdSecPollStatus,
+	CrowdSecSettingsRecord,
 	DnsProviderRecord,
 	FirewallSyncProviderRecord,
 	FirewallSyncStatus,
@@ -527,6 +529,7 @@ export type ReplicatedEntityType =
 	| "relay_watermark"
 	| "firewall_sync_provider"
 	| "firewall_sync_whitelist_cidr"
+	| "crowdsec_settings"
 	| "pending_change"
 	| "acme_account"
 	| "ha_cluster_member";
@@ -845,6 +848,10 @@ async function applyChangelogRow(
 			await transaction`DELETE FROM firewall_sync_whitelist_cidrs WHERE id=${entityId}`;
 			if (row) await transaction`INSERT INTO firewall_sync_whitelist_cidrs ${transaction(row)}`;
 			return;
+		case "crowdsec_settings":
+			await transaction`DELETE FROM crowdsec_settings WHERE id=${entityId}`;
+			if (row) await transaction`INSERT INTO crowdsec_settings ${transaction(row)}`;
+			return;
 		case "pending_change":
 			await transaction`DELETE FROM pending_changes WHERE id=${entityId}`;
 			if (row) await transaction`INSERT INTO pending_changes ${transaction(row)}`;
@@ -948,6 +955,7 @@ const SNAPSHOT_TABLES: Array<{ entityType: ReplicatedEntityType; table: string; 
 	{ entityType: "stream_asn_rule", table: "stream_asn_rules", entityId: (row) => row.id as string },
 	{ entityType: "firewall_sync_provider", table: "firewall_sync_providers", entityId: (row) => row.id as string },
 	{ entityType: "firewall_sync_whitelist_cidr", table: "firewall_sync_whitelist_cidrs", entityId: (row) => row.id as string },
+	{ entityType: "crowdsec_settings", table: "crowdsec_settings", entityId: (row) => row.id as string },
 	{ entityType: "pending_change", table: "pending_changes", entityId: (row) => row.id as string },
 	{ entityType: "acme_account", table: "acme_accounts", entityId: (row) => row.id as string },
 	{ entityType: "ha_cluster_member", table: "ha_cluster_members", entityId: (row) => row.node_id as string },
@@ -1143,15 +1151,15 @@ export const repository = {
 	async insertSite(site: SiteRecord): Promise<void> {
 		assertPrimaryWritable("a site");
 		await db.begin(async (transaction) => {
-			await transaction`INSERT INTO sites (id,name,public_host,origin_type,origin_url,origin_signing_secret,ip_extraction_preset,enabled,session_ttl_seconds,challenge_policy_json,challenge_auto_ban_enabled,challenge_auto_ban_max_failures,challenge_auto_ban_seconds,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,challenge_html_templates_json,challenge_text_overrides_json,challenge_csp_overrides_json,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,outbound_fetch_protocol,websocket_policy_json,http_policy_json,bot_policy_json,network_privacy_policy_json,created_at,updated_at)
-			VALUES (${site.id},${site.name},${site.public_host},${site.origin_type ?? "proxy"},${site.origin_url},${site.origin_signing_secret},${site.ip_extraction_preset},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.challenge_auto_ban_enabled},${site.challenge_auto_ban_max_failures},${site.challenge_auto_ban_seconds},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.challenge_html_templates_json ?? null},${site.challenge_text_overrides_json ?? null},${site.challenge_csp_overrides_json ?? null},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.load_balancing_algorithm},${site.load_balancing_affinity},${site.outbound_fetch_protocol ?? "http1"},${site.websocket_policy_json ?? null},${site.http_policy_json ?? null},${site.bot_policy_json ?? null},${site.network_privacy_policy_json ?? null},${site.created_at},${site.updated_at})`;
+			await transaction`INSERT INTO sites (id,name,public_host,origin_type,origin_url,origin_signing_secret,ip_extraction_preset,enabled,session_ttl_seconds,challenge_policy_json,challenge_auto_ban_enabled,challenge_auto_ban_max_failures,challenge_auto_ban_seconds,default_access_mode,event_retention_days,default_ip_action,default_country_action,error_response_mode,error_html_template,error_json_fields_json,challenge_html_template,challenge_html_templates_json,challenge_text_overrides_json,challenge_csp_overrides_json,health_check_enabled,health_check_path,health_check_interval_seconds,health_check_timeout_ms,health_check_failure_threshold,health_check_recovery_threshold,health_check_failure_mode,health_alert_enabled,health_alert_provider,health_alert_webhook_url,health_alert_webhook_secret,load_balancing_algorithm,load_balancing_affinity,outbound_fetch_protocol,websocket_policy_json,http_policy_json,bot_policy_json,network_privacy_policy_json,crowdsec_policy_json,created_at,updated_at)
+			VALUES (${site.id},${site.name},${site.public_host},${site.origin_type ?? "proxy"},${site.origin_url},${site.origin_signing_secret},${site.ip_extraction_preset},${site.enabled},${site.session_ttl_seconds},${site.challenge_policy_json},${site.challenge_auto_ban_enabled},${site.challenge_auto_ban_max_failures},${site.challenge_auto_ban_seconds},${site.default_access_mode},${site.event_retention_days},${site.default_ip_action},${site.default_country_action},${site.error_response_mode},${site.error_html_template},${site.error_json_fields_json},${site.challenge_html_template},${site.challenge_html_templates_json ?? null},${site.challenge_text_overrides_json ?? null},${site.challenge_csp_overrides_json ?? null},${site.health_check_enabled},${site.health_check_path},${site.health_check_interval_seconds},${site.health_check_timeout_ms},${site.health_check_failure_threshold},${site.health_check_recovery_threshold},${site.health_check_failure_mode},${site.health_alert_enabled},${site.health_alert_provider},${site.health_alert_webhook_url},${site.health_alert_webhook_secret},${site.load_balancing_algorithm},${site.load_balancing_affinity},${site.outbound_fetch_protocol ?? "http1"},${site.websocket_policy_json ?? null},${site.http_policy_json ?? null},${site.bot_policy_json ?? null},${site.network_privacy_policy_json ?? null},${site.crowdsec_policy_json ?? null},${site.created_at},${site.updated_at})`;
 			await appendChangelogEntry(transaction, "site", site.id, "insert", site);
 		});
 	},
 	async updateSite(site: SiteRecord): Promise<void> {
 		assertPrimaryWritable("a site");
 		await db.begin(async (transaction) => {
-			await transaction`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_type=${site.origin_type ?? "proxy"}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, ip_extraction_preset=${site.ip_extraction_preset}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, challenge_auto_ban_enabled=${site.challenge_auto_ban_enabled}, challenge_auto_ban_max_failures=${site.challenge_auto_ban_max_failures}, challenge_auto_ban_seconds=${site.challenge_auto_ban_seconds}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, challenge_html_templates_json=${site.challenge_html_templates_json ?? null}, challenge_text_overrides_json=${site.challenge_text_overrides_json ?? null}, challenge_csp_overrides_json=${site.challenge_csp_overrides_json ?? null}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, load_balancing_algorithm=${site.load_balancing_algorithm}, load_balancing_affinity=${site.load_balancing_affinity}, outbound_fetch_protocol=${site.outbound_fetch_protocol ?? "http1"}, websocket_policy_json=${site.websocket_policy_json ?? null}, http_policy_json=${site.http_policy_json ?? null}, bot_policy_json=${site.bot_policy_json ?? null}, network_privacy_policy_json=${site.network_privacy_policy_json ?? null}, updated_at=${site.updated_at} WHERE id=${site.id}`;
+			await transaction`UPDATE sites SET name=${site.name}, public_host=${site.public_host}, origin_type=${site.origin_type ?? "proxy"}, origin_url=${site.origin_url}, origin_signing_secret=${site.origin_signing_secret}, ip_extraction_preset=${site.ip_extraction_preset}, enabled=${site.enabled}, session_ttl_seconds=${site.session_ttl_seconds}, challenge_policy_json=${site.challenge_policy_json}, challenge_auto_ban_enabled=${site.challenge_auto_ban_enabled}, challenge_auto_ban_max_failures=${site.challenge_auto_ban_max_failures}, challenge_auto_ban_seconds=${site.challenge_auto_ban_seconds}, default_access_mode=${site.default_access_mode}, event_retention_days=${site.event_retention_days}, default_ip_action=${site.default_ip_action}, default_country_action=${site.default_country_action}, error_response_mode=${site.error_response_mode}, error_html_template=${site.error_html_template}, error_json_fields_json=${site.error_json_fields_json}, challenge_html_template=${site.challenge_html_template}, challenge_html_templates_json=${site.challenge_html_templates_json ?? null}, challenge_text_overrides_json=${site.challenge_text_overrides_json ?? null}, challenge_csp_overrides_json=${site.challenge_csp_overrides_json ?? null}, health_check_enabled=${site.health_check_enabled}, health_check_path=${site.health_check_path}, health_check_interval_seconds=${site.health_check_interval_seconds}, health_check_timeout_ms=${site.health_check_timeout_ms}, health_check_failure_threshold=${site.health_check_failure_threshold}, health_check_recovery_threshold=${site.health_check_recovery_threshold}, health_check_failure_mode=${site.health_check_failure_mode}, health_alert_enabled=${site.health_alert_enabled}, health_alert_provider=${site.health_alert_provider}, health_alert_webhook_url=${site.health_alert_webhook_url}, health_alert_webhook_secret=${site.health_alert_webhook_secret}, load_balancing_algorithm=${site.load_balancing_algorithm}, load_balancing_affinity=${site.load_balancing_affinity}, outbound_fetch_protocol=${site.outbound_fetch_protocol ?? "http1"}, websocket_policy_json=${site.websocket_policy_json ?? null}, http_policy_json=${site.http_policy_json ?? null}, bot_policy_json=${site.bot_policy_json ?? null}, network_privacy_policy_json=${site.network_privacy_policy_json ?? null}, crowdsec_policy_json=${site.crowdsec_policy_json ?? null}, updated_at=${site.updated_at} WHERE id=${site.id}`;
 			await appendChangelogEntry(transaction, "site", site.id, "update", site);
 		});
 	},
@@ -1554,15 +1562,15 @@ export const repository = {
 	async insertRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
 		assertPrimaryWritable("a route policy");
 		await db.begin(async (transaction) => {
-			await transaction`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,bot_policy_json,network_privacy_policy_json,default_ip_action,default_country_action,priority,enabled,created_at,updated_at)
-				VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.bot_policy_json ?? null},${policy.network_privacy_policy_json ?? null},${policy.default_ip_action ?? "inherit"},${policy.default_country_action ?? "inherit"},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
+			await transaction`INSERT INTO route_policies (id,site_id,name,path_pattern,methods_json,access_mode,challenge_policy_json,rate_limit_enabled,rate_limit_algorithm,rate_limit_window_ms,rate_limit_max,rate_limit_refill_rate,rate_limit_refill_interval_ms,rate_limit_precision_ms,rate_limit_key_mode,rate_limit_key_header,rate_limit_scope,websocket_policy_json,http_policy_json,bot_policy_json,network_privacy_policy_json,crowdsec_policy_json,default_ip_action,default_country_action,priority,enabled,created_at,updated_at)
+				VALUES (${policy.id},${policy.site_id},${policy.name},${policy.path_pattern},${policy.methods_json},${policy.access_mode},${policy.challenge_policy_json},${policy.rate_limit_enabled},${policy.rate_limit_algorithm},${policy.rate_limit_window_ms},${policy.rate_limit_max},${policy.rate_limit_refill_rate},${policy.rate_limit_refill_interval_ms},${policy.rate_limit_precision_ms},${policy.rate_limit_key_mode},${policy.rate_limit_key_header},${policy.rate_limit_scope},${policy.websocket_policy_json ?? null},${policy.http_policy_json ?? null},${policy.bot_policy_json ?? null},${policy.network_privacy_policy_json ?? null},${policy.crowdsec_policy_json ?? null},${policy.default_ip_action ?? "inherit"},${policy.default_country_action ?? "inherit"},${policy.priority},${policy.enabled},${policy.created_at},${policy.updated_at})`;
 			await appendChangelogEntry(transaction, "route_policy", policy.id, "insert", policy);
 		});
 	},
 	async updateRoutePolicy(policy: RoutePolicyRecord): Promise<void> {
 		assertPrimaryWritable("a route policy");
 		await db.begin(async (transaction) => {
-			await transaction`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, bot_policy_json=${policy.bot_policy_json ?? null}, network_privacy_policy_json=${policy.network_privacy_policy_json ?? null}, default_ip_action=${policy.default_ip_action ?? "inherit"}, default_country_action=${policy.default_country_action ?? "inherit"}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
+			await transaction`UPDATE route_policies SET name=${policy.name}, path_pattern=${policy.path_pattern}, methods_json=${policy.methods_json}, access_mode=${policy.access_mode}, challenge_policy_json=${policy.challenge_policy_json}, rate_limit_enabled=${policy.rate_limit_enabled}, rate_limit_algorithm=${policy.rate_limit_algorithm}, rate_limit_window_ms=${policy.rate_limit_window_ms}, rate_limit_max=${policy.rate_limit_max}, rate_limit_refill_rate=${policy.rate_limit_refill_rate}, rate_limit_refill_interval_ms=${policy.rate_limit_refill_interval_ms}, rate_limit_precision_ms=${policy.rate_limit_precision_ms}, rate_limit_key_mode=${policy.rate_limit_key_mode}, rate_limit_key_header=${policy.rate_limit_key_header}, rate_limit_scope=${policy.rate_limit_scope}, websocket_policy_json=${policy.websocket_policy_json ?? null}, http_policy_json=${policy.http_policy_json ?? null}, bot_policy_json=${policy.bot_policy_json ?? null}, network_privacy_policy_json=${policy.network_privacy_policy_json ?? null}, crowdsec_policy_json=${policy.crowdsec_policy_json ?? null}, default_ip_action=${policy.default_ip_action ?? "inherit"}, default_country_action=${policy.default_country_action ?? "inherit"}, priority=${policy.priority}, enabled=${policy.enabled}, updated_at=${policy.updated_at} WHERE id=${policy.id} AND site_id=${policy.site_id}`;
 			await appendChangelogEntry(transaction, "route_policy", policy.id, "update", policy);
 		});
 	},
@@ -2157,13 +2165,16 @@ export const repository = {
 		defaultCountryAction: string,
 		updatedAt: number,
 		networkPrivacyPolicyJson?: string | null,
+		crowdSecPolicyJson?: string | null,
 	): Promise<void> {
 		assertPrimaryWritable("a stream");
 		await db.begin(async (transaction) => {
 			if (networkPrivacyPolicyJson === undefined) {
 				await transaction`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, updated_at=${updatedAt} WHERE id=${streamId}`;
-			} else {
+			} else if (crowdSecPolicyJson === undefined) {
 				await transaction`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, network_privacy_policy_json=${networkPrivacyPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
+			} else {
+				await transaction`UPDATE streams SET default_ip_action=${defaultIpAction}, default_country_action=${defaultCountryAction}, network_privacy_policy_json=${networkPrivacyPolicyJson}, crowdsec_policy_json=${crowdSecPolicyJson}, updated_at=${updatedAt} WHERE id=${streamId}`;
 			}
 			const rows = (await transaction`SELECT * FROM streams WHERE id=${streamId} LIMIT 1`) as StreamRecord[];
 			if (rows[0]) await appendChangelogEntry(transaction, "stream", streamId, "update", rows[0]);
@@ -2203,7 +2214,7 @@ export const repository = {
 		return rows.length;
 	},
 	async insertEvent(event: RequestEventRecord): Promise<void> {
-		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,path_only,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,bot_id,bot_name,bot_category,bot_verified,network_privacy_json,request_body,request_body_truncated,request_content_type,request_headers,request_headers_truncated,response_headers,response_headers_truncated,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${pathWithoutQuery(event.path)},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.asn},${event.asn_org},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.bot_id ?? null},${event.bot_name ?? null},${event.bot_category ?? null},${event.bot_verified ?? null},${event.network_privacy_json ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.request_headers ?? null},${event.request_headers_truncated ?? null},${event.response_headers ?? null},${event.response_headers_truncated ?? null},${event.created_at})`;
+		await db`INSERT INTO request_events (id,site_id,session_id,ip,method,path,path_only,status,decision,latency_ms,country_code,asn,asn_org,origin_id,cache_status,protection_status,protection_rule_id,protection_category,protection_severity,protection_ruleset_id,protection_ruleset_version,protection_matches_json,access_username,referer,referer_host,bot_id,bot_name,bot_category,bot_verified,network_privacy_json,crowdsec_json,request_body,request_body_truncated,request_content_type,request_headers,request_headers_truncated,response_headers,response_headers_truncated,created_at) VALUES (${event.id},${event.site_id},${event.session_id},${event.ip},${event.method},${event.path},${pathWithoutQuery(event.path)},${event.status},${event.decision},${event.latency_ms},${event.country_code},${event.asn},${event.asn_org},${event.origin_id ?? null},${event.cache_status},${event.protection_status},${event.protection_rule_id},${event.protection_category},${event.protection_severity},${event.protection_ruleset_id},${event.protection_ruleset_version},${event.protection_matches_json},${event.access_username ?? null},${event.referer ?? null},${event.referer_host ?? null},${event.bot_id ?? null},${event.bot_name ?? null},${event.bot_category ?? null},${event.bot_verified ?? null},${event.network_privacy_json ?? null},${event.crowdsec_json ?? null},${event.request_body ?? null},${event.request_body_truncated ?? null},${event.request_content_type ?? null},${event.request_headers ?? null},${event.request_headers_truncated ?? null},${event.response_headers ?? null},${event.response_headers_truncated ?? null},${event.created_at})`;
 	},
 	async backfillEventPathOnly(batchSize: number): Promise<number> {
 		const rows = (await db`SELECT id FROM request_events WHERE path_only IS NULL LIMIT ${boundedRowLimit(batchSize, 50_000)}`) as Array<{ id: string }>;
@@ -4080,9 +4091,9 @@ export const repository = {
 		await db.begin(async (transaction) => {
 			await transaction`DELETE FROM stream_bindings WHERE stream_id=${stream.id}`;
 			if (existing) {
-				await transaction`UPDATE streams SET name=${stream.name},incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},incoming_proxy_protocol=${stream.incoming_proxy_protocol ?? 0},proxy_protocol_trusted_cidrs_json=${stream.proxy_protocol_trusted_cidrs_json ?? null},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},network_privacy_policy_json=${stream.network_privacy_policy_json ?? null},bandwidth_policy_json=${stream.bandwidth_policy_json},origin_health_check_enabled=${stream.origin_health_check_enabled},origin_health_check_interval_seconds=${stream.origin_health_check_interval_seconds},origin_health_check_timeout_ms=${stream.origin_health_check_timeout_ms},origin_health_check_failure_threshold=${stream.origin_health_check_failure_threshold},origin_health_check_recovery_threshold=${stream.origin_health_check_recovery_threshold},notification_policy_json=${stream.notification_policy_json},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
+				await transaction`UPDATE streams SET name=${stream.name},incoming_port=${stream.incoming_port},forward_host=${stream.forward_host},forward_port=${stream.forward_port},tcp_enabled=${stream.tcp_enabled},udp_enabled=${stream.udp_enabled},proxy_protocol=${stream.proxy_protocol},incoming_proxy_protocol=${stream.incoming_proxy_protocol ?? 0},proxy_protocol_trusted_cidrs_json=${stream.proxy_protocol_trusted_cidrs_json ?? null},certificate_id=${stream.certificate_id},event_retention_days=${stream.event_retention_days},default_ip_action=${stream.default_ip_action},default_country_action=${stream.default_country_action},max_connections_per_ip=${stream.max_connections_per_ip},connection_rate_limit_enabled=${stream.connection_rate_limit_enabled},connection_rate_limit_algorithm=${stream.connection_rate_limit_algorithm},connection_rate_limit_window_ms=${stream.connection_rate_limit_window_ms},connection_rate_limit_max=${stream.connection_rate_limit_max},connection_rate_limit_refill_rate=${stream.connection_rate_limit_refill_rate},connection_rate_limit_refill_interval_ms=${stream.connection_rate_limit_refill_interval_ms},connection_rate_limit_precision_ms=${stream.connection_rate_limit_precision_ms},udp_amplification_max_ratio=${stream.udp_amplification_max_ratio},protection_policy_json=${stream.protection_policy_json},network_privacy_policy_json=${stream.network_privacy_policy_json ?? null},crowdsec_policy_json=${stream.crowdsec_policy_json ?? null},bandwidth_policy_json=${stream.bandwidth_policy_json},origin_health_check_enabled=${stream.origin_health_check_enabled},origin_health_check_interval_seconds=${stream.origin_health_check_interval_seconds},origin_health_check_timeout_ms=${stream.origin_health_check_timeout_ms},origin_health_check_failure_threshold=${stream.origin_health_check_failure_threshold},origin_health_check_recovery_threshold=${stream.origin_health_check_recovery_threshold},notification_policy_json=${stream.notification_policy_json},updated_at=${stream.updated_at} WHERE id=${stream.id}`;
 			} else {
-				await transaction`INSERT INTO streams (id,name,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,incoming_proxy_protocol,proxy_protocol_trusted_cidrs_json,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,network_privacy_policy_json,bandwidth_policy_json,origin_health_check_enabled,origin_health_check_interval_seconds,origin_health_check_timeout_ms,origin_health_check_failure_threshold,origin_health_check_recovery_threshold,notification_policy_json,created_at,updated_at) VALUES (${stream.id},${stream.name},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.incoming_proxy_protocol ?? 0},${stream.proxy_protocol_trusted_cidrs_json ?? null},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.network_privacy_policy_json ?? null},${stream.bandwidth_policy_json},${stream.origin_health_check_enabled},${stream.origin_health_check_interval_seconds},${stream.origin_health_check_timeout_ms},${stream.origin_health_check_failure_threshold},${stream.origin_health_check_recovery_threshold},${stream.notification_policy_json},${stream.created_at},${stream.updated_at})`;
+				await transaction`INSERT INTO streams (id,name,incoming_port,forward_host,forward_port,tcp_enabled,udp_enabled,proxy_protocol,incoming_proxy_protocol,proxy_protocol_trusted_cidrs_json,certificate_id,event_retention_days,default_ip_action,default_country_action,max_connections_per_ip,connection_rate_limit_enabled,connection_rate_limit_algorithm,connection_rate_limit_window_ms,connection_rate_limit_max,connection_rate_limit_refill_rate,connection_rate_limit_refill_interval_ms,connection_rate_limit_precision_ms,udp_amplification_max_ratio,protection_policy_json,network_privacy_policy_json,crowdsec_policy_json,bandwidth_policy_json,origin_health_check_enabled,origin_health_check_interval_seconds,origin_health_check_timeout_ms,origin_health_check_failure_threshold,origin_health_check_recovery_threshold,notification_policy_json,created_at,updated_at) VALUES (${stream.id},${stream.name},${stream.incoming_port},${stream.forward_host},${stream.forward_port},${stream.tcp_enabled},${stream.udp_enabled},${stream.proxy_protocol},${stream.incoming_proxy_protocol ?? 0},${stream.proxy_protocol_trusted_cidrs_json ?? null},${stream.certificate_id},${stream.event_retention_days},${stream.default_ip_action},${stream.default_country_action},${stream.max_connections_per_ip},${stream.connection_rate_limit_enabled},${stream.connection_rate_limit_algorithm},${stream.connection_rate_limit_window_ms},${stream.connection_rate_limit_max},${stream.connection_rate_limit_refill_rate},${stream.connection_rate_limit_refill_interval_ms},${stream.connection_rate_limit_precision_ms},${stream.udp_amplification_max_ratio},${stream.protection_policy_json},${stream.network_privacy_policy_json ?? null},${stream.crowdsec_policy_json ?? null},${stream.bandwidth_policy_json},${stream.origin_health_check_enabled},${stream.origin_health_check_interval_seconds},${stream.origin_health_check_timeout_ms},${stream.origin_health_check_failure_threshold},${stream.origin_health_check_recovery_threshold},${stream.notification_policy_json},${stream.created_at},${stream.updated_at})`;
 			}
 			if (stream.tcp_enabled === 1) {
 				await transaction`INSERT INTO stream_bindings (stream_id,protocol,incoming_port) VALUES (${stream.id},'tcp',${stream.incoming_port})`;
@@ -4141,7 +4152,7 @@ export const repository = {
 		if (events.length === 0) return;
 		await db.begin(async (transaction) => {
 			for (const event of events) {
-				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,asn,asn_org,network_privacy_json,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,duration_ms,username,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.asn},${event.asn_org},${event.network_privacy_json ?? null},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.duration_ms},${event.username},${event.created_at})`;
+				await transaction`INSERT INTO stream_events (id,stream_id,incoming_port,connection_id,protocol,event_type,client_ip,client_port,country_code,asn,asn_org,network_privacy_json,crowdsec_json,reason,error,protection_rule_id,client_to_upstream_bytes,upstream_to_client_bytes,duration_ms,username,created_at) VALUES (${event.id},${event.stream_id},${event.incoming_port},${event.connection_id},${event.protocol},${event.event_type},${event.client_ip},${event.client_port},${event.country_code},${event.asn},${event.asn_org},${event.network_privacy_json ?? null},${event.crowdsec_json ?? null},${event.reason},${event.error},${event.protection_rule_id},${event.client_to_upstream_bytes},${event.upstream_to_client_bytes},${event.duration_ms},${event.username},${event.created_at})`;
 			}
 		});
 	},
@@ -4991,6 +5002,65 @@ export const repository = {
 			ORDER BY sites.name ASC
 		`) as SiteRecord[];
 	},
+	async crowdSecSettings(): Promise<CrowdSecSettingsRecord | null> {
+		const rows = (await db`SELECT * FROM crowdsec_settings WHERE id='instance' LIMIT 1`) as CrowdSecSettingsRecord[];
+		return rows[0] ?? null;
+	},
+	async ensureCrowdSecSettings(now = Date.now()): Promise<CrowdSecSettingsRecord> {
+		const existing = await this.crowdSecSettings();
+		if (existing) return existing;
+		const settings: CrowdSecSettingsRecord = {
+			id: "instance",
+			enabled: 0,
+			lapi_url: null,
+			api_key_encrypted: null,
+			verify_tls: 1,
+			poll_interval_seconds: 10,
+			full_sync_interval_seconds: 1_800,
+			request_timeout_ms: 5_000,
+			scopes: "ip,range",
+			unknown_remediation: "ban",
+			alert_after_minutes: 15,
+			last_polled_at: null,
+			last_success_at: null,
+			last_poll_status: null,
+			last_poll_error: null,
+			last_decision_count: 0,
+			appsec_url: null,
+			appsec_timeout_ms: 200,
+			appsec_fail_open: 1,
+			appsec_max_body_bytes: 65_536,
+			created_at: now,
+			updated_at: now,
+		};
+		try {
+			await db`INSERT INTO crowdsec_settings (id,enabled,lapi_url,api_key_encrypted,verify_tls,poll_interval_seconds,full_sync_interval_seconds,request_timeout_ms,scopes,unknown_remediation,alert_after_minutes,last_polled_at,last_success_at,last_poll_status,last_poll_error,last_decision_count,appsec_url,appsec_timeout_ms,appsec_fail_open,appsec_max_body_bytes,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.lapi_url},${settings.api_key_encrypted},${settings.verify_tls},${settings.poll_interval_seconds},${settings.full_sync_interval_seconds},${settings.request_timeout_ms},${settings.scopes},${settings.unknown_remediation},${settings.alert_after_minutes},${settings.last_polled_at},${settings.last_success_at},${settings.last_poll_status},${settings.last_poll_error},${settings.last_decision_count},${settings.appsec_url},${settings.appsec_timeout_ms},${settings.appsec_fail_open},${settings.appsec_max_body_bytes},${settings.created_at},${settings.updated_at})`;
+		} catch {
+			return (await this.crowdSecSettings()) ?? settings;
+		}
+		return settings;
+	},
+	async saveCrowdSecSettings(settings: CrowdSecSettingsRecord): Promise<void> {
+		assertPrimaryWritable("CrowdSec settings");
+		const existing = await this.crowdSecSettings();
+		await db.begin(async (transaction) => {
+			if (existing) {
+				await transaction`UPDATE crowdsec_settings SET enabled=${settings.enabled},lapi_url=${settings.lapi_url},api_key_encrypted=${settings.api_key_encrypted},verify_tls=${settings.verify_tls},poll_interval_seconds=${settings.poll_interval_seconds},full_sync_interval_seconds=${settings.full_sync_interval_seconds},request_timeout_ms=${settings.request_timeout_ms},scopes=${settings.scopes},unknown_remediation=${settings.unknown_remediation},alert_after_minutes=${settings.alert_after_minutes},appsec_url=${settings.appsec_url},appsec_timeout_ms=${settings.appsec_timeout_ms},appsec_fail_open=${settings.appsec_fail_open},appsec_max_body_bytes=${settings.appsec_max_body_bytes},updated_at=${settings.updated_at} WHERE id=${settings.id}`;
+			} else {
+				await transaction`INSERT INTO crowdsec_settings (id,enabled,lapi_url,api_key_encrypted,verify_tls,poll_interval_seconds,full_sync_interval_seconds,request_timeout_ms,scopes,unknown_remediation,alert_after_minutes,last_polled_at,last_success_at,last_poll_status,last_poll_error,last_decision_count,appsec_url,appsec_timeout_ms,appsec_fail_open,appsec_max_body_bytes,created_at,updated_at) VALUES (${settings.id},${settings.enabled},${settings.lapi_url},${settings.api_key_encrypted},${settings.verify_tls},${settings.poll_interval_seconds},${settings.full_sync_interval_seconds},${settings.request_timeout_ms},${settings.scopes},${settings.unknown_remediation},${settings.alert_after_minutes},${settings.last_polled_at},${settings.last_success_at},${settings.last_poll_status},${settings.last_poll_error},${settings.last_decision_count},${settings.appsec_url},${settings.appsec_timeout_ms},${settings.appsec_fail_open},${settings.appsec_max_body_bytes},${settings.created_at},${settings.updated_at})`;
+			}
+			await appendChangelogEntry(transaction, "crowdsec_settings", settings.id, existing ? "update" : "insert", settings);
+		});
+	},
+	async updateCrowdSecPollResult(
+		polledAt: number,
+		successAt: number | null,
+		status: CrowdSecPollStatus,
+		error: string | null,
+		decisionCount: number,
+	): Promise<void> {
+		await db`UPDATE crowdsec_settings SET last_polled_at=${polledAt}, last_success_at=${successAt}, last_poll_status=${status}, last_poll_error=${error}, last_decision_count=${decisionCount} WHERE id='instance'`;
+	},
 	async allFirewallSyncProviders(): Promise<FirewallSyncProviderRecord[]> {
 		return (await db`SELECT * FROM firewall_sync_providers ORDER BY created_at ASC`) as FirewallSyncProviderRecord[];
 	},
@@ -5641,6 +5711,7 @@ const PRIMARY_WRITE_METHOD_NAMES = [
 	"deleteFirewallSyncProvider",
 	"insertFirewallSyncWhitelistCidr",
 	"deleteFirewallSyncWhitelistCidr",
+	"saveCrowdSecSettings",
 ] as const satisfies ReadonlyArray<keyof typeof repository>;
 
 type AsyncRepositoryMethod = (...args: unknown[]) => Promise<unknown>;

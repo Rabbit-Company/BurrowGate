@@ -23,4 +23,5 @@ export const SUITES: SuiteDescriptor[] = [
 	{ slug: "08-file-io", file: "08-file-io.bench.ts", tag: "file" },
 	{ slug: "09-sqlite", file: "09-sqlite.bench.ts", tag: "sqlite" },
 	{ slug: "10-compression", file: "10-compression.bench.ts", tag: "compression" },
+	{ slug: "11-crowdsec-lookup", file: "11-crowdsec-lookup.bench.ts", tag: "crowdsec" },
 ];

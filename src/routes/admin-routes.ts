@@ -232,6 +232,16 @@ function protectionMatches(value: string | null): unknown[] {
 	}
 }
 
+function crowdSecDetail(value: string | null | undefined): Record<string, unknown> | null {
+	if (!value) return null;
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+	} catch {
+		return null;
+	}
+}
+
 function stringArray(value: string | null | undefined): string[] {
 	if (!value) return [];
 	try {
@@ -2943,6 +2953,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...event,
 				protection_matches: protectionMatches(event.protection_matches_json),
 				network_privacy: stringArray(event.network_privacy_json),
+				crowdsec: crowdSecDetail(event.crowdsec_json),
 				origin_name: event.origin_id ? (originNames.get(event.origin_id) ?? null) : null,
 			})),
 			origins: origins.map((origin) => ({ id: origin.id, name: origin.name })),
@@ -2961,6 +2972,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 			...event,
 			protection_matches: protectionMatches(event.protection_matches_json),
 			network_privacy: stringArray(event.network_privacy_json),
+			crowdsec: crowdSecDetail(event.crowdsec_json),
 			origin_name: origin?.name ?? null,
 		});
 	});

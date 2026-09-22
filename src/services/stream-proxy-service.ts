@@ -7,6 +7,13 @@ import { randomId } from "../utils/crypto.ts";
 import { streamCertificateTlsOption } from "./certificate-service.ts";
 import { asnForStorage, lookupAsn, lookupCountryCode } from "./geoip-service.ts";
 import { banStreamIpForBandwidthLimit, banStreamIpForProtectionMatch, evaluateStreamIp } from "./stream-ip-rule-service.ts";
+import {
+	crowdSecEventDetail,
+	crowdSecStreamBlockedReason,
+	evaluateStreamCrowdSec,
+	storedStreamCrowdSecPolicy,
+	type CrowdSecEvaluation,
+} from "./crowdsec-policy-service.ts";
 import { checkStreamConnectionRate } from "./stream-rate-limit-service.ts";
 import { recordStreamEvent, recordStreamTraffic } from "./stream-monitoring-service.ts";
 import { registerTlsReloadHandler } from "./tls-listener-service.ts";
@@ -183,6 +190,7 @@ function event(input: StreamEventInput): StreamEventRecord {
 		duration_ms: null,
 		username: null,
 		network_privacy_json: null,
+		crowdsec_json: null,
 		...input,
 	};
 }
@@ -197,6 +205,22 @@ function streamPrivacyEvaluation(record: StreamRecord, ip: string, decision: Awa
 
 function privacyBlockedReason(category: ReturnType<typeof streamPrivacyEvaluation>["blockedCategory"]): string | null {
 	return category ? `Blocked ${networkPrivacyCategoryLabel(category)} traffic by stream privacy policy` : null;
+}
+
+function streamCrowdSecEvaluation(record: StreamRecord, ip: string, decision: Awaited<ReturnType<typeof evaluateStreamIp>>): CrowdSecEvaluation {
+	return evaluateStreamCrowdSec(
+		ip,
+		decision.countryCode,
+		decision.asn,
+		storedStreamCrowdSecPolicy(record.crowdsec_policy_json),
+		decision.source,
+		decision.action,
+	);
+}
+
+function crowdSecJson(evaluation: CrowdSecEvaluation | null): string | null {
+	const detail = evaluation ? crowdSecEventDetail(evaluation) : null;
+	return detail ? JSON.stringify(detail) : null;
 }
 
 function tcpFingerprint(record: StreamRecord): string {
@@ -639,8 +663,13 @@ export class StreamProxyManager {
 		}
 		if (connection.closed) return;
 		let blockedReason: string | null = decision?.action === "block" ? (decision.reason ?? "Blocked by network rule") : null;
+		let crowdSec: CrowdSecEvaluation | null = null;
 		if (!blockedReason && decision) {
 			blockedReason = privacyBlockedReason(streamPrivacyEvaluation(record, connection.clientIp, decision).blockedCategory);
+		}
+		if (!blockedReason && decision) {
+			crowdSec = streamCrowdSecEvaluation(record, connection.clientIp, decision);
+			blockedReason = crowdSecStreamBlockedReason(crowdSec);
 		}
 		if (!blockedReason && record.max_connections_per_ip > 0) {
 			const activeFromIp = [...this.tcpConnections.values()].filter(
@@ -664,6 +693,7 @@ export class StreamProxyManager {
 				country_code: connection.countryCode,
 				asn: connection.asn,
 				asn_org: connection.asnOrg,
+				crowdsec_json: crowdSecJson(crowdSec),
 				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
@@ -683,6 +713,7 @@ export class StreamProxyManager {
 			country_code: connection.countryCode,
 			asn: connection.asn,
 			asn_org: connection.asnOrg,
+			crowdsec_json: crowdSecJson(crowdSec),
 			reason: tls ? "TLS terminated" : "raw TCP",
 			error: null,
 			client_to_upstream_bytes: 0,
@@ -1203,10 +1234,15 @@ export class StreamProxyManager {
 			if (!runtime.peers.has(key) && !runtime.pendingPeers.has(key)) {
 				recordStreamConnectionAttempt(runtime.record.id, clientIp);
 				let blockedReason: string | null = null;
+				let crowdSec: CrowdSecEvaluation | null = null;
 				try {
 					const decision = await evaluateStreamIp(runtime.record, clientIp);
 					if (decision.action === "block") blockedReason = decision.reason ?? "Blocked by network rule";
 					else blockedReason = privacyBlockedReason(streamPrivacyEvaluation(runtime.record, clientIp, decision).blockedCategory);
+					if (!blockedReason) {
+						crowdSec = streamCrowdSecEvaluation(runtime.record, clientIp, decision);
+						blockedReason = crowdSecStreamBlockedReason(crowdSec);
+					}
 				} catch (error) {
 					Logger.error(`Unable to evaluate network policy for stream ${runtime.record.id}`, { error });
 				}
@@ -1249,6 +1285,7 @@ export class StreamProxyManager {
 						country_code: lookupCountryCode(clientIp),
 						asn: asnForStorage(clientIp).asn,
 						asn_org: asnForStorage(clientIp).org,
+						crowdsec_json: crowdSecJson(crowdSec),
 						reason: blockedReason,
 						error: null,
 						protection_rule_id: protectionRuleId,
@@ -1269,6 +1306,7 @@ export class StreamProxyManager {
 						country_code: lookupCountryCode(clientIp),
 						asn: asnForStorage(clientIp).asn,
 						asn_org: asnForStorage(clientIp).org,
+						crowdsec_json: crowdSecJson(crowdSec),
 						reason: monitoredReason,
 						error: null,
 						protection_rule_id: protectionRuleId,
@@ -1473,6 +1511,29 @@ export class StreamProxyManager {
 		return [...tcp, ...udp].sort((a, b) => b.connectedAt - a.connectedAt);
 	}
 
+	/**
+	 * Re-checks live connections after a CrowdSec poll.
+	 *
+	 * An HTTP request is over in milliseconds, so a decision arriving mid-request is moot. A TCP
+	 * connection can last hours, so a newly banned address would otherwise keep its existing
+	 * session until it happened to disconnect. Runs only for streams that enforce bans, and does
+	 * nothing when no decisions are loaded.
+	 */
+	async enforceCrowdSecDecisions(): Promise<void> {
+		const records = new Map<string, StreamRecord>();
+		for (const runtime of this.tcpRuntimes.values()) records.set(runtime.record.id, runtime.record);
+		for (const runtime of this.udpRuntimes.values()) records.set(runtime.record.id, runtime.record);
+		for (const record of records.values()) {
+			const policy = storedStreamCrowdSecPolicy(record.crowdsec_policy_json);
+			if (policy.ban !== "block" && policy.captcha !== "block") continue;
+			try {
+				await this.enforceNetworkPolicy(record);
+			} catch (error) {
+				Logger.error(`Unable to re-evaluate CrowdSec decisions for stream ${record.id}`, { error });
+			}
+		}
+	}
+
 	async enforceNetworkPolicy(record: StreamRecord): Promise<void> {
 		this.syncRecord(record);
 		const tcpTargets = [...this.tcpConnections.values()].filter((connection) => connection.record.id === record.id && !connection.closed);
@@ -1484,12 +1545,17 @@ export class StreamProxyManager {
 			} catch (error) {
 				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
-			const blockedReason =
+			let crowdSec: CrowdSecEvaluation | null = null;
+			let blockedReason =
 				decision?.action === "block"
 					? (decision.reason ?? "Blocked by network rule")
 					: decision
 						? privacyBlockedReason(streamPrivacyEvaluation(record, connection.clientIp, decision).blockedCategory)
 						: null;
+			if (!blockedReason && decision) {
+				crowdSec = streamCrowdSecEvaluation(record, connection.clientIp, decision);
+				blockedReason = crowdSecStreamBlockedReason(crowdSec);
+			}
 			if (!blockedReason) continue;
 			this.monitorEvent({
 				stream_id: record.id,
@@ -1502,6 +1568,7 @@ export class StreamProxyManager {
 				country_code: connection.countryCode,
 				asn: connection.asn,
 				asn_org: connection.asnOrg,
+				crowdsec_json: crowdSecJson(crowdSec),
 				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,
@@ -1519,12 +1586,17 @@ export class StreamProxyManager {
 			} catch (error) {
 				Logger.error(`Unable to evaluate network policy for stream ${record.id}`, { error });
 			}
-			const blockedReason =
+			let crowdSec: CrowdSecEvaluation | null = null;
+			let blockedReason =
 				decision?.action === "block"
 					? (decision.reason ?? "Blocked by network rule")
 					: decision
 						? privacyBlockedReason(streamPrivacyEvaluation(record, peer.clientIp, decision).blockedCategory)
 						: null;
+			if (!blockedReason && decision) {
+				crowdSec = streamCrowdSecEvaluation(record, peer.clientIp, decision);
+				blockedReason = crowdSecStreamBlockedReason(crowdSec);
+			}
 			if (!blockedReason) continue;
 			this.monitorEvent({
 				stream_id: record.id,
@@ -1537,6 +1609,7 @@ export class StreamProxyManager {
 				country_code: peer.countryCode,
 				asn: peer.asn,
 				asn_org: peer.asnOrg,
+				crowdsec_json: crowdSecJson(crowdSec),
 				reason: blockedReason,
 				error: null,
 				client_to_upstream_bytes: 0,

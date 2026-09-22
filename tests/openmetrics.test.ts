@@ -24,6 +24,14 @@ describe("OpenMetrics exporter", () => {
 		metrics.setOriginBackendHealth("site-1", "origin-1", "unhealthy");
 		metrics.recordOriginHealthCheck("site-1", "origin-1", false, 125);
 		metrics.recordNotificationDelivery("site-1", "retry");
+		metrics.setCrowdSecState({
+			enabled: true,
+			lastPolledAt: 1_700_000_500_000,
+			lastSuccessAt: 1_700_000_000_000,
+			decisionsByScope: { ip: 42_000, range: 300, country: 2, as: 0 },
+		});
+		metrics.recordCrowdSecPoll("ok");
+		metrics.recordCrowdSecPoll("error");
 
 		const output = metrics.metricsText();
 		expect(output).toContain('burrowgate_build_info{environment="test",version="test-version"} 1');
@@ -38,6 +46,14 @@ describe("OpenMetrics exporter", () => {
 		expect(output).toContain('burrowgate_origin_backend_health_state{origin_id="origin-1",site_id="site-1",state="unhealthy"} 1');
 		expect(output).toContain('burrowgate_origin_health_checks_total{origin_id="origin-1",outcome="failure",site_id="site-1"} 1');
 		expect(output).toContain('burrowgate_notification_deliveries_total{outcome="retry",site_id="site-1"} 1');
+		expect(output).toContain("burrowgate_crowdsec_enabled 1");
+		expect(output).toContain('burrowgate_crowdsec_decisions{scope="ip"} 42000');
+		expect(output).toContain('burrowgate_crowdsec_decisions{scope="range"} 300');
+		// Published as a raw timestamp so a query computes staleness with time() - x.
+		expect(output).toContain("burrowgate_crowdsec_last_success_timestamp_seconds 1700000000");
+		expect(output).toContain("burrowgate_crowdsec_last_poll_timestamp_seconds 1700000500");
+		expect(output).toContain('burrowgate_crowdsec_polls_total{outcome="ok"} 1');
+		expect(output).toContain('burrowgate_crowdsec_polls_total{outcome="error"} 1');
 		expect(output).not.toContain("203.0.113.10");
 		expect(output).not.toContain('country="SI"');
 		expect(output.trimEnd().endsWith("# EOF")).toBe(true);

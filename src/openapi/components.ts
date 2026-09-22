@@ -486,6 +486,7 @@ export const schemas: Record<string, JsonSchema> = {
 			"http",
 			"botPolicy",
 			"networkPrivacyPolicy",
+			"crowdSecPolicy",
 			"createdAt",
 			"updatedAt",
 		],
@@ -578,6 +579,7 @@ export const schemas: Record<string, JsonSchema> = {
 			http: { $ref: "#/components/schemas/SiteHttpPolicy" },
 			botPolicy: { $ref: "#/components/schemas/BotPolicy" },
 			networkPrivacyPolicy: { $ref: "#/components/schemas/NetworkPrivacyPolicy" },
+			crowdSecPolicy: { $ref: "#/components/schemas/CrowdSecPolicy" },
 			createdAt: { type: "integer" },
 			updatedAt: { type: "integer" },
 		},
@@ -680,6 +682,7 @@ export const schemas: Record<string, JsonSchema> = {
 			http: { $ref: "#/components/schemas/SiteHttpPolicyInput" },
 			botPolicy: { $ref: "#/components/schemas/BotPolicy" },
 			networkPrivacyPolicy: { $ref: "#/components/schemas/NetworkPrivacyPolicy" },
+			crowdSecPolicy: { $ref: "#/components/schemas/CrowdSecPolicy" },
 			effectiveAt: {
 				type: "integer",
 				description:
@@ -854,6 +857,7 @@ export const schemas: Record<string, JsonSchema> = {
 			"defaultCountryAction",
 			"botPolicy",
 			"networkPrivacyPolicy",
+			"crowdSecPolicy",
 			"priority",
 			"enabled",
 			"createdAt",
@@ -903,6 +907,10 @@ export const schemas: Record<string, JsonSchema> = {
 				oneOf: [{ type: "null" }, { $ref: "#/components/schemas/NetworkPrivacyPolicy" }],
 				description: "null inherits the site's policy.",
 			},
+			crowdSecPolicy: {
+				oneOf: [{ type: "null" }, { $ref: "#/components/schemas/CrowdSecPolicy" }],
+				description: "null inherits the site's policy.",
+			},
 			priority: { type: "integer", minimum: -100_000, maximum: 100_000, description: "Higher wins when multiple route policies match the same request." },
 			enabled: { type: "boolean" },
 			createdAt: { type: "integer" },
@@ -944,6 +952,7 @@ export const schemas: Record<string, JsonSchema> = {
 			defaultCountryAction: { type: "string", enum: ["inherit", "allow", "block", "challenge"], default: "inherit" },
 			botPolicy: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/BotPolicy" }] },
 			networkPrivacyPolicy: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/NetworkPrivacyPolicy" }] },
+			crowdSecPolicy: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/CrowdSecPolicy" }] },
 		},
 	},
 	RouteWebSocketPolicyInput: {

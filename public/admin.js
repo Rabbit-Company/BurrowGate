@@ -447,6 +447,27 @@ function readNetworkPrivacyPolicy(prefix) {
 	return result;
 }
 
+const CROWDSEC_POLICY_DEFAULTS = { ban: "monitor", captcha: "monitor", appsec: "disabled" };
+
+function writeCrowdSecPolicy(prefix, policy) {
+	const value = policy ?? CROWDSEC_POLICY_DEFAULTS;
+	byId(`${prefix}CrowdSecBan`).value = value.ban ?? "monitor";
+	byId(`${prefix}CrowdSecCaptcha`).value = value.captcha ?? "monitor";
+	byId(`${prefix}CrowdSecAppsec`).value = value.appsec ?? "disabled";
+}
+
+function readCrowdSecPolicy(prefix) {
+	return {
+		ban: byId(`${prefix}CrowdSecBan`).value,
+		captcha: byId(`${prefix}CrowdSecCaptcha`).value,
+		appsec: byId(`${prefix}CrowdSecAppsec`).value,
+	};
+}
+
+function updateRouteCrowdSecControls() {
+	byId("routeCrowdSecSettings").classList.toggle("hidden", byId("routeCrowdSecPolicyMode").value === "inherit");
+}
+
 function updateRouteNetworkPrivacyControls() {
 	byId("routeNetworkPrivacySettings").classList.toggle("hidden", byId("routeNetworkPrivacyPolicyMode").value === "inherit");
 }
@@ -1519,6 +1540,10 @@ function decisionClass(decision) {
 			"route-blocked",
 			"bot-blocked",
 			"privacy-blocked",
+			"crowdsec-blocked",
+			"appsec-blocked",
+			"appsec-unavailable",
+			"origin-pool-unavailable",
 			"managed-protection-blocked",
 			"websocket-policy-denied",
 			"origin-error",
@@ -1559,6 +1584,33 @@ function asnBadge(asn, org) {
 	const label = `AS${asn}`;
 	const title = org ? `${label} - ${org}` : label;
 	return `<span class="country-badge" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+const CROWDSEC_ENFORCEMENT_CLASS = { block: "bad", challenge: "warn", monitor: "warn", none: "ok" };
+
+/** The decision that matched, if any. Monitor-mode matches show too, so "would have blocked" is visible. */
+function crowdSecBadge(detail) {
+	if (!detail?.remediation) return "";
+	const label = `${detail.remediation}${detail.scope ? ` (${detail.scope})` : ""}`;
+	const title = [
+		detail.value && `matched ${detail.value}`,
+		detail.origin && `via ${detail.origin}`,
+		detail.scenario,
+		detail.bypassed && "overridden by an allow rule",
+	]
+		.filter(Boolean)
+		.join(" - ");
+	return `<span class="badge ${CROWDSEC_ENFORCEMENT_CLASS[detail.enforcement] ?? "info"}" title="${escapeHtml(title)}">CrowdSec: ${escapeHtml(label)}</span>`;
+}
+
+/** The AppSec verdict, kept separate from BurrowGate's own ruleset so the engine that fired is never ambiguous. */
+function appSecBadge(detail) {
+	const appsec = detail?.appsec;
+	if (!appsec?.status) return "";
+	const tone = appsec.status === "blocked" ? (appsec.mode === "block" ? "bad" : "warn") : appsec.status === "error" ? "bad" : "ok";
+	const label = appsec.status === "blocked" && appsec.mode !== "block" ? "would block" : appsec.status;
+	const title = [appsec.action && `action ${appsec.action}`, `body ${appsec.body}`, `${appsec.durationMs}ms`].filter(Boolean).join(" - ");
+	return `<span class="badge ${tone}" title="${escapeHtml(title)}">AppSec: ${escapeHtml(label)}</span>`;
 }
 
 function networkPrivacyBadge(categories) {
@@ -1652,7 +1704,7 @@ async function loadTraffic() {
           ${isColumnVisible("traffic", "status") ? `<td><span class="badge ${statusClass(Number(event.status))}">${Number(event.status)}</span></td>` : ""}
           ${isColumnVisible("traffic", "decision") ? `<td><span class="badge ${decisionClass(event.decision)}">${escapeHtml(event.decision)}</span></td>` : ""}
 			${isColumnVisible("traffic", "cache") ? `<td>${event.cache_status ? `<span class="badge ${event.cache_status === "hit" ? "ok" : event.cache_status === "miss" ? "warn" : "info"}">${escapeHtml(event.cache_status)}</span>` : '<span class="muted">-</span>'}</td>` : ""}
-			${isColumnVisible("traffic", "protection") ? `<td title="${escapeHtml(event.protection_rule_id ?? "No managed rule matched")}">${event.protection_status ? `<span class="badge ${event.protection_status === "blocked" ? "bad" : event.protection_status === "monitored" ? "warn" : "ok"}">${event.protection_status === "monitored" ? "would block" : escapeHtml(event.protection_status)}</span>` : '<span class="muted">-</span>'}</td>` : ""}
+			${isColumnVisible("traffic", "protection") ? `<td title="${escapeHtml(event.protection_rule_id ?? "No managed rule matched")}">${event.protection_status ? `<span class="badge ${event.protection_status === "blocked" ? "bad" : event.protection_status === "monitored" ? "warn" : "ok"}">${event.protection_status === "monitored" ? "would block" : escapeHtml(event.protection_status)}</span>` : '<span class="muted">-</span>'}${appSecBadge(event.crowdsec)}${crowdSecBadge(event.crowdsec)}</td>` : ""}
           ${isColumnVisible("traffic", "latency") ? `<td>${formatDuration(event.latency_ms)}</td>` : ""}
         </tr>`,
 						)
@@ -1786,6 +1838,9 @@ function renderEventDetail(event) {
 		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
 		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-"],
 		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-"],
+		["CrowdSec decision", crowdSecBadge(event.crowdsec) || "-"],
+		["CrowdSec scenario", event.crowdsec?.scenario ? escapeHtml(event.crowdsec.scenario) : "-"],
+		["AppSec", appSecBadge(event.crowdsec) || "-"],
 		["Protection rule", event.protection_rule_id ? escapeHtml(event.protection_rule_id) : "-"],
 		["Protection category", event.protection_category ? escapeHtml(event.protection_category) : "-"],
 		["Protection severity", event.protection_severity ? escapeHtml(event.protection_severity) : "-"],
@@ -3110,6 +3165,7 @@ function editSite(id) {
 	byId("siteIpExtractionPreset").value = site.ipExtractionPreset ?? "direct";
 	setBlockedBots("site", site.botPolicy?.blockedBots ?? []);
 	writeNetworkPrivacyPolicy("siteNetworkPrivacy", site.networkPrivacyPolicy);
+	writeCrowdSecPolicy("site", site.crowdSecPolicy);
 	byId("siteLoadBalancingAlgorithm").value = site.loadBalancer?.algorithm ?? "failover";
 	byId("siteLoadBalancingAffinity").checked = site.loadBalancer?.affinity !== false;
 	byId("siteOutboundFetchProtocol").value = site.outboundFetchProtocol ?? "http1";
@@ -3194,6 +3250,8 @@ async function loadSites() {
 	renderNetworkPrivacyControls("routeNetworkPrivacySettings", "routeNetworkPrivacy");
 	writeNetworkPrivacyPolicy("siteNetworkPrivacy", sites.find((site) => site.id === editingSiteId)?.networkPrivacyPolicy ?? null);
 	writeNetworkPrivacyPolicy("routeNetworkPrivacy", routePolicies.find((policy) => policy.id === editingRoutePolicyId)?.networkPrivacyPolicy ?? null);
+	writeCrowdSecPolicy("route", routePolicies.find((policy) => policy.id === editingRoutePolicyId)?.crowdSecPolicy ?? null);
+	writeCrowdSecPolicy("site", sites.find((site) => site.id === editingSiteId)?.crowdSecPolicy ?? null);
 	const protectionRulesetSelect = byId("siteHttpProtectionRuleset");
 	const selectedProtectionRuleset = protectionRulesetSelect.value;
 	protectionRulesetSelect.innerHTML = `<option value="default">Default managed ruleset</option>${managedProtection.items
@@ -3351,6 +3409,7 @@ async function saveSite(event) {
 		},
 		botPolicy: { blockedBots: selectedBlockedBots("site") },
 		networkPrivacyPolicy: readNetworkPrivacyPolicy("siteNetworkPrivacy"),
+		crowdSecPolicy: readCrowdSecPolicy("site"),
 		originSigningSecret: byId("siteSigningSecret").value.trim(),
 		errorResponseMode,
 		errorHtmlTemplate: byId("siteErrorHtmlTemplate").value,
@@ -3510,6 +3569,9 @@ function resetRoutePolicyForm() {
 	byId("routeNetworkPrivacyPolicyMode").value = "inherit";
 	writeNetworkPrivacyPolicy("routeNetworkPrivacy", null);
 	updateRouteNetworkPrivacyControls();
+	byId("routeCrowdSecPolicyMode").value = "inherit";
+	writeCrowdSecPolicy("route", null);
+	updateRouteCrowdSecControls();
 	routeIpRules = [];
 	routeCountryRules = [];
 	routeAsnRules = [];
@@ -3581,6 +3643,9 @@ function editRoutePolicy(id) {
 	byId("routeNetworkPrivacyPolicyMode").value = policy.networkPrivacyPolicy ? "override" : "inherit";
 	writeNetworkPrivacyPolicy("routeNetworkPrivacy", policy.networkPrivacyPolicy);
 	updateRouteNetworkPrivacyControls();
+	byId("routeCrowdSecPolicyMode").value = policy.crowdSecPolicy ? "override" : "inherit";
+	writeCrowdSecPolicy("route", policy.crowdSecPolicy);
+	updateRouteCrowdSecControls();
 	byId("routeNetworkRulesSection").classList.remove("hidden");
 	byId("routeNetworkRulesPlaceholder").classList.add("hidden");
 	void loadRouteNetworkRules();
@@ -3999,6 +4064,7 @@ async function saveRoutePolicy(event) {
 		defaultCountryAction: byId("routeDefaultCountryAction").value,
 		botPolicy: byId("routeBotPolicyMode").value === "inherit" ? null : { blockedBots: selectedBlockedBots("route") },
 		networkPrivacyPolicy: byId("routeNetworkPrivacyPolicyMode").value === "inherit" ? null : readNetworkPrivacyPolicy("routeNetworkPrivacy"),
+		crowdSecPolicy: byId("routeCrowdSecPolicyMode").value === "inherit" ? null : readCrowdSecPolicy("route"),
 		rateLimitEnabled: byId("routeRateEnabled").checked,
 		rateLimitAlgorithm: byId("routeRateAlgorithm").value,
 		rateLimitMax: Number(byId("routeRateMax").value),
@@ -6110,6 +6176,7 @@ function bindActions() {
 	byId("routeWebSocketMode").addEventListener("change", updateRoutePolicyControls);
 	byId("routeBotPolicyMode").addEventListener("change", updateRouteBotPolicyControls);
 	byId("routeNetworkPrivacyPolicyMode").addEventListener("change", updateRouteNetworkPrivacyControls);
+	byId("routeCrowdSecPolicyMode").addEventListener("change", updateRouteCrowdSecControls);
 	byId("routeChallengePolicyMode").addEventListener("change", updateRouteChallengePolicyControls);
 	byId("purgeRouteCache").addEventListener(
 		"click",

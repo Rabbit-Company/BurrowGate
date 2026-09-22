@@ -94,6 +94,11 @@ export class BurrowGateOpenMetrics {
 	private readonly configuredSites: Gauge;
 	private readonly configuredStreams: Gauge;
 	private readonly geoIp: Gauge;
+	private readonly crowdSecEnabled: Gauge;
+	private readonly crowdSecDecisions: Gauge;
+	private readonly crowdSecLastSuccess: Gauge;
+	private readonly crowdSecLastPoll: Gauge;
+	private readonly crowdSecPolls: Counter;
 	private readonly originHealthState: Gauge;
 	private readonly originBackendHealthState: Gauge;
 	private readonly originHealthChecks: Counter;
@@ -268,6 +273,35 @@ export class BurrowGateOpenMetrics {
 			name: "configured_streams",
 			help: "Configured stream listener count by protocol",
 			labelNames: ["protocol"],
+			registry: this.registry,
+		});
+		this.crowdSecEnabled = new Gauge({
+			name: "crowdsec_enabled",
+			help: "Whether this node is polling a CrowdSec Local API",
+			registry: this.registry,
+		});
+		this.crowdSecDecisions = new Gauge({
+			name: "crowdsec_decisions",
+			help: "CrowdSec decisions currently held in memory on this node",
+			labelNames: ["scope"],
+			registry: this.registry,
+		});
+		this.crowdSecLastSuccess = new Gauge({
+			name: "crowdsec_last_success_timestamp",
+			help: "Unix time of the last successful CrowdSec poll, 0 if none has succeeded",
+			unit: "seconds",
+			registry: this.registry,
+		});
+		this.crowdSecLastPoll = new Gauge({
+			name: "crowdsec_last_poll_timestamp",
+			help: "Unix time of the last CrowdSec poll attempt, 0 if none has run",
+			unit: "seconds",
+			registry: this.registry,
+		});
+		this.crowdSecPolls = new Counter({
+			name: "crowdsec_polls",
+			help: "CrowdSec Local API polls by outcome",
+			labelNames: ["outcome"],
 			registry: this.registry,
 		});
 		this.geoIp = new Gauge({
@@ -505,6 +539,29 @@ export class BurrowGateOpenMetrics {
 		if (!this.enabled) return;
 		this.geoIp.labels({ state: "enabled", dimension }).set(enabled ? 1 : 0);
 		this.geoIp.labels({ state: "available", dimension }).set(available ? 1 : 0);
+	}
+
+	/**
+	 * Publishes the health of the CrowdSec feed.
+	 *
+	 * Enforcement counts are already visible through the `decision` label on http_requests. What
+	 * needs its own metric is the feed itself, because the integration fails open: a Local API that
+	 * stops answering produces no errors and no traffic change, so without this there is nothing to
+	 * alert on. Timestamps are published raw so a query can compute staleness with `time() - x`.
+	 */
+	setCrowdSecState(state: { enabled: boolean; lastPolledAt: number | null; lastSuccessAt: number | null; decisionsByScope: Record<string, number> }): void {
+		if (!this.enabled) return;
+		this.crowdSecEnabled.set(state.enabled ? 1 : 0);
+		this.crowdSecLastPoll.set(state.lastPolledAt ? Math.round(state.lastPolledAt / 1_000) : 0);
+		this.crowdSecLastSuccess.set(state.lastSuccessAt ? Math.round(state.lastSuccessAt / 1_000) : 0);
+		for (const [scope, count] of Object.entries(state.decisionsByScope)) {
+			this.crowdSecDecisions.labels({ scope }).set(count);
+		}
+	}
+
+	recordCrowdSecPoll(outcome: "ok" | "error"): void {
+		if (!this.enabled) return;
+		this.crowdSecPolls.labels({ outcome }).inc();
 	}
 
 	setOriginHealth(siteId: string, state: OriginHealthState): void {

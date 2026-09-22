@@ -6,6 +6,7 @@ import { asnForStorage, countryCodeForStorage } from "./geoip-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
 import type { HttpCacheStatus, SiteRecord } from "../types.ts";
 import type { ManagedProtectionMatch, ManagedProtectionSeverity, ManagedProtectionStatus } from "./managed-protection-service.ts";
+import type { CrowdSecEventDetail } from "./crowdsec-policy-service.ts";
 
 const blockedSiteIds = new Set<string>();
 
@@ -63,6 +64,8 @@ export async function recordEvent(input: {
 	botCategory?: string | null;
 	botVerified?: boolean | null;
 	networkPrivacy?: string[] | null;
+	crowdsec?: CrowdSecEventDetail | null;
+	appsec?: { status: string; action: string | null; mode: string; body: string; durationMs: number } | null;
 	requestBody?: string | null;
 	requestBodyTruncated?: boolean | null;
 	requestContentType?: string | null;
@@ -106,6 +109,7 @@ export async function recordEvent(input: {
 			bot_category: input.botCategory ?? null,
 			bot_verified: input.botVerified === undefined || input.botVerified === null ? null : input.botVerified ? 1 : 0,
 			network_privacy_json: input.networkPrivacy?.length ? JSON.stringify(input.networkPrivacy) : null,
+			crowdsec_json: input.crowdsec || input.appsec ? JSON.stringify({ ...(input.crowdsec ?? {}), ...(input.appsec ? { appsec: input.appsec } : {}) }) : null,
 			request_body: input.requestBody ?? null,
 			request_body_truncated: input.requestBodyTruncated === undefined || input.requestBodyTruncated === null ? null : input.requestBodyTruncated ? 1 : 0,
 			request_content_type: input.requestContentType ?? null,

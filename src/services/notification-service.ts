@@ -25,6 +25,7 @@ const DOWN_EVENT_TYPES = new Set<NotificationEventType>([
 	"stream_ip_banned",
 	"system_resource_high",
 	"ha_node_down",
+	"crowdsec_lapi_down",
 ]);
 
 interface DeliveryTarget {
@@ -164,6 +165,10 @@ function eventTitle(type: NotificationEventType, targetName: string): string {
 			return `HA node down: ${targetName}`;
 		case "ha_node_up":
 			return `HA node up: ${targetName}`;
+		case "crowdsec_lapi_down":
+			return "CrowdSec Local API unreachable";
+		case "crowdsec_lapi_up":
+			return "CrowdSec Local API reachable";
 	}
 }
 

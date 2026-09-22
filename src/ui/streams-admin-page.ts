@@ -75,6 +75,10 @@ export function streamsAdminPage(): string {
       <label><span>Default country action</span><select id="streamDefaultCountryAction" class="select"><option value="inherit">Use IP default</option><option value="block">Block all countries</option></select><small class="muted">Set to Block all countries and add Allow rules to create a country whitelist.</small></label>
     </div>
     <div id="streamNetworkPrivacySettings" class="network-defaults-grid pad-topless"></div>
+    <div class="network-defaults-grid pad-topless">
+      <label><span>CrowdSec ban decisions</span><select id="streamCrowdSecBan" class="select"><option value="disabled">Disabled</option><option value="monitor">Identify only</option><option value="block">Identify and block</option></select><small class="muted">Decisions pulled from the CrowdSec Local API. See the CrowdSec tab to connect one.</small></label>
+      <label><span>CrowdSec captcha decisions</span><select id="streamCrowdSecCaptcha" class="select"><option value="disabled">Disabled</option><option value="monitor">Identify only</option><option value="block">Identify and block</option></select><small class="muted">A stream has no challenge, so a captcha decision can only be identified or blocked.</small></label>
+    </div>
     <p class="notice muted">Explicit matching stream IP and ASN Allow rules override automatic category blocking. Start with Identify only before blocking broad ASN categories.</p>
     <p id="streamGeoPolicyWarning" class="notice muted hidden"></p>
     <p id="streamAsnPolicyWarning" class="notice muted hidden"></p>

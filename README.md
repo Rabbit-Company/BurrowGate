@@ -48,6 +48,7 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - Optional per-origin trusted CA / BurrowGate-issued origin server certificate, usable independently of mTLS for origins that can't verify client certificates
 - Per-origin health checks, automatic unhealthy-origin removal, and optional 503 maintenance mode
 - Unified notification system for sites and Streams: origin health, internet-connectivity, system-resource-threshold, and IP auto-ban webhooks to ntfy, Slack, Discord, or signed generic JSON, with per-event-type subscriptions, durable ordered retries, and a searchable delivery log
+- [CrowdSec integration](docs/CROWDSEC.md): act as a CrowdSec remediation component, pulling decisions from a Local API in stream mode and enforcing them per site, per route, and per TCP/UDP stream, with `captcha` decisions served by the built-in challenge chain over HTTP, live stream connections re-checked when new decisions arrive, monitor mode by default, allowlist precedence, and node-local decisions so a replica keeps enforcing without the primary
 - Firewall sync: pushes auto-banned and manually-blocked IPs to a UniFi controller, local nftables, OVH's per-IP edge firewall, or an AWS VPC Network ACL, with a never-ban whitelist, automatic private-range exclusion, and per-provider entry caps with oldest-first eviction
 - Customizable HTML challenge pages, per challenge type as well as per site - each provider ships its own tailored default with documented `data-*` hooks so controls (like Snake's arrow keys) can be restyled or remapped without forking the whole page. Snake/Slider/Trace's canvas colors and Slider's piece shape are editable too, every visitor-facing string is translatable per challenge, and a per-provider Content-Security-Policy editor lets a custom page load its own images/scripts/fonts
 - Prometheus and OpenTelemetry Collector export through an OpenMetrics endpoint
@@ -100,6 +101,7 @@ BurrowGate and Nginx Proxy Manager prioritize point-and-click administration. Bu
 | Browser challenge / proof of work                    | ✅ SHA-256 PoW, hCaptcha, Turnstile, reCAPTCHA, Snake, Slider, Trace, password, pluggable chain | ❌                                       | ❌                                          | ❌                                      | ❌                                    | ❌                                 |
 | Maintained bot catalog, blocking, and analytics      | ✅ category/site/route controls, IP verification, bot graphs                                    | ⚠️ manual `HeaderRegexp` routing         | ⚠️ custom nginx configuration               | ⚠️ manual header matchers               | ⚠️ manual User-Agent rules            | ⚠️ manual `BrowserMatch`/`Require` |
 | Tor/VPN/datacenter/ISP detection and blocking        | ✅ opt-in, dynamic categories, site/route/stream modes                                          | ⚠️ middleware/plugin or external data    | ⚠️ custom nginx configuration               | ⚠️ external data and matchers           | ⚠️ GeoIP/custom maps                  | ⚠️ external data/custom rules      |
+| CrowdSec remediation component                       | ✅ built in, HTTP and TCP/UDP, ban/captcha/AppSec per site/route/stream                         | ⚠️ third-party plugin                    | ❌                                          | ⚠️ third-party module                   | ⚠️ official bouncer                   | ⚠️ third-party bouncer             |
 | IP/CIDR access rules                                 | ✅ per site and route                                                                           | ✅ `IPAllowList` middleware              | ✅ per-host Access Lists                    | ✅ request matchers                     | ✅ `allow`/`deny`                     | ✅ `Require ip`                    |
 | ASN/country policy                                   | ✅ per site and route                                                                           | ⚠️ plugin/external GeoIP                 | ⚠️ custom nginx configuration               | ⚠️ third-party module                   | ⚠️ GeoIP2 module                      | ⚠️ GeoIP module                    |
 | Request rate limiting                                | ✅ fixed/sliding/token-bucket, dashboard-managed                                                | ✅ rate-limit middleware                 | ⚠️ custom nginx configuration               | ⚠️ third-party module                   | ✅ `limit_req`                        | ⚠️ third-party module              |
@@ -442,6 +444,27 @@ docker compose --profile geoip up -d --build
 See [`docs/GEOIP.md`](docs/GEOIP.md).
 
 Third-party map and data attribution is documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## CrowdSec
+
+BurrowGate can act as a CrowdSec remediation component, pulling decisions from a CrowdSec Local API in stream mode and enforcing them per site and per route. A `ban` returns 403. A `captcha` runs the site's own challenge chain, so a suspected visitor can still prove themselves instead of being dropped.
+
+Optionally, requests can also be sent to CrowdSec's AppSec component, the CrowdSec WAF. That one inspects the live request rather than matching a known address, so it costs a round-trip and is off by default, opted into per site or per route.
+
+TCP and UDP streams enforce the same decisions. A stream has no challenge, so a captcha decision there is either identified or blocked, and live connections are re-checked when a poll brings in decisions that newly cover them.
+
+Decisions are held in memory and indexed so a lookup costs the same at half a million decisions as at ten thousand, and nothing on the request path waits on the Local API. They are node-local and never replicated, so a replica keeps enforcing while the primary is unreachable.
+
+An optional Compose profile runs a CrowdSec engine alongside BurrowGate, with its Local API bound to loopback:
+
+```bash
+docker compose --profile crowdsec up -d
+docker compose exec crowdsec cscli bouncers add burrowgate
+```
+
+Paste the key into the dashboard's **CrowdSec** tab. Every site starts in monitor mode, so enabling the integration surfaces matches in Recent traffic without changing what any visitor experiences until you opt a site in.
+
+See [`docs/CROWDSEC.md`](docs/CROWDSEC.md).
 
 ## Bandwidth Monitoring
 

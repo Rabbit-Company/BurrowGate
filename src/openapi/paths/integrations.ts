@@ -340,6 +340,132 @@ export const integrationPaths: Record<string, PathItemObject> = {
 			},
 		},
 	},
+	"/crowdsec/status": {
+		get: {
+			summary: "Get the CrowdSec integration's settings and this node's polling state",
+			description:
+				"Administrator only. Decisions are node-local in-memory state, never replicated, so the counters describe whichever node answers this request. The bouncer API key is never returned - only apiKeyConfigured.",
+			tags: ["CrowdSec"],
+			operationId: "crowdSecStatus",
+			responses: {
+				"200": jsonResponse("", ref("CrowdSecStatus")),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required."),
+			},
+		},
+	},
+	"/crowdsec/settings": {
+		put: {
+			summary: "Update the CrowdSec Local API connection",
+			description:
+				"Administrator only. Replicated to the cluster, so every node dials the same Local API. Enabling only starts loading decisions - whether a decision is acted on is a per-site and per-route choice, and sites default to monitor.",
+			tags: ["CrowdSec"],
+			operationId: "updateCrowdSecSettings",
+			requestBody: jsonBody(ref("CrowdSecSettingsInput")),
+			responses: {
+				"200": jsonResponse("", {
+					allOf: [ref("CrowdSecStatus"), { type: "object", properties: durability }],
+				}),
+				"400": errorResponse("Invalid settings, or enabling without a Local API URL and API key."),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required, or CSRF validation failed."),
+			},
+		},
+	},
+	"/crowdsec/test": {
+		post: {
+			summary: "Test a CrowdSec Local API connection",
+			description:
+				"Administrator only. Works against unsaved form values and stores nothing. Omitting apiKey falls back to the key already stored, so editing a saved connection does not require retyping it.",
+			tags: ["CrowdSec"],
+			operationId: "testCrowdSecConnection",
+			requestBody: jsonBody({
+				type: "object",
+				properties: {
+					lapiUrl: { type: "string" },
+					apiKey: { type: "string", description: "Plaintext bouncer API key. Omitted to fall back to the stored key." },
+					verifyTls: { type: "boolean", default: true },
+				},
+			}),
+			responses: {
+				"200": jsonResponse("`ok: false` with a message for a reachable-but-rejecting Local API.", {
+					type: "object",
+					required: ["ok", "message"],
+					properties: { ok: { type: "boolean" }, message: { type: "string" }, decisionCount: { type: "integer" } },
+				}),
+				"400": errorResponse("No API key supplied, or the request itself threw."),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required, or CSRF validation failed."),
+			},
+		},
+	},
+	"/crowdsec/appsec/test": {
+		post: {
+			summary: "Test a CrowdSec AppSec endpoint",
+			description:
+				"Administrator only. Sends one synthetic inspection request and stores nothing. Omitting apiKey falls back to the stored key, which AppSec shares with the Local API.",
+			tags: ["CrowdSec"],
+			operationId: "testCrowdSecAppSec",
+			requestBody: jsonBody({
+				type: "object",
+				required: ["appsecUrl"],
+				properties: {
+					appsecUrl: { type: "string" },
+					apiKey: { type: "string", description: "Plaintext bouncer API key. Omitted to fall back to the stored key. AppSec shares the Local API's key." },
+					verifyTls: { type: "boolean", default: true },
+				},
+			}),
+			responses: {
+				"200": jsonResponse("`ok: false` with a message when AppSec is reachable but rejecting.", {
+					type: "object",
+					required: ["ok", "message"],
+					properties: { ok: { type: "boolean" }, message: { type: "string" } },
+				}),
+				"400": errorResponse("No API key or URL supplied, or the request itself threw."),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required, or CSRF validation failed."),
+			},
+		},
+	},
+	"/crowdsec/refresh": {
+		post: {
+			summary: "Force an immediate full resync from the Local API",
+			description:
+				"Administrator only. Discards the incremental cursor and reloads every decision. Not forwarded to the primary: this refreshes whichever node handles the request, since each node holds its own copy.",
+			tags: ["CrowdSec"],
+			operationId: "refreshCrowdSecDecisions",
+			responses: {
+				"200": jsonResponse("", ref("CrowdSecStatus")),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required, or CSRF validation failed."),
+			},
+		},
+	},
+	"/crowdsec/lookup": {
+		get: {
+			summary: "Check whether an address is covered by a loaded decision",
+			description:
+				"Administrator only. Runs the same lookup the request path uses, against this node's decisions, and resolves the address's country and ASN the same way a real request would.",
+			tags: ["CrowdSec"],
+			operationId: "lookupCrowdSecDecision",
+			parameters: [{ name: "ip", in: "query", required: true, schema: { type: "string" } }],
+			responses: {
+				"200": jsonResponse("decision is null when no decision covers the address.", {
+					type: "object",
+					required: ["ip", "countryCode", "asn", "decision"],
+					properties: {
+						ip: { type: "string" },
+						countryCode: { type: ["string", "null"] },
+						asn: { type: ["integer", "null"] },
+						decision: { oneOf: [{ type: "null" }, ref("CrowdSecDecision")] },
+					},
+				}),
+				"400": errorResponse("No ip query parameter supplied."),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required."),
+			},
+		},
+	},
 	"/dns-providers/{id}/test": {
 		post: {
 			summary: "Test a DNS provider's connection",

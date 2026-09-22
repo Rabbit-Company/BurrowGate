@@ -24,6 +24,7 @@ import { invalidateStreamRateLimiter } from "../services/stream-rate-limit-servi
 import { resolveStreamProtectionPolicy, serializeStreamProtectionPolicy } from "../services/stream-protection-policy-service.ts";
 import { resolveStreamBandwidthPolicy, serializeStreamBandwidthPolicy } from "../services/stream-bandwidth-policy-service.ts";
 import { networkPrivacyCategoryCatalog, serializeNetworkPrivacyPolicy, storedNetworkPrivacyPolicy } from "../services/network-privacy-service.ts";
+import { serializeStreamCrowdSecPolicy, storedStreamCrowdSecPolicy } from "../services/crowdsec-policy-service.ts";
 import {
 	NOTIFICATION_EVENT_TYPES,
 	parseStreamNotificationPolicyInput,
@@ -713,6 +714,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 			defaultIpAction: selection.stream.default_ip_action ?? "inherit",
 			defaultCountryAction: selection.stream.default_country_action ?? "inherit",
 			networkPrivacyPolicy: storedNetworkPrivacyPolicy(selection.stream.network_privacy_policy_json),
+			crowdSecPolicy: storedStreamCrowdSecPolicy(selection.stream.crowdsec_policy_json),
 			countryRules: await repository.streamCountryRules(selection.stream.id),
 			asnRules: await repository.streamAsnRules(selection.stream.id),
 			geoip: geoIpStatus(),
@@ -737,17 +739,27 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 				defaultIpAction?: StreamDefaultNetworkAction;
 				defaultCountryAction?: StreamDefaultNetworkAction;
 				networkPrivacyPolicy?: unknown;
+				crowdSecPolicy?: unknown;
 			};
 			const defaultIpAction = parseStreamDefaultNetworkAction(body.defaultIpAction, selection.stream.default_ip_action ?? "inherit");
 			const defaultCountryAction = parseStreamDefaultNetworkAction(body.defaultCountryAction, selection.stream.default_country_action ?? "inherit");
 			const networkPrivacyPolicyJson = serializeNetworkPrivacyPolicy(body.networkPrivacyPolicy, selection.stream.network_privacy_policy_json);
-			await repository.updateStreamNetworkDefaults(selection.stream.id, defaultIpAction, defaultCountryAction, Date.now(), networkPrivacyPolicyJson);
+			const crowdSecPolicyJson = serializeStreamCrowdSecPolicy(body.crowdSecPolicy, selection.stream.crowdsec_policy_json);
+			await repository.updateStreamNetworkDefaults(
+				selection.stream.id,
+				defaultIpAction,
+				defaultCountryAction,
+				Date.now(),
+				networkPrivacyPolicyJson,
+				crowdSecPolicyJson,
+			);
 			invalidateStreamNetworkPolicy(selection.stream.id);
 			await streamProxyManager.enforceNetworkPolicy({
 				...selection.stream,
 				default_ip_action: defaultIpAction,
 				default_country_action: defaultCountryAction,
 				network_privacy_policy_json: networkPrivacyPolicyJson,
+				crowdsec_policy_json: crowdSecPolicyJson,
 			});
 			await recordAdminAudit({
 				actor: user,
@@ -762,6 +774,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 					defaultIpAction,
 					defaultCountryAction,
 					networkPrivacyPolicy: storedNetworkPrivacyPolicy(networkPrivacyPolicyJson),
+					crowdSecPolicy: storedStreamCrowdSecPolicy(crowdSecPolicyJson),
 				}),
 			);
 		} catch (error) {

@@ -5,6 +5,7 @@ import type { RateLimitAlgorithm, StreamProxyProtocol, StreamRecord } from "../t
 import { randomId } from "../utils/crypto.ts";
 import { resolveStreamProtectionPolicy } from "./stream-protection-policy-service.ts";
 import { storedNetworkPrivacyPolicy } from "./network-privacy-service.ts";
+import { storedStreamCrowdSecPolicy } from "./crowdsec-policy-service.ts";
 import { streamHealthManager } from "./stream-health-service.ts";
 import { streamProxyManager } from "./stream-proxy-service.ts";
 import { parseTrustedProxyCidrs } from "./incoming-proxy-protocol.ts";
@@ -187,6 +188,7 @@ export function streamView(stream: StreamRecord) {
 		},
 		protection: resolveStreamProtectionPolicy(stream),
 		networkPrivacyPolicy: storedNetworkPrivacyPolicy(stream.network_privacy_policy_json),
+		crowdSecPolicy: storedStreamCrowdSecPolicy(stream.crowdsec_policy_json),
 		createdAt: Number(stream.created_at),
 		updatedAt: Number(stream.updated_at),
 	};

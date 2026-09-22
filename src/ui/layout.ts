@@ -2,7 +2,7 @@ import packageMetadata from "../../package.json" with { type: "json" };
 
 export const APP_VERSION = packageMetadata.version;
 
-export type DashboardTabKey = "web-proxy" | "streams" | "host" | "notifications" | "firewall-sync" | "dns-providers" | "cluster" | "logs";
+export type DashboardTabKey = "web-proxy" | "streams" | "host" | "notifications" | "firewall-sync" | "crowdsec" | "dns-providers" | "cluster" | "logs";
 
 export function dashboardSwitchNav(active: DashboardTabKey): string {
 	const tabs: Array<{ key: DashboardTabKey; href: string; label: string }> = [
@@ -11,6 +11,7 @@ export function dashboardSwitchNav(active: DashboardTabKey): string {
 		{ key: "host", href: "/_burrowgate/admin/host", label: "Host" },
 		{ key: "notifications", href: "/_burrowgate/admin/notifications", label: "Notifications" },
 		{ key: "firewall-sync", href: "/_burrowgate/admin/firewall-sync", label: "Firewall Sync" },
+		{ key: "crowdsec", href: "/_burrowgate/admin/crowdsec", label: "CrowdSec" },
 		{ key: "dns-providers", href: "/_burrowgate/admin/dns-providers", label: "DNS Providers" },
 	];
 	tabs.push({ key: "cluster", href: "/_burrowgate/admin/cluster", label: "Cluster" });

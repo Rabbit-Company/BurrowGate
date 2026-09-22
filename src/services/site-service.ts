@@ -48,6 +48,7 @@ import { staticAssetCache } from "./static-cache-service.ts";
 import { NOTIFICATION_EVENT_TYPES } from "./stream-notification-policy-service.ts";
 import { serializeBotPolicy, storedBotPolicy, type BotPolicy } from "./bot-service.ts";
 import { serializeNetworkPrivacyPolicy, storedNetworkPrivacyPolicy, type NetworkPrivacyPolicy } from "./network-privacy-service.ts";
+import { serializeCrowdSecPolicy, storedCrowdSecPolicy, type CrowdSecPolicy } from "./crowdsec-policy-service.ts";
 
 export interface SiteInput {
 	name?: unknown;
@@ -81,6 +82,7 @@ export interface SiteInput {
 	http?: unknown;
 	botPolicy?: unknown;
 	networkPrivacyPolicy?: unknown;
+	crowdSecPolicy?: unknown;
 	effectiveAt?: unknown;
 }
 
@@ -133,6 +135,7 @@ export interface SiteView {
 	http: SiteHttpPolicyView;
 	botPolicy: BotPolicy;
 	networkPrivacyPolicy: NetworkPrivacyPolicy;
+	crowdSecPolicy: CrowdSecPolicy;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -618,6 +621,7 @@ export function siteView(site: SiteRecord, primaryOrigin?: SiteOriginRecord | nu
 		http: siteHttpPolicyView(site),
 		botPolicy: storedBotPolicy(site.bot_policy_json),
 		networkPrivacyPolicy: storedNetworkPrivacyPolicy(site.network_privacy_policy_json),
+		crowdSecPolicy: storedCrowdSecPolicy(site.crowdsec_policy_json),
 		createdAt: Number(site.created_at),
 		updatedAt: Number(site.updated_at),
 	};
@@ -681,6 +685,7 @@ export async function createSite(input: SiteInput): Promise<{ site: SiteRecord; 
 		http_policy_json: serializeSiteHttpPolicy(input.http),
 		bot_policy_json: serializeBotPolicy(input.botPolicy),
 		network_privacy_policy_json: serializeNetworkPrivacyPolicy(input.networkPrivacyPolicy),
+		crowdsec_policy_json: serializeCrowdSecPolicy(input.crowdSecPolicy),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, DEFAULT_ERROR_JSON_FIELDS)),
 		created_at: now,
 		updated_at: now,
@@ -808,6 +813,7 @@ export async function updateSite(
 		http_policy_json: serializeSiteHttpPolicy(input.http, existing.http_policy_json),
 		bot_policy_json: serializeBotPolicy(input.botPolicy, existing.bot_policy_json),
 		network_privacy_policy_json: serializeNetworkPrivacyPolicy(input.networkPrivacyPolicy, existing.network_privacy_policy_json),
+		crowdsec_policy_json: serializeCrowdSecPolicy(input.crowdSecPolicy, existing.crowdsec_policy_json),
 		error_json_fields_json: JSON.stringify(validateErrorJsonFields(input.errorJsonFields, errorJsonFieldsFromRecord(existing))),
 		updated_at: Date.now(),
 	};

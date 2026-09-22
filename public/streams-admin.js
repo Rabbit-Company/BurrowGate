@@ -1876,6 +1876,9 @@ function applyStreamNetworkPolicy(policy) {
 	document.querySelectorAll('[data-network-privacy="streamNetworkPrivacy"]').forEach((select) => {
 		select.value = privacy[select.dataset.networkPrivacyCategory] ?? "disabled";
 	});
+	const crowdSec = policy.crowdSecPolicy ?? {};
+	byId("streamCrowdSecBan").value = crowdSec.ban ?? "monitor";
+	byId("streamCrowdSecCaptcha").value = crowdSec.captcha ?? "monitor";
 	streamCountryRules = policy.countryRules ?? [];
 	streamAsnRules = policy.asnRules ?? [];
 	const warning = byId("streamGeoPolicyWarning");
@@ -1978,6 +1981,7 @@ async function saveStreamNetworkDefaults() {
 			defaultIpAction: byId("streamDefaultIpAction").value,
 			defaultCountryAction: byId("streamDefaultCountryAction").value,
 			networkPrivacyPolicy: readStreamNetworkPrivacyPolicy(),
+			crowdSecPolicy: { ban: byId("streamCrowdSecBan").value, captcha: byId("streamCrowdSecCaptcha").value },
 		}),
 	});
 	const stream = streams.find((item) => item.id === rulesStreamId);
@@ -1985,6 +1989,7 @@ async function saveStreamNetworkDefaults() {
 		stream.defaultIpAction = result.defaultIpAction;
 		stream.defaultCountryAction = result.defaultCountryAction;
 		stream.networkPrivacyPolicy = result.networkPrivacyPolicy;
+		stream.crowdSecPolicy = result.crowdSecPolicy;
 	}
 	showToast("Stream network policy saved.");
 }

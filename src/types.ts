@@ -137,6 +137,7 @@ export interface SiteRecord {
 	http_policy_json?: string | null;
 	bot_policy_json?: string | null;
 	network_privacy_policy_json?: string | null;
+	crowdsec_policy_json?: string | null;
 	notification_event_types_json?: string | null;
 	created_at: number;
 	updated_at: number;
@@ -203,21 +204,30 @@ export interface OriginHealthEventRecord {
 	created_at: number;
 }
 
-export type NotificationEventType =
-	| "origin_unhealthy"
-	| "origin_recovered"
-	| "pool_unhealthy"
-	| "pool_recovered"
-	| "internet_down"
-	| "internet_up"
-	| "ip_banned"
-	| "stream_origin_unhealthy"
-	| "stream_origin_recovered"
-	| "stream_ip_banned"
-	| "system_resource_high"
-	| "system_resource_normal"
-	| "ha_node_down"
-	| "ha_node_up";
+/**
+ * Every notification event type. Declared as a list rather than a bare union so tests can check
+ * that the dashboard offers each one, which a type alone cannot enforce.
+ */
+export const NOTIFICATION_EVENT_TYPES = [
+	"origin_unhealthy",
+	"origin_recovered",
+	"pool_unhealthy",
+	"pool_recovered",
+	"internet_down",
+	"internet_up",
+	"ip_banned",
+	"stream_origin_unhealthy",
+	"stream_origin_recovered",
+	"stream_ip_banned",
+	"system_resource_high",
+	"system_resource_normal",
+	"ha_node_down",
+	"ha_node_up",
+	"crowdsec_lapi_down",
+	"crowdsec_lapi_up",
+] as const;
+
+export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type NotificationSeverity = "info" | "warning" | "critical";
 
 export interface NotificationEventRecord {
@@ -360,6 +370,7 @@ export interface RoutePolicyRecord {
 	http_policy_json?: string | null;
 	bot_policy_json?: string | null;
 	network_privacy_policy_json?: string | null;
+	crowdsec_policy_json?: string | null;
 	default_ip_action?: DefaultNetworkAction;
 	default_country_action?: DefaultNetworkAction;
 	priority: number;
@@ -499,6 +510,7 @@ export interface StreamRecord {
 	udp_amplification_max_ratio: number;
 	protection_policy_json: string | null;
 	network_privacy_policy_json?: string | null;
+	crowdsec_policy_json?: string | null;
 	bandwidth_policy_json: string | null;
 	origin_health_check_enabled: number;
 	origin_health_check_interval_seconds: number;
@@ -541,6 +553,7 @@ export interface StreamEventRecord {
 	asn: number | null;
 	asn_org: string | null;
 	network_privacy_json?: string | null;
+	crowdsec_json?: string | null;
 	reason: string | null;
 	error: string | null;
 	protection_rule_id: string | null;
@@ -715,6 +728,7 @@ export interface RequestEventRecord {
 	bot_category?: string | null;
 	bot_verified?: number | null;
 	network_privacy_json?: string | null;
+	crowdsec_json?: string | null;
 	request_body: string | null;
 	request_body_truncated: number | null;
 	request_content_type: string | null;
@@ -865,6 +879,49 @@ export interface FirewallSyncWhitelistCidrRecord {
 	network_cidr: string;
 	note: string | null;
 	created_at: number;
+}
+
+export type CrowdSecPollStatus = "ok" | "error";
+/** What to do with a remediation that is neither `ban` nor `captcha` (`throttle`, or something a future release adds). */
+export type CrowdSecUnknownRemediation = "ban" | "captcha" | "ignore";
+
+/**
+ * Connection settings for the CrowdSec Local API. One instance, one LAPI.
+ *
+ * The decisions themselves are deliberately absent: they live in memory on each node
+ * (see crowdsec-decision-store.ts), because replicating a six-figure decision set through the HA
+ * changelog would swamp it. Only this small row replicates, so every node dials the same LAPI.
+ */
+export interface CrowdSecSettingsRecord {
+	id: string;
+	enabled: number;
+	lapi_url: string | null;
+	api_key_encrypted: string | null;
+	/** Verify the LAPI's TLS certificate. Only meaningful for an https:// LAPI. */
+	verify_tls: number;
+	poll_interval_seconds: number;
+	/** How often to discard the delta cursor and pull a fresh full snapshot. */
+	full_sync_interval_seconds: number;
+	request_timeout_ms: number;
+	/** Comma-separated LAPI scopes to request, e.g. "ip,range,country,as". */
+	scopes: string;
+	unknown_remediation: CrowdSecUnknownRemediation;
+	/** Minutes the LAPI must stay unreachable before a notification fires. 0 disables the alert. */
+	alert_after_minutes: number;
+	last_polled_at: number | null;
+	last_success_at: number | null;
+	last_poll_status: CrowdSecPollStatus | null;
+	last_poll_error: string | null;
+	last_decision_count: number;
+	/** AppSec (the CrowdSec WAF) endpoint. Null disables it regardless of any site or route policy. */
+	appsec_url: string | null;
+	appsec_timeout_ms: number;
+	/** Whether an AppSec error or timeout allows the request. Failing closed takes a site down with the WAF. */
+	appsec_fail_open: number;
+	/** Bodies larger than this are inspected on headers and URI alone rather than being buffered. */
+	appsec_max_body_bytes: number;
+	created_at: number;
+	updated_at: number;
 }
 
 export interface GatewayState {

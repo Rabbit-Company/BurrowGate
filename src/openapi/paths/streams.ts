@@ -550,11 +550,12 @@ export const streamPaths: Record<string, PathItemObject> = {
 			responses: {
 				"200": jsonResponse("", {
 					type: "object",
-					required: ["defaultIpAction", "defaultCountryAction", "networkPrivacyPolicy", "countryRules", "asnRules", "geoip"],
+					required: ["defaultIpAction", "defaultCountryAction", "networkPrivacyPolicy", "crowdSecPolicy", "countryRules", "asnRules", "geoip"],
 					properties: {
 						defaultIpAction: { type: "string", enum: ["inherit", "allow", "block"] },
 						defaultCountryAction: { type: "string", enum: ["inherit", "allow", "block"] },
 						networkPrivacyPolicy: ref("NetworkPrivacyPolicy"),
+						crowdSecPolicy: ref("StreamCrowdSecPolicy"),
 						countryRules: { type: "array", items: ref("StreamCountryRuleRecord") },
 						asnRules: { type: "array", items: ref("StreamAsnRuleRecord") },
 						geoip: ref("GeoIpStatus"),
@@ -579,16 +580,18 @@ export const streamPaths: Record<string, PathItemObject> = {
 					defaultIpAction: { type: "string", enum: ["inherit", "allow", "block"] },
 					defaultCountryAction: { type: "string", enum: ["inherit", "allow", "block"] },
 					networkPrivacyPolicy: ref("NetworkPrivacyPolicy"),
+					crowdSecPolicy: ref("StreamCrowdSecPolicy"),
 				},
 			}),
 			responses: {
 				"200": jsonResponse("", {
 					type: "object",
-					required: ["defaultIpAction", "defaultCountryAction", "networkPrivacyPolicy", "durabilityConfirmed"],
+					required: ["defaultIpAction", "defaultCountryAction", "networkPrivacyPolicy", "crowdSecPolicy", "durabilityConfirmed"],
 					properties: {
 						defaultIpAction: { type: "string", enum: ["inherit", "allow", "block"] },
 						defaultCountryAction: { type: "string", enum: ["inherit", "allow", "block"] },
 						networkPrivacyPolicy: ref("NetworkPrivacyPolicy"),
+						crowdSecPolicy: ref("StreamCrowdSecPolicy"),
 						...DURABILITY_CONFIRMED,
 					},
 				}),
