@@ -208,10 +208,32 @@ services:
     environment:
       GEOIPUPDATE_ACCOUNT_ID: "${MAXMIND_ACCOUNT_ID:-}"
       GEOIPUPDATE_LICENSE_KEY: "${MAXMIND_LICENSE_KEY:-}"
-      GEOIPUPDATE_EDITION_IDS: GeoLite2-Country
+      GEOIPUPDATE_EDITION_IDS: GeoLite2-Country GeoLite2-ASN
       GEOIPUPDATE_FREQUENCY: "${GEOIPUPDATE_FREQUENCY:-72}"
     volumes:
       - ./data/geoip:/usr/share/GeoIP
+
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    profiles: ["crowdsec"]
+    environment:
+      COLLECTIONS: "${CROWDSEC_COLLECTIONS:-crowdsecurity/linux}"
+      ENROLL_KEY: "${CROWDSEC_ENROLL_KEY:-}"
+      ENROLL_INSTANCE_NAME: "${CROWDSEC_ENROLL_INSTANCE_NAME:-burrowgate}"
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7422:7422"
+    volumes:
+      - ./data/crowdsec-engine/config:/etc/crowdsec
+      - ./data/crowdsec-engine/data:/var/lib/crowdsec/data
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 ```
 
 Start BurrowGate:
