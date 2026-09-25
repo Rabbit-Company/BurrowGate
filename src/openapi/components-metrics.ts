@@ -30,6 +30,7 @@ export const metricsSchemas: Record<string, JsonSchema> = {
 			"protection_matches_json",
 			"protection_matches",
 			"access_username",
+			"origin_username",
 			"referer",
 			"referer_host",
 			"network_privacy",
@@ -81,6 +82,10 @@ export const metricsSchemas: Record<string, JsonSchema> = {
 				description: "protection_matches_json, parsed (empty array if unparsable).",
 			},
 			access_username: { type: ["string", "null"] },
+			origin_username: {
+				type: ["string", "null"],
+				description: "Username the origin reported with a valid X-BurrowGate-Origin-User signature, or null.",
+			},
 			referer: { type: ["string", "null"] },
 			referer_host: { type: ["string", "null"] },
 			bot_id: { type: ["string", "null"] },

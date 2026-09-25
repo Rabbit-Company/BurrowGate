@@ -139,3 +139,16 @@ const result = await verifyOriginRequest(request, secret, {
 When the site's **Send authenticated username to upstream** toggle is enabled, `X-BurrowGate-Authenticated-User` and `X-BurrowGate-Identity-Signature` are also present and are verified automatically; `result.authenticatedUser` is `null` when identity forwarding was not used for this request, and the whole result is invalid if either identity header is tampered with or removed independently of the other.
 
 `result.accessMode` and `result.verified` reflect BurrowGate's own access decision for the request but, unlike the other fields, are not themselves covered by the signature.
+
+## Reporting the origin's user
+
+An origin with its own accounts can report the signed-in user back to BurrowGate, so traffic logs show who made each request. `signOriginUser()` returns the response headers to add, or `null` when the request did not come through BurrowGate:
+
+```ts
+import { signOriginUser } from "@rabbit-company/burrowgate-auth";
+
+const headers = await signOriginUser(request, process.env.BURROWGATE_ORIGIN_SECRET!, user.username);
+if (headers) for (const [name, value] of Object.entries(headers)) response.headers.set(name, value);
+```
+
+It sets `X-BurrowGate-Origin-User` and `X-BurrowGate-Origin-User-Signature`, an HMAC-SHA256 over the request's `X-BurrowGate-Signature` and the username. The signature only matches this one request. BurrowGate verifies it, records the username as the request's **Origin user**, and removes both headers before the response reaches the client. Usernames must be 1 to 255 characters without control characters, otherwise a `TypeError` is thrown.

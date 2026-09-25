@@ -256,6 +256,28 @@ export interface VerifyOriginRequestOptions {
  * @throws {@link TypeError} for an empty `originSigningSecret` or an invalid `maxAgeSeconds`.
  */
 export declare function verifyOriginRequest(request: Request, originSigningSecret: string, options?: VerifyOriginRequestOptions): Promise<OriginVerificationResult>;
+/** Response header an origin uses to report its own signed-in user back to BurrowGate. */
+export declare const BURROWGATE_ORIGIN_USER_HEADER = "x-burrowgate-origin-user";
+/** Response header carrying the HMAC-SHA256 signature of {@link BURROWGATE_ORIGIN_USER_HEADER}. */
+export declare const BURROWGATE_ORIGIN_USER_SIGNATURE_HEADER = "x-burrowgate-origin-user-signature";
+/**
+ * Builds the response headers that report the origin's own signed-in user to
+ * BurrowGate, so request events and traffic logs show who made each request.
+ *
+ * The signature is an HMAC-SHA256 over the request's `X-BurrowGate-Signature`
+ * and the username, keyed with the site's origin signing secret. It is bound to
+ * this one request and cannot be replayed onto another. BurrowGate verifies
+ * the headers, records the username on the request event, and removes both
+ * headers before the response reaches the client. Responses that carry them
+ * are never stored in BurrowGate's static cache.
+ *
+ * @param request Incoming request as received by the origin.
+ * @param originSigningSecret The protected site's origin signing secret.
+ * @param username The origin's own identifier for the signed-in user, 1 to 255 characters without control characters.
+ * @returns Headers to add to the response, or `null` when the request did not come through BurrowGate.
+ * @throws {@link TypeError} for an empty `originSigningSecret` or an invalid `username`.
+ */
+export declare function signOriginUser(request: Request, originSigningSecret: string, username: string): Promise<Record<string, string> | null>;
 /**
  * Mints a new short-lived assertion for the current authenticated browser
  * session by calling `POST /_burrowgate/access/session-token`.

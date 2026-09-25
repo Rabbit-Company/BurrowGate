@@ -4,6 +4,7 @@ import { parseCookies } from "../utils/cookies.ts";
 import { accessIdentityCookieNames } from "./access-list-service.ts";
 import type { SiteStaticCachePolicy } from "./http-policy-service.ts";
 import { openMetrics } from "./openmetrics-service.ts";
+import { ORIGIN_USER_HEADER } from "./origin-user-service.ts";
 
 export type CacheLookupOutcome = "disabled" | "bypass" | "miss" | "hit";
 
@@ -151,6 +152,7 @@ function requestBypassReason(request: Request, policy: SiteStaticCachePolicy): s
 function responseTtlMs(response: Response, policy: SiteStaticCachePolicy, now: number): number | null {
 	const metadata = originResponseMetadata.get(response) ?? { status: response.status, hasBody: Boolean(response.body), headers: response.headers };
 	if (metadata.status !== 200 || !metadata.hasBody || metadata.headers.has("set-cookie") || metadata.headers.has("content-range")) return null;
+	if (metadata.headers.has(ORIGIN_USER_HEADER)) return null;
 	if (metadata.headers.get("content-disposition")?.toLowerCase().includes("attachment")) return null;
 	const contentType = (metadata.headers.get("content-type")?.split(";", 1)[0] ?? "").trim().toLowerCase();
 	const safeContentType =

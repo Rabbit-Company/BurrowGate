@@ -756,6 +756,33 @@ X-BurrowGate-Signature: <HMAC-SHA256>
 
 Origins should reject direct public traffic. Use a private network, firewall allowlist, WireGuard, or mutual TLS so requests cannot bypass BurrowGate.
 
+### Reporting the origin's user
+
+An origin with its own accounts can tell BurrowGate who made each request by adding two response headers:
+
+```http
+X-BurrowGate-Origin-User: ziga
+X-BurrowGate-Origin-User-Signature: <HMAC-SHA256>
+```
+
+The signature uses the site's origin signing secret over the request's `X-BurrowGate-Signature` and the username:
+
+```text
+<x-burrowgate-signature>\n
+<username>
+```
+
+It is tied to that one request, so it cannot be replayed onto another. BurrowGate records a correctly signed username on the request event, where it shows as **Origin user** in traffic details and can be searched. A missing or wrong signature is ignored. Both headers are always removed before the response reaches the client, and responses that carry them are never stored in the static cache. The username can be 1 to 255 characters without control characters.
+
+`signOriginUser()` from `@rabbit-company/burrowgate-auth` builds both headers:
+
+```ts
+import { signOriginUser } from "@rabbit-company/burrowgate-auth";
+
+const headers = await signOriginUser(request, process.env.BURROWGATE_ORIGIN_SECRET!, user.username);
+if (headers) for (const [name, value] of Object.entries(headers)) response.headers.set(name, value);
+```
+
 ## Monitoring
 
 The dashboard includes:

@@ -15,6 +15,7 @@ import { applyCorsResponseHeaders, applyHeaderPolicy, isBodyCaptureActive, resol
 import { outboundFetchProtocolOption } from "./site-service.ts";
 import { originMtlsFetchOptions } from "./origin-mtls-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
+import { ORIGIN_USER_HEADER, ORIGIN_USER_SIGNATURE_HEADER, verifiedOriginUser } from "./origin-user-service.ts";
 
 // Buffer ordinary forms and API payloads so Bun can derive an exact upstream
 // Content-Length even after the incoming body has passed through the proxy.
@@ -143,6 +144,8 @@ export async function upstreamHeaders(
 
 function downstreamHeaders(response: Response, target: URL, incoming: URL, transport: RequestTransport): Headers {
 	const headers = copyProxyHeaders(response.headers);
+	headers.delete(ORIGIN_USER_HEADER);
+	headers.delete(ORIGIN_USER_SIGNATURE_HEADER);
 
 	// Headers iteration can combine Set-Cookie values. Re-add them through Bun's
 	// getSetCookie() extension so each cookie remains a separate response header.
@@ -256,7 +259,12 @@ export async function proxyRequest(
 	originUrl: string = site.origin_url,
 	httpPolicy: ResolvedHttpPolicy = resolveHttpPolicy(site),
 	originRecord: SiteOriginRecord | null = null,
-): Promise<{ response: Response; capturedRequestBody: CapturedBody | null; capturedResponseBody: Promise<CapturedBody | null> | null }> {
+): Promise<{
+	response: Response;
+	capturedRequestBody: CapturedBody | null;
+	capturedResponseBody: Promise<CapturedBody | null> | null;
+	originUsername: string | null;
+}> {
 	if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
 		// Upgrade requests are intercepted by TlsListenerManager before Web-JS
 		// dispatch. This is only a defensive response if a custom listener calls
@@ -273,7 +281,7 @@ export async function proxyRequest(
 			},
 			{ upgrade: "websocket" },
 		);
-		return { response, capturedRequestBody: null, capturedResponseBody: null };
+		return { response, capturedRequestBody: null, capturedResponseBody: null, originUsername: null };
 	}
 
 	const incoming = new URL(request.url);
@@ -352,6 +360,7 @@ export async function proxyRequest(
 			recordBandwidthLimitBytes(httpPolicy.bandwidthLimit, site, ip, delta.clientSentBytes ?? 0);
 		},
 	);
+	const originUsername = await verifiedOriginUser(site, headers.get("x-burrowgate-signature"), response.headers);
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
 	applyCorsResponseHeaders(responseHeaders, request, httpPolicy.cors);
@@ -366,5 +375,6 @@ export async function proxyRequest(
 		),
 		capturedRequestBody: await requestBody.capturedRequestBody,
 		capturedResponseBody: bodyCaptureActive && httpPolicy.bodyCapture.maxResponseBytes > 0 ? capturedResponseBody : null,
+		originUsername,
 	};
 }

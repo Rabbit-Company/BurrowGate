@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { verifyOriginRequest } from "../src/mod.ts";
+import { signOriginUser, verifyOriginRequest } from "../src/mod.ts";
 
 const secret = "origin-signing-secret";
 const encoder = new TextEncoder();
@@ -139,5 +139,35 @@ describe("verifyOriginRequest", () => {
 	test("throws for a negative maxAgeSeconds", async () => {
 		const request = await signedRequest();
 		await expect(verifyOriginRequest(request, secret, { maxAgeSeconds: -1 })).rejects.toThrow(TypeError);
+	});
+});
+
+describe("signOriginUser", () => {
+	test("signs the username together with the request signature", async () => {
+		const request = await signedRequest();
+		const headers = await signOriginUser(request, secret, "ziga");
+		const requestSignature = request.headers.get("x-burrowgate-signature")!;
+		expect(headers).toEqual({
+			"x-burrowgate-origin-user": "ziga",
+			"x-burrowgate-origin-user-signature": await hmacHex(secret, `${requestSignature}\nziga`),
+		});
+	});
+
+	test("gives a different signature for every request", async () => {
+		const first = await signOriginUser(await signedRequest({ url: "https://origin.example.test/a" }), secret, "ziga");
+		const second = await signOriginUser(await signedRequest({ url: "https://origin.example.test/b" }), secret, "ziga");
+		expect(first!["x-burrowgate-origin-user-signature"]).not.toBe(second!["x-burrowgate-origin-user-signature"]);
+	});
+
+	test("returns null for a request that did not come through BurrowGate", async () => {
+		expect(await signOriginUser(new Request("https://origin.example.test/"), secret, "ziga")).toBeNull();
+	});
+
+	test("rejects an empty secret and invalid usernames", async () => {
+		const request = await signedRequest();
+		await expect(signOriginUser(request, " ", "ziga")).rejects.toThrow(TypeError);
+		await expect(signOriginUser(request, secret, "")).rejects.toThrow(TypeError);
+		await expect(signOriginUser(request, secret, "a\nb")).rejects.toThrow(TypeError);
+		await expect(signOriginUser(request, secret, "x".repeat(256))).rejects.toThrow(TypeError);
 	});
 });

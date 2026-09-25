@@ -1691,7 +1691,7 @@ async function loadTraffic() {
 						.map(
 							(event) => `<tr class="clickable-row" data-event-id="${escapeHtml(event.id)}">
           <td>${formatDate(event.created_at)}</td>
-          <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username ? `<span class="cell-subtext">${escapeHtml(event.access_username)}</span>` : ""}</td>
+          <td class="ip-cell"><code title="${escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)}">${escapeHtml(event.ip)}</code>${event.access_username || event.origin_username ? `<span class="cell-subtext">${escapeHtml(event.access_username || event.origin_username)}</span>` : ""}</td>
           ${isColumnDisplayed("traffic", "site") ? `<td>${websiteCell(event.site_id)}</td>` : ""}
           ${isColumnVisible("traffic", "country") ? `<td>${countryBadge(event.country_code)}</td>` : ""}
           ${isColumnVisible("traffic", "asn") ? `<td>${asnBadge(event.asn, event.asn_org)}</td>` : ""}
@@ -1835,6 +1835,7 @@ function renderEventDetail(event) {
 		["Network type", networkPrivacyBadge(event.network_privacy)],
 		["Session", event.session_id ? escapeHtml(event.session_id) : "-"],
 		["User", event.access_username ? escapeHtml(event.access_username) : "-"],
+		["Origin user", event.origin_username ? escapeHtml(event.origin_username) : "-"],
 		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
 		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-"],
 		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-"],

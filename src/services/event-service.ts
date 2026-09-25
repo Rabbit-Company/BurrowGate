@@ -57,6 +57,7 @@ export async function recordEvent(input: {
 	protectionMatches?: ManagedProtectionMatch[] | null;
 	requestId?: string | null;
 	accessUsername?: string | null;
+	originUsername?: string | null;
 	referer?: string | null;
 	refererHost?: string | null;
 	botId?: string | null;
@@ -102,6 +103,7 @@ export async function recordEvent(input: {
 			protection_ruleset_version: input.protectionRulesetVersion ?? null,
 			protection_matches_json: input.protectionMatches?.length ? JSON.stringify(input.protectionMatches) : null,
 			access_username: input.accessUsername ?? null,
+			origin_username: input.originUsername ?? null,
 			referer: input.referer ?? null,
 			referer_host: input.refererHost ?? null,
 			bot_id: input.botId ?? null,

@@ -721,6 +721,7 @@ export interface RequestEventRecord {
 	protection_ruleset_version: string | null;
 	protection_matches_json: string | null;
 	access_username: string | null;
+	origin_username?: string | null;
 	referer: string | null;
 	referer_host: string | null;
 	bot_id?: string | null;

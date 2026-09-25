@@ -826,6 +826,7 @@ async function gateway(ctx: any): Promise<Response> {
 						response: await serveStaticOrigin(request, site, selectedOrigin!, ip, eventBase.countryCode ?? null, route.http),
 						capturedRequestBody: null,
 						capturedResponseBody: null,
+						originUsername: null,
 					}
 				: await proxyRequest(
 						request,
@@ -843,11 +844,13 @@ async function gateway(ctx: any): Promise<Response> {
 		let response: Response;
 		let capturedRequestBody: CapturedBody | null = null;
 		let capturedResponseBody: Promise<CapturedBody | null> | null = null;
+		let originUsername: string | null = null;
 		try {
 			const proxied = await proxySelectedOrigin();
 			response = proxied.response;
 			capturedRequestBody = proxied.capturedRequestBody;
 			capturedResponseBody = proxied.capturedResponseBody;
+			originUsername = proxied.originUsername;
 			if (loadBalancer.clearPassiveFailure(selectedOrigin.id)) {
 				Logger.info("Origin recovered from a passive request failure", {
 					requestId: eventBase.requestId,
@@ -882,6 +885,7 @@ async function gateway(ctx: any): Promise<Response> {
 			response = proxied.response;
 			capturedRequestBody = proxied.capturedRequestBody;
 			capturedResponseBody = proxied.capturedResponseBody;
+			originUsername = proxied.originUsername;
 			loadBalancer.clearPassiveFailure(selectedOrigin.id);
 			Logger.info("Origin request failover succeeded", {
 				requestId: eventBase.requestId,
@@ -910,6 +914,7 @@ async function gateway(ctx: any): Promise<Response> {
 			cacheStatus,
 			originId: selectedOrigin.id,
 			accessUsername: accessUser?.username ?? null,
+			originUsername,
 			latencyMs: Math.round(performance.now() - started),
 			requestBody: capturedRequestBody?.text ?? null,
 			requestBodyTruncated: capturedRequestBody?.truncated ?? null,
