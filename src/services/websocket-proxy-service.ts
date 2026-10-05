@@ -127,6 +127,24 @@ interface BunWebSocketConstructor {
 	new (url: string, options: { headers: Record<string, string> }): WebSocket;
 }
 
+class WebSocketOriginConnectionError extends Error {
+	constructor(
+		message: string,
+		readonly failureKind: "transport" | "handshake-rejected" | "downstream-aborted",
+	) {
+		super(message);
+		this.name = "WebSocketOriginConnectionError";
+	}
+}
+
+export function isWebSocketHandshakeRejection(message: string): boolean {
+	return /expected\s+101\s+status\s+code/i.test(message);
+}
+
+function isWebSocketOriginTransportFailure(error: unknown): boolean {
+	return error instanceof WebSocketOriginConnectionError && error.failureKind === "transport";
+}
+
 function messageByteLength(message: ProxiedWebSocketMessage): number {
 	if (typeof message === "string") return Buffer.byteLength(message);
 	return message.byteLength;
@@ -277,23 +295,34 @@ async function openUpstreamWebSocket(target: URL, headers: Headers, request: Req
 		};
 		const onOpen = (): void => finish();
 		const onError = (event: Event): void => {
-			const detail = event instanceof ErrorEvent && event.message ? `: ${event.message}` : "";
-			finish(new Error(`Unable to connect to WebSocket origin ${target.host}${detail}`));
+			const eventMessage = event instanceof ErrorEvent ? event.message : "";
+			const detail = eventMessage ? `: ${eventMessage}` : "";
+			finish(
+				new WebSocketOriginConnectionError(
+					`Unable to connect to WebSocket origin ${target.host}${detail}`,
+					isWebSocketHandshakeRejection(eventMessage) ? "handshake-rejected" : "transport",
+				),
+			);
 		};
 		const onCloseBeforeOpen = (event: CloseEvent): void => {
-			finish(new Error(`WebSocket origin closed during handshake (${event.code || "no status"})`));
+			finish(
+				new WebSocketOriginConnectionError(
+					`WebSocket origin closed during handshake (${event.code || "no status"})${event.reason ? `: ${event.reason}` : ""}`,
+					isWebSocketHandshakeRejection(event.reason) ? "handshake-rejected" : "transport",
+				),
+			);
 		};
 		const onAbort = (): void => {
 			try {
 				socket.close();
 			} catch {}
-			finish(new Error("Downstream WebSocket request was aborted"));
+			finish(new WebSocketOriginConnectionError("Downstream WebSocket request was aborted", "downstream-aborted"));
 		};
 		const timer = setTimeout(() => {
 			try {
 				socket.close();
 			} catch {}
-			finish(new Error(`WebSocket origin handshake timed out after ${connectTimeoutMs} ms`));
+			finish(new WebSocketOriginConnectionError(`WebSocket origin handshake timed out after ${connectTimeoutMs} ms`, "transport"));
 		}, connectTimeoutMs);
 
 		socket.addEventListener("open", onOpen, { once: true });
@@ -678,6 +707,7 @@ export async function handleWebSocketUpgrade(
 				});
 			}
 		} catch (firstError) {
+			if (!isWebSocketOriginTransportFailure(firstError)) throw firstError;
 			const failedOrigin = selectedOrigin;
 			const newlyQuarantined = loadBalancer.reportPassiveFailure(failedOrigin.id);
 			const replacement = await loadBalancer.selectOrigin(site, candidateSession, ip, { excludeOriginIds: new Set([failedOrigin.id]) });
@@ -794,7 +824,7 @@ export async function handleWebSocketUpgrade(
 		});
 		return undefined;
 	} catch (error) {
-		loadBalancer.reportPassiveFailure(selectedOrigin.id);
+		if (isWebSocketOriginTransportFailure(error)) loadBalancer.reportPassiveFailure(selectedOrigin.id);
 		await recordEvent({
 			...eventBase,
 			sessionId: session?.id ?? null,

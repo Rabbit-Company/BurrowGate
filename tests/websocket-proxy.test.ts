@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	isWebSocketUpgrade,
+	isWebSocketHandshakeRejection,
 	clientIpForUpgrade,
 	offeredWebSocketProtocols,
 	selectedProtocolHeaders,
@@ -79,6 +80,12 @@ describe("WebSocket reverse proxy", () => {
 			),
 		).toBe(true);
 		expect(isWebSocketUpgrade(new Request("https://socket.example.test/ws"))).toBe(false);
+	});
+
+	test("recognizes an HTTP response to an upstream WebSocket handshake", () => {
+		expect(isWebSocketHandshakeRejection("WebSocket connection failed: Expected 101 status code")).toBe(true);
+		expect(isWebSocketHandshakeRejection("Unable to connect to WebSocket origin 10.0.0.2:8096")).toBe(false);
+		expect(isWebSocketHandshakeRejection("WebSocket origin handshake timed out after 5000 ms")).toBe(false);
 	});
 
 	test("parses and preserves offered subprotocol order", () => {

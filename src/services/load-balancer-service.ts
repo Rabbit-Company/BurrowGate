@@ -83,18 +83,27 @@ export class LoadBalancer {
 		return this.passiveQuarantine.delete(originId);
 	}
 
-	private originAvailable(origin: SiteOriginRecord, existingAffinity: boolean, excluded: Set<string>, allowUnhealthy = false): boolean {
+	private originAvailable(
+		origin: SiteOriginRecord,
+		existingAffinity: boolean,
+		excluded: Set<string>,
+		allowUnhealthy = false,
+		allowPassiveQuarantine = false,
+	): boolean {
 		if (origin.enabled !== 1 || excluded.has(origin.id)) return false;
 		if (!existingAffinity && origin.draining === 1) return false;
 		if (!allowUnhealthy && originHealthManager.originState(origin.id) === "unhealthy") return false;
 		const quarantinedUntil = this.passiveQuarantine.get(origin.id) ?? 0;
-		if (quarantinedUntil > Date.now()) return false;
-		if (quarantinedUntil > 0) this.passiveQuarantine.delete(origin.id);
+		if (quarantinedUntil > Date.now()) {
+			if (!allowPassiveQuarantine) return false;
+		} else if (quarantinedUntil > 0) {
+			this.passiveQuarantine.delete(origin.id);
+		}
 		return true;
 	}
 
-	private candidates(site: SiteRecord, excluded: Set<string>): SiteOriginRecord[] {
-		const eligible = this.origins(site.id).filter((origin) => this.originAvailable(origin, false, excluded, true));
+	private candidates(site: SiteRecord, excluded: Set<string>, allowPassiveQuarantine = false): SiteOriginRecord[] {
+		const eligible = this.origins(site.id).filter((origin) => this.originAvailable(origin, false, excluded, true, allowPassiveQuarantine));
 		const healthy = eligible.filter((origin) => originHealthManager.originState(origin.id) === "healthy");
 		const notUnhealthy = eligible.filter((origin) => originHealthManager.originState(origin.id) !== "unhealthy");
 		const preferred = healthy.length > 0 ? healthy : notUnhealthy.length > 0 ? notUnhealthy : site.health_check_failure_mode === "monitor" ? eligible : [];
@@ -140,7 +149,8 @@ export class LoadBalancer {
 			if (assigned && this.originAvailable(assigned, true, excluded)) return assigned;
 		}
 
-		const candidates = this.candidates(site, excluded);
+		let candidates = this.candidates(site, excluded);
+		if (candidates.length === 0) candidates = this.candidates(site, excluded, true);
 		const algorithm = site.load_balancing_algorithm ?? "failover";
 		const selected = affinity && !session ? ipAffinityOrigin(candidates, ip, algorithm === "weighted-round-robin") : this.nextByAlgorithm(site, candidates);
 		if (affinity && session && selected && session.origin_id !== selected.id) {

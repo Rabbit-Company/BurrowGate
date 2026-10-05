@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ipAffinityOrigin } from "../src/services/load-balancer-service.ts";
-import type { SiteOriginRecord } from "../src/types.ts";
+import { ipAffinityOrigin, LoadBalancer } from "../src/services/load-balancer-service.ts";
+import type { SiteOriginRecord, SiteRecord } from "../src/types.ts";
 
 function origin(id: string, weight = 1): SiteOriginRecord {
 	return {
@@ -49,5 +49,35 @@ describe("load-balancer IP affinity", () => {
 
 	test("returns null for an unavailable pool", () => {
 		expect(ipAffinityOrigin([], "192.0.2.1", false)).toBeNull();
+	});
+});
+
+describe("load-balancer passive failure quarantine", () => {
+	const site = {
+		id: "site-1",
+		load_balancing_algorithm: "failover",
+		load_balancing_affinity: 0,
+		health_check_failure_mode: "monitor",
+	} as SiteRecord;
+
+	function balancerWith(origins: SiteOriginRecord[]): LoadBalancer {
+		const balancer = new LoadBalancer();
+		const state = balancer as unknown as { originsBySite: Map<string, SiteOriginRecord[]> };
+		state.originsBySite.set(site.id, origins);
+		return balancer;
+	}
+
+	test("uses another origin while one is passively quarantined", async () => {
+		const balancer = balancerWith([origin("origin-a"), origin("origin-b")]);
+		balancer.reportPassiveFailure("origin-a");
+
+		expect((await balancer.selectOrigin(site, null, "203.0.113.1"))?.id).toBe("origin-b");
+	});
+
+	test("keeps the last origin available instead of turning one request failure into site-wide 503s", async () => {
+		const balancer = balancerWith([origin("origin-a")]);
+		balancer.reportPassiveFailure("origin-a");
+
+		expect((await balancer.selectOrigin(site, null, "203.0.113.1"))?.id).toBe("origin-a");
 	});
 });
