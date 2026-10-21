@@ -50,3 +50,20 @@ The **Apply PHP preset** button fills in the proxy-side measures from the PHP se
 The preset only fills in the form. Review the values and save the site to apply them.
 
 These limits reduce exposure but do not fix the vulnerabilities, so update PHP as well. CVE-2026-109618 is reached by driving PHP out of memory while it parses a request. The limits bound how much request data PHP has to parse, but a large legitimate request or an application-level allocation can still reach the vulnerable path. CVE-2026-109619 is reached through fatal errors, timeouts and early diagnostics in a worker. Blocking `PHP_SESSION_UPLOAD_PROGRESS` covers the confirmed session upload-progress path, the proxy-side equivalent of `session.upload_progress.enabled=0`. A proxy cannot see the other variants. If the site sets a custom `session.upload_progress.name`, block that name instead.
+
+## Slow clients and slow origins
+
+BurrowGate closes connections that hold resources without moving data, which defends against slowloris, slow POST and slow-read attacks.
+
+| Situation                                     | Limit                                                                                                 | Result                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| A client sends its request headers slowly     | About 10 seconds for the whole header block, enforced by Bun                                          | Connection closed                                 |
+| A client pauses while sending a request body  | `BG_CLIENT_TIMEOUT_SECONDS` between chunks                                                            | `408`, the origin never receives the partial body |
+| A client uploads below the minimum rate       | `BG_CLIENT_TIMEOUT_SECONDS` plus one second per `BG_CLIENT_MIN_RATE_BYTES_PER_SECOND` bytes received  | `408`, the origin never receives the partial body |
+| A client stops reading the response           | Each chunk must be taken within `BG_CLIENT_TIMEOUT_SECONDS` plus its size divided by the minimum rate | Connection closed                                 |
+| The origin is slow to answer                  | `BG_ORIGIN_TIMEOUT_MS` after the request body has been sent                                           | `502`                                             |
+| The origin goes silent while sending the body | `BG_ORIGIN_TIMEOUT_MS` without new data                                                               | Connection closed and a warning logged            |
+
+A response may take as long as it needs while data keeps moving, so large downloads are not cut off. Long-lived streams such as server-sent events stay open as long as the origin sends something, such as a heartbeat, at least every `BG_ORIGIN_TIMEOUT_MS`. A closed connection is never ended with a valid terminating chunk, so the client can tell the response is incomplete.
+
+These limits apply to requests proxied to an origin. Dashboard pages, challenges and static sites keep the listener's fixed limit of 255 seconds per request.

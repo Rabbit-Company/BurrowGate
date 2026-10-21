@@ -350,6 +350,9 @@ BurrowGate checks GitHub Releases for a newer stable version every hour (`BG_UPD
 | `BG_PROXY_PROTOCOL_ALLOW_DIRECT`          | `true`                               | Allow direct connections alongside incoming PROXY traffic on Sites and Streams                  |
 | `BG_HTTP2_ENABLED`                        | `false`                              | (Experimental) Serve HTTP/2 over the same HTTPS port/connection via TLS ALPN; see `docs/TLS.md` |
 | `BG_HTTP3_ENABLED`                        | `false`                              | (Experimental) Add a UDP HTTP/3 listener next to HTTPS; see `docs/TLS.md`                       |
+| `BG_ORIGIN_TIMEOUT_MS`                    | `30000`                              | Longest wait for an origin's response headers, and longest silence while it sends the body      |
+| `BG_CLIENT_TIMEOUT_SECONDS`               | `20`                                 | Longest pause a client may take while sending a body or reading a response                      |
+| `BG_CLIENT_MIN_RATE_BYTES_PER_SECOND`     | `500`                                | Slowest average rate a client may upload or read at before BurrowGate closes the connection     |
 | `DATABASE_URL`                            | `sqlite://./data/burrowgate.db`      | Bun.SQL database URL                                                                            |
 | `BG_ADMIN_USERNAME`                       | `admin`                              | Dashboard username                                                                              |
 | `BG_ADMIN_PASSWORD`                       | generated                            | Dashboard password                                                                              |

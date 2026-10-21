@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { proxyRequest, RequestBodyTooLargeError } from "../src/services/proxy-service.ts";
+import { RequestBodyIncompleteError } from "../src/services/transfer-timeout-service.ts";
 import type { ResolvedHttpPolicy } from "../src/services/http-policy-service.ts";
 import type { SiteRecord } from "../src/types.ts";
 
@@ -145,7 +146,7 @@ describe("reverse-proxy compression", () => {
 				method: "POST",
 				headers: {
 					"content-type": "application/x-www-form-urlencoded",
-					"content-length": String(Buffer.byteLength(body) + 1),
+					"content-length": String(Buffer.byteLength(body) - 1),
 				},
 				body,
 			}),
@@ -158,6 +159,27 @@ describe("reverse-proxy compression", () => {
 		expect(receivedContentLength).toBe(String(Buffer.byteLength(body)));
 		expect(receivedTransferEncoding).toBeNull();
 		expect(receivedRequestBody).toBe(body);
+	});
+
+	test("never forwards a buffered body shorter than its declared length", async () => {
+		receivedRequestBody = null;
+		const body = "action=pause&hashes=all";
+		const rejection = await proxyRequest(
+			new Request("http://proxy.test/form-test", {
+				method: "POST",
+				headers: {
+					"content-type": "application/x-www-form-urlencoded",
+					"content-length": String(Buffer.byteLength(body) + 1),
+				},
+				body,
+			}),
+			site,
+			"127.0.0.1",
+			null,
+		).catch((error: unknown) => error);
+
+		expect(rejection).toBeInstanceOf(RequestBodyIncompleteError);
+		expect(receivedRequestBody).toBeNull();
 	});
 
 	test("applies request and response header policies at the origin boundary", async () => {

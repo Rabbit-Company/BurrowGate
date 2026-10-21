@@ -152,6 +152,10 @@ export const config = {
 	dashboardProxyPreset: parseIpExtractionPreset(process.env.BG_PROXY_PRESET, "direct", "BG_PROXY_PRESET"),
 	cookieSecureMode: cookieSecureMode(process.env.BG_COOKIE_SECURE),
 	originTimeoutMs: envNumber("BG_ORIGIN_TIMEOUT_MS", 30_000, 1_000, 300_000),
+	client: {
+		timeoutMs: envNumber("BG_CLIENT_TIMEOUT_SECONDS", 20, 1, 300) * 1_000,
+		minRateBytesPerSecond: envNumber("BG_CLIENT_MIN_RATE_BYTES_PER_SECOND", 500, 1, 1_073_741_824),
+	},
 	websocket: {
 		enabled: envBoolean("BG_WEBSOCKET_ENABLED", true),
 		connectTimeoutMs: envNumber("BG_WEBSOCKET_CONNECT_TIMEOUT_MS", 15_000, 1_000, 120_000),

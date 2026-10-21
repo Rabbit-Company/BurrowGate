@@ -21,6 +21,7 @@ import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.t
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { loadHaClusterConfigAtBoot } from "./services/ha-config-service.ts";
 import { proxyRequest, RequestBodyTooLargeError, RequestInputRejectedError, type OriginAccessStatus } from "./services/proxy-service.ts";
+import { RequestBodyIncompleteError, RequestBodyTimeoutError } from "./services/transfer-timeout-service.ts";
 import { fullAccessTokenBoundaryResponse } from "./services/api-token-service.ts";
 import { serveStaticOrigin } from "./services/static-origin-service.ts";
 import { findAccessSession, HaSessionPublicationError, userAgentHash } from "./services/session-service.ts";
@@ -861,7 +862,13 @@ async function gateway(ctx: any): Promise<Response> {
 				});
 			}
 		} catch (firstError) {
-			if (firstError instanceof RequestBodyTooLargeError || firstError instanceof RequestInputRejectedError) throw firstError;
+			if (
+				firstError instanceof RequestBodyTooLargeError ||
+				firstError instanceof RequestInputRejectedError ||
+				firstError instanceof RequestBodyTimeoutError ||
+				firstError instanceof RequestBodyIncompleteError
+			)
+				throw firstError;
 			const failedOrigin = selectedOrigin;
 			const newlyQuarantined = loadBalancer.reportPassiveFailure(failedOrigin.id);
 			if (!["GET", "HEAD"].includes(request.method)) throw firstError;
@@ -953,6 +960,50 @@ async function gateway(ctx: any): Promise<Response> {
 				clientIp: ip,
 				routePolicy: route.policy?.name,
 				reason: `The request body exceeds this route's configured limit of ${error.maximumBytes} bytes.`,
+			});
+		}
+		if (error instanceof RequestBodyIncompleteError) {
+			await recordEvent({
+				...eventBase,
+				sessionId: session?.id ?? null,
+				status: 400,
+				decision: "request-limited",
+				cacheStatus,
+				originId: selectedOrigin.id,
+				accessUsername: accessUser?.username ?? null,
+				latencyMs: Math.round(performance.now() - started),
+				requestHeaders: capturedErrorRequestHeaders?.json ?? null,
+				requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
+			});
+			return siteErrorResponse(site, request, {
+				status: 400,
+				code: "request_body_incomplete",
+				error: "Incomplete request body",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "The request body ended before the length the client declared.",
+			});
+		}
+		if (error instanceof RequestBodyTimeoutError) {
+			await recordEvent({
+				...eventBase,
+				sessionId: session?.id ?? null,
+				status: 408,
+				decision: "request-limited",
+				cacheStatus,
+				originId: selectedOrigin.id,
+				accessUsername: accessUser?.username ?? null,
+				latencyMs: Math.round(performance.now() - started),
+				requestHeaders: capturedErrorRequestHeaders?.json ?? null,
+				requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
+			});
+			return siteErrorResponse(site, request, {
+				status: 408,
+				code: "request_body_timeout",
+				error: "Request timed out",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: "The request body was sent too slowly.",
 			});
 		}
 		if (error instanceof RequestInputRejectedError) {

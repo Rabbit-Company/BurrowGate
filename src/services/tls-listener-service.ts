@@ -6,6 +6,7 @@ import { handleWebSocketUpgrade, isWebSocketUpgrade, websocketProxyHandler, type
 import { Logger } from "../logger.ts";
 import { ProxyProtocolIngress } from "./proxy-protocol-ingress.ts";
 import { normalizeProxyAddress, setIncomingProxyConnection } from "./incoming-proxy-protocol.ts";
+import { connectionControlFor, withConnectionControl } from "./connection-control-service.ts";
 
 interface StoppableServer {
 	stop(closeActiveConnections?: boolean): Promise<void>;
@@ -51,6 +52,7 @@ export class TlsListenerManager {
 	}
 
 	private async dispatch(request: Request, server: WebSocketUpgradeServer, transport: RequestTransport): Promise<Response | undefined> {
+		const control = connectionControlFor(request, server);
 		const ingress = transport === "https" ? this.httpsIngress : this.httpIngress;
 		if (ingress) {
 			const peer = server.requestIP(request) as { address: string; port: number } | null;
@@ -73,7 +75,7 @@ export class TlsListenerManager {
 			return await handleWebSocketUpgrade(request, server, transport);
 		}
 		const web = this.app as unknown as BunWebApplication;
-		return await withRequestTransport(transport, async () => await web.handleBun(request, server));
+		return await withRequestTransport(transport, async () => await withConnectionControl(control, async () => await web.handleBun(request, server)));
 	}
 
 	private async serve(options: { port: number; tls?: Bun.TLSOptions | Bun.TLSOptions[]; reusePort?: boolean }): Promise<StoppableServer> {

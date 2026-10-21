@@ -20,6 +20,8 @@ import {
 	type ResolvedHttpPolicy,
 } from "./http-policy-service.ts";
 import { FormBodyInspector } from "./request-input-inspector.ts";
+import { currentConnectionControl, type ConnectionControl } from "./connection-control-service.ts";
+import { guardResponseBody, readBodyWithinDeadline, RequestBodyTimeoutError, UploadDeadline } from "./transfer-timeout-service.ts";
 import { outboundFetchProtocolOption } from "./site-service.ts";
 import { originMtlsFetchOptions } from "./origin-mtls-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
@@ -197,7 +199,7 @@ function downstreamHeaders(response: Response, target: URL, incoming: URL, trans
 interface UpstreamRequestBody {
 	body: RequestInit["body"];
 	bufferedBytes: number;
-	limitState: { exceeded: boolean; rejection: RequestInputRejectedError | null };
+	limitState: { exceeded: boolean; rejection: RequestInputRejectedError | null; timedOut: boolean; stop: () => void };
 	capturedRequestBody: Promise<CapturedBody | null>;
 }
 
@@ -212,9 +214,12 @@ async function upstreamRequestBody(
 	captureMaxBytes: number,
 	captureContentTypes: readonly string[],
 	inspector: FormBodyInspector | null,
+	control: ConnectionControl | null,
+	onUploaded: () => void,
 ): Promise<UpstreamRequestBody> {
-	const limitState: UpstreamRequestBody["limitState"] = { exceeded: false, rejection: null };
+	const limitState: UpstreamRequestBody["limitState"] = { exceeded: false, rejection: null, timedOut: false, stop: () => {} };
 	if (["GET", "HEAD"].includes(request.method) || !request.body) {
+		onUploaded();
 		return { body: null, bufferedBytes: 0, limitState, capturedRequestBody: Promise.resolve(null) };
 	}
 
@@ -223,7 +228,7 @@ async function upstreamRequestBody(
 	const rawContentLength = request.headers.get("content-length");
 	const contentLength = rawContentLength === null ? null : Number(rawContentLength);
 	if (contentLength !== null && Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= FIXED_LENGTH_BODY_BUFFER_LIMIT) {
-		const body = new Uint8Array(await request.arrayBuffer());
+		const body = await readBodyWithinDeadline(request, contentLength, control);
 		if (maxBodyBytes > 0 && body.byteLength > maxBodyBytes) {
 			recordBandwidth(bandwidth, { clientReceivedBytes: body.byteLength });
 			recordBandwidthLimitBytes(bandwidthLimit, site, ip, body.byteLength);
@@ -236,6 +241,7 @@ async function upstreamRequestBody(
 			throw new RequestInputRejectedError(violation);
 		}
 		headers.set("content-length", String(body.byteLength));
+		onUploaded();
 		return {
 			body,
 			bufferedBytes: body.byteLength,
@@ -245,9 +251,19 @@ async function upstreamRequestBody(
 	}
 
 	let receivedBytes = 0;
+	let deadline: UploadDeadline | null = null;
+	limitState.stop = () => deadline?.stop();
 	const limited = request.body.pipeThrough(
 		new TransformStream<Uint8Array, Uint8Array>({
+			start(controller) {
+				deadline = new UploadDeadline(() => {
+					limitState.timedOut = true;
+					control?.abort();
+					controller.error(new RequestBodyTimeoutError());
+				});
+			},
 			transform(chunk, controller) {
+				deadline?.received(chunk.byteLength);
 				receivedBytes += chunk.byteLength;
 				recordBandwidth(bandwidth, { clientReceivedBytes: chunk.byteLength });
 				recordBandwidthLimitBytes(bandwidthLimit, site, ip, chunk.byteLength);
@@ -265,6 +281,10 @@ async function upstreamRequestBody(
 				}
 				recordBandwidth(bandwidth, { upstreamSentBytes: chunk.byteLength });
 				controller.enqueue(chunk);
+			},
+			flush() {
+				deadline?.stop();
+				onUploaded();
 			},
 		}),
 	);
@@ -314,6 +334,15 @@ export async function proxyRequest(
 		return { response, capturedRequestBody: null, capturedResponseBody: null, originUsername: null };
 	}
 
+	const control = currentConnectionControl();
+	control?.release();
+	const origin = new AbortController();
+	let headerTimer: ReturnType<typeof setTimeout> | null = null;
+	const startHeaderTimer = () => {
+		if (headerTimer || origin.signal.aborted) return;
+		headerTimer = setTimeout(() => origin.abort(new DOMException("The operation timed out.", "TimeoutError")), config.originTimeoutMs);
+		headerTimer.unref?.();
+	};
 	const incoming = new URL(request.url);
 	const transport = requestTransport(request);
 	const target = upstreamUrlForOrigin(originUrl, request);
@@ -343,6 +372,8 @@ export async function proxyRequest(
 		bodyCaptureActive ? httpPolicy.bodyCapture.maxRequestBytes : 0,
 		httpPolicy.bodyCapture.contentTypes,
 		FormBodyInspector.forRequest(request, httpPolicy.limits, httpPolicy.blockedMultipartFields),
+		control,
+		startHeaderTimer,
 	);
 
 	let response: Response;
@@ -352,7 +383,7 @@ export async function proxyRequest(
 			headers,
 			body: requestBody.body,
 			redirect: "manual",
-			signal: AbortSignal.timeout(config.originTimeoutMs),
+			signal: origin.signal,
 
 			// A reverse proxy must preserve the representation received from the
 			// origin. With Bun's default `decompress: true`, the body is decoded while
@@ -364,10 +395,14 @@ export async function proxyRequest(
 			...(await originMtlsFetchOptions(originRecord)),
 		});
 	} catch (error) {
+		if (headerTimer) clearTimeout(headerTimer);
+		requestBody.limitState.stop();
+		if (requestBody.limitState.timedOut) throw new RequestBodyTimeoutError();
 		if (requestBody.limitState.exceeded) throw new RequestBodyTooLargeError(httpPolicy.limits.maxBodyBytes);
 		if (requestBody.limitState.rejection) throw requestBody.limitState.rejection;
 		throw error;
 	}
+	if (headerTimer) clearTimeout(headerTimer);
 	if (requestBody.bufferedBytes > 0) {
 		recordBandwidth(bandwidth, {
 			clientReceivedBytes: requestBody.bufferedBytes,
@@ -392,13 +427,21 @@ export async function proxyRequest(
 			recordBandwidthLimitBytes(httpPolicy.bandwidthLimit, site, ip, delta.clientSentBytes ?? 0);
 		},
 	);
+	const guardedBody = responseBody
+		? guardResponseBody(responseBody, {
+				control,
+				abortOrigin: (reason) => origin.abort(reason),
+				originIdleMs: config.originTimeoutMs,
+				describe: { siteId: site.id, siteName: site.name, method: request.method, path: incoming.pathname },
+			})
+		: null;
 	const originUsername = await verifiedOriginUser(site, headers.get("x-burrowgate-signature"), response.headers);
 	const responseHeaders = downstreamHeaders(response, target, incoming, transport);
 	applyHeaderPolicy(responseHeaders, httpPolicy.responseHeaders);
 	applyCorsResponseHeaders(responseHeaders, request, httpPolicy.cors);
 	return {
 		response: rememberOriginResponse(
-			new Response(responseBody, {
+			new Response(guardedBody, {
 				status: response.status,
 				statusText: response.statusText,
 				headers: responseHeaders,
