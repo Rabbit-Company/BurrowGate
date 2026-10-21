@@ -3,6 +3,19 @@ import { MEMBERSHIP_SHRINK_GRACE_MS } from "../ha-timing.ts";
 import { BOT_CATALOG } from "../services/bot-service.ts";
 import { haPrimaryWriteBarrier } from "../services/ha-write-barrier.ts";
 import { db } from "./client.ts";
+import { searchSql } from "./search-sql.ts";
+import type { SearchNode } from "../services/search-query.ts";
+import {
+	auditLogSearchSchema,
+	bandwidthSearchSchema,
+	ipRuleSearchSchema,
+	notificationSearchSchema,
+	sessionSearchSchema,
+	streamBandwidthSearchSchema,
+	streamEventSearchSchema,
+	streamRuleSearchSchema,
+	trafficSearchSchema,
+} from "../services/search-schemas.ts";
 import type { TransactionSQL } from "bun";
 import type {
 	IpRuleAction,
@@ -86,7 +99,7 @@ export interface EventQuery {
 	originId?: string;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	decision?: string;
 	cacheStatus?: "hit" | "miss" | "bypass";
 	protectionStatus?: "clean" | "monitored" | "blocked";
@@ -104,7 +117,7 @@ export interface SessionQuery {
 	siteId?: string | string[];
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	state?: "active" | "expired" | "revoked";
 	countryCode?: string;
 	asn?: number;
@@ -118,7 +131,7 @@ export interface RuleQuery {
 	siteId: string;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	action?: IpRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
@@ -128,7 +141,7 @@ export interface RuleQuery {
 export interface AuditLogQuery {
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	actorUserId?: string;
 	action?: string;
 	resourceType?: string;
@@ -143,7 +156,7 @@ export interface StreamRuleQuery {
 	streamId: string;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	action?: StreamRuleAction;
 	state?: "active" | "expired";
 	sortBy: "created_at" | "expires_at" | "network_cidr" | "action";
@@ -154,7 +167,7 @@ export interface NotificationQuery {
 	siteId: string;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	type?: NotificationEventType;
 	status?: NotificationOutboxStatus;
 	sortBy: "created_at" | "occurred_at" | "type" | "status";
@@ -165,7 +178,7 @@ export interface StreamNotificationQuery {
 	streamId: string;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	type?: NotificationEventType;
 	status?: NotificationOutboxStatus;
 	sortBy: "created_at" | "occurred_at" | "type" | "status";
@@ -176,7 +189,7 @@ export interface BandwidthIpQuery {
 	siteId: string | string[] | undefined;
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	countryCode?: string;
 	protocol?: "http" | "websocket";
 	since: number;
@@ -208,7 +221,7 @@ export interface StreamEventQuery {
 	streamId?: string | string[];
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	protocol?: StreamProtocol;
 	eventType?: StreamEventType;
 	countryCode?: string;
@@ -235,7 +248,7 @@ export interface StreamBandwidthQuery {
 	streamId?: string | string[];
 	page: number;
 	pageSize: number;
-	search?: string;
+	filter?: SearchNode | null;
 	protocol?: StreamProtocol;
 	countryCode?: string;
 	since: number;
@@ -413,11 +426,6 @@ function pageResult<T>(items: T[], totalValue: unknown, page: number, pageSize: 
 		total,
 		totalPages: Math.max(1, Math.ceil(total / pageSize)),
 	};
-}
-
-function searchPattern(search: string | undefined): string | null {
-	const value = search?.trim().toLowerCase();
-	return value ? `%${value}%` : null;
 }
 
 export type TabMetricsScope = "requests" | "blocked" | "protection" | "cache" | "access" | "routes" | "sites" | "bandwidth" | "sessions";
@@ -1401,8 +1409,7 @@ export const repository = {
 		});
 	},
 	async pagedNotificationsForSite(query: NotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
-		const pattern = searchPattern(query.search);
-		const searchFilter = pattern ? db`AND (LOWER(ne.summary) LIKE ${pattern} OR LOWER(ne.type) LIKE ${pattern})` : db``;
+		const searchFilter = searchSql(query.filter ?? null, notificationSearchSchema);
 		const typeFilter = query.type ? db`AND ne.type=${query.type}` : db``;
 		const statusFilter = query.status ? db`AND no.status=${query.status}` : db``;
 		const sortColumn =
@@ -1426,8 +1433,7 @@ export const repository = {
 		return pageResult(items, countRow?.count, query.page, query.pageSize);
 	},
 	async pagedNotificationsForStream(query: StreamNotificationQuery): Promise<PageResult<NotificationEventWithDeliveryRecord>> {
-		const pattern = searchPattern(query.search);
-		const searchFilter = pattern ? db`AND (LOWER(ne.summary) LIKE ${pattern} OR LOWER(ne.type) LIKE ${pattern})` : db``;
+		const searchFilter = searchSql(query.filter ?? null, notificationSearchSchema);
 		const typeFilter = query.type ? db`AND ne.type=${query.type}` : db``;
 		const statusFilter = query.status ? db`AND no.status=${query.status}` : db``;
 		const sortColumn =
@@ -1830,14 +1836,10 @@ export const repository = {
 		});
 	},
 	async pagedSessions(query: SessionQuery): Promise<PageResult<AccessSessionRecord & { access_username: string | null }>> {
-		const pattern = searchPattern(query.search);
-		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const now = Date.now();
 		const siteFilter =
 			query.siteId === undefined ? db`` : Array.isArray(query.siteId) ? db`AND s.site_id IN ${db(query.siteId)}` : db`AND s.site_id=${query.siteId}`;
-		const searchFilter = pattern
-			? db`AND (s.id=${exactSearch} OR s.user_agent_hash=${exactSearch} OR LOWER(s.initial_ip) LIKE ${pattern} OR LOWER(s.last_ip) LIKE ${pattern} OR LOWER(COALESCE(au.username,'')) LIKE ${pattern})`
-			: db``;
+		const searchFilter = searchSql(query.filter ?? null, sessionSearchSchema);
 		const countryFilter = query.countryCode ? db`AND COALESCE(s.country_code, 'ZZ')=${query.countryCode}` : db``;
 		const asnFilter = query.asn ? db`AND s.asn=${query.asn}` : db``;
 		const stateFilter =
@@ -1901,9 +1903,8 @@ export const repository = {
 		}
 	},
 	async pagedRules(query: RuleQuery): Promise<PageResult<IpRuleRecord>> {
-		const pattern = searchPattern(query.search);
 		const now = Date.now();
-		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern} OR LOWER(rule_id) LIKE ${pattern})` : db``;
+		const searchFilter = searchSql(query.filter ?? null, ipRuleSearchSchema);
 		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
 		const stateFilter =
 			query.state === "active"
@@ -2064,9 +2065,8 @@ export const repository = {
 		});
 	},
 	async pagedStreamRules(query: StreamRuleQuery): Promise<PageResult<StreamIpRuleRecord>> {
-		const pattern = searchPattern(query.search);
 		const now = Date.now();
-		const searchFilter = pattern ? db`AND (LOWER(network_cidr) LIKE ${pattern} OR LOWER(reason) LIKE ${pattern})` : db``;
+		const searchFilter = searchSql(query.filter ?? null, streamRuleSearchSchema);
 		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
 		const stateFilter =
 			query.state === "active"
@@ -2656,12 +2656,8 @@ export const repository = {
 		);
 	},
 	async pagedEvents(query: EventQuery): Promise<PageResult<RequestEventRecord>> {
-		const pattern = searchPattern(query.search);
-		const exactSearch = query.search?.trim().toLowerCase() || null;
 		const siteFilter = siteScopeFilter(query.siteId);
-		const searchFilter = pattern
-			? db`AND (id=${exactSearch} OR LOWER(ip) LIKE ${pattern} OR LOWER(path) LIKE ${pattern} OR LOWER(COALESCE(protection_rule_id,'')) LIKE ${pattern} OR LOWER(COALESCE(access_username,'')) LIKE ${pattern} OR LOWER(COALESCE(origin_username,'')) LIKE ${pattern} OR LOWER(COALESCE(referer_host,'')) LIKE ${pattern} OR LOWER(COALESCE(bot_name,'')) LIKE ${pattern} OR session_id=${exactSearch})`
-			: db``;
+		const searchFilter = searchSql(query.filter ?? null, trafficSearchSchema);
 		const decisionFilter = query.decision ? db`AND decision=${query.decision}` : db``;
 		const cacheStatusFilter = query.cacheStatus ? db`AND cache_status=${query.cacheStatus}` : db``;
 		const protectionStatusFilter = query.protectionStatus ? db`AND protection_status=${query.protectionStatus}` : db``;
@@ -3081,9 +3077,8 @@ export const repository = {
 	},
 	async pagedBandwidthIps(query: BandwidthIpQuery): Promise<PageResult<BandwidthIpRow>> {
 		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
-		const pattern = searchPattern(query.search);
 		const siteFilter = siteScopeFilter(query.siteId);
-		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
+		const searchFilter = searchSql(query.filter ?? null, bandwidthSearchSchema);
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
@@ -4242,17 +4237,12 @@ export const repository = {
 		);
 	},
 	async pagedStreamEvents(query: StreamEventQuery): Promise<PageResult<StreamEventRecord>> {
-		const pattern = searchPattern(query.search);
-		const exactSearch = query.search?.trim().toLowerCase() || null;
-		const exactSearchUpper = query.search?.trim().toUpperCase() || null;
 		const streamFilter = streamScopeFilter(query.streamId);
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const typeFilter = query.eventType ? db`AND event_type=${query.eventType}` : db``;
 		const countryFilter = query.countryCode ? db`AND COALESCE(country_code,'ZZ')=${query.countryCode}` : db``;
 		const asnFilter = query.asn ? db`AND asn=${query.asn}` : db``;
-		const searchFilter = pattern
-			? db`AND (LOWER(COALESCE(client_ip,'')) LIKE ${pattern} OR LOWER(COALESCE(reason,'')) LIKE ${pattern} OR LOWER(COALESCE(error,'')) LIKE ${pattern} OR LOWER(COALESCE(username,'')) LIKE ${pattern} OR connection_id=${exactSearch} OR protection_rule_id=${exactSearchUpper})`
-			: db``;
+		const searchFilter = searchSql(query.filter ?? null, streamEventSearchSchema);
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const [countRow] =
@@ -4265,11 +4255,10 @@ export const repository = {
 	},
 	async pagedStreamBandwidth(query: StreamBandwidthQuery): Promise<PageResult<StreamBandwidthRow>> {
 		const minuteSince = Math.floor(query.since / 60_000) * 60_000;
-		const pattern = searchPattern(query.search);
 		const streamFilter = streamScopeFilter(query.streamId);
 		const protocolFilter = query.protocol ? db`AND protocol=${query.protocol}` : db``;
 		const countryFilter = query.countryCode ? db`AND country_code=${query.countryCode}` : db``;
-		const searchFilter = pattern ? db`AND LOWER(ip) LIKE ${pattern}` : db``;
+		const searchFilter = searchSql(query.filter ?? null, streamBandwidthSearchSchema);
 		const offset = (query.page - 1) * query.pageSize;
 		const order = db.unsafe(`${query.sortBy} ${query.sortDirection.toUpperCase()}`);
 		const [countRow] =
@@ -4861,8 +4850,7 @@ export const repository = {
 		VALUES (${entry.id},${entry.actor_user_id},${entry.actor_username},${entry.action},${entry.resource_type},${entry.resource_id},${entry.summary},${entry.detail_json},${entry.ip},${entry.created_at})`;
 	},
 	async pagedAdminAuditLog(query: AuditLogQuery): Promise<PageResult<AdminAuditLogRecord>> {
-		const pattern = searchPattern(query.search);
-		const searchFilter = pattern ? db`AND (LOWER(actor_username) LIKE ${pattern} OR LOWER(summary) LIKE ${pattern} OR LOWER(action) LIKE ${pattern})` : db``;
+		const searchFilter = searchSql(query.filter ?? null, auditLogSearchSchema);
 		const actorFilter = query.actorUserId ? db`AND actor_user_id=${query.actorUserId}` : db``;
 		const actionFilter = query.action ? db`AND action=${query.action}` : db``;
 		const resourceTypeFilter = query.resourceType ? db`AND resource_type=${query.resourceType}` : db``;

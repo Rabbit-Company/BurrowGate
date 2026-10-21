@@ -1,3 +1,4 @@
+import { SEARCH_PARAMETER_DESCRIPTION } from "./search.ts";
 import { errorResponse, jsonBody, jsonResponse, ref, type PathItemObject } from "../types.ts";
 
 const HA_INTERNAL_SECURITY = [{ HaSharedToken: [] }];
@@ -283,7 +284,7 @@ export const identityPaths: Record<string, PathItemObject> = {
 			parameters: [
 				{ name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
 				{ name: "pageSize", in: "query", schema: { type: "integer", minimum: 10, maximum: 200 } },
-				{ name: "search", in: "query", schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{ name: "actorUserId", in: "query", schema: { type: "string" } },
 				{ name: "action", in: "query", schema: { type: "string" } },
 				{ name: "resourceType", in: "query", schema: { type: "string" } },

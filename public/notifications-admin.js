@@ -1,3 +1,4 @@
+import { enhanceSearchInput, reportSearch } from "/_burrowgate/static/admin-shared.js";
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
 const byId = (id) => document.getElementById(id);
@@ -202,7 +203,9 @@ async function loadSiteNotificationLog() {
 		}
 		renderLogRows("siteNotif", result.items);
 		updateLogPagination("siteNotif", result, loadSiteNotificationLog);
+		reportSearch("siteNotifLogSearch", result);
 	} catch (error) {
+		reportSearch("siteNotifLogSearch", null, error);
 		byId("siteNotifLog").innerHTML = `<tr><td colspan="5" class="empty-cell error-text">${escapeHtml(error.message)}</td></tr>`;
 	}
 }
@@ -235,7 +238,9 @@ async function loadStreamNotificationLog() {
 		}
 		renderLogRows("streamNotif", result.items);
 		updateLogPagination("streamNotif", result, loadStreamNotificationLog);
+		reportSearch("streamNotifLogSearch", result);
 	} catch (error) {
+		reportSearch("streamNotifLogSearch", null, error);
 		byId("streamNotifLog").innerHTML = `<tr><td colspan="5" class="empty-cell error-text">${escapeHtml(error.message)}</td></tr>`;
 	}
 }
@@ -340,6 +345,8 @@ byId("streamNotifClearWebhook").addEventListener("change", () => updateNotifCont
 byId("siteNotifSave").addEventListener("click", () => void saveSiteNotifications());
 byId("streamNotifSave").addEventListener("click", () => void saveStreamNotifications());
 
+enhanceSearchInput("siteNotifLogSearch", "notifications");
+enhanceSearchInput("streamNotifLogSearch", "notifications");
 byId("siteNotifLogSearch").addEventListener(
 	"input",
 	debounce(() => {

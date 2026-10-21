@@ -1,3 +1,4 @@
+import { SEARCH_PARAMETER_DESCRIPTION } from "./search.ts";
 import { errorResponse, jsonBody, jsonResponse, ref, type PathItemObject } from "../types.ts";
 
 const pendingChange = ref("PendingChange");
@@ -568,7 +569,7 @@ export const sitePaths: Record<string, PathItemObject> = {
 				{ name: "id", in: "path", required: true, schema: { type: "string" } },
 				{ name: "page", in: "query", required: false, schema: { type: "integer", minimum: 1, default: 1 } },
 				{ name: "pageSize", in: "query", required: false, schema: { type: "integer", minimum: 10, maximum: 200, default: 25 } },
-				{ name: "search", in: "query", required: false, schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{
 					name: "type",
 					in: "query",

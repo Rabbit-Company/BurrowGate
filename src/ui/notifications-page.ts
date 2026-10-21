@@ -105,7 +105,7 @@ function notificationLogCard(prefix: string, title: string, eventTypes: Notifica
 	return `<article class="card">
   <div class="pad section-heading"><div><h2>${title} notifications</h2><p class="muted">All events recorded for the selected ${title.toLowerCase()}, whether or not delivery succeeded.</p></div></div>
   <div class="toolbar compact-toolbar">
-    <label class="search-field"><span>Search</span><input id="${prefix}LogSearch" class="input" placeholder="Summary, type..."></label>
+    <label class="search-field"><span>Search</span><input id="${prefix}LogSearch" class="input" placeholder="Summary, or -status:delivered severity:critical"></label>
     <label><span>Type</span><select id="${prefix}LogType" class="select"><option value="">All</option>${eventTypeFilterOptions(eventTypes)}</select></label>
     <label><span>Status</span><select id="${prefix}LogStatus" class="select"><option value="">All</option><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="failed">Failed</option></select></label>
     <label><span>Rows</span><select id="${prefix}LogPageSize" class="select page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select></label>

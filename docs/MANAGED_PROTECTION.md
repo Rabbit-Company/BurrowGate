@@ -12,6 +12,8 @@ Managed request protection evaluates HTTP requests against a versioned rule set 
 
 The bundled `burrowgate-core` rule set is intentionally small. It detects common traversal, sensitive-file probing, query-string injection, and ambiguous request-framing indicators. It inspects the request target, query parameters, and selected framing headers with bounded input sizes. It does not inspect request bodies and is not a replacement for OWASP CRS.
 
+Structural limits on request bodies (form field counts, multipart parts, field nesting, blocked multipart fields) are configured as [request limits](REQUEST_LIMITS.md) instead.
+
 ## Review workflow
 
 The **Protection** dashboard shows inspected, would-block, and blocked totals together with the most frequently matched primary rules. Recent Traffic can be filtered by protection outcome, and each event retains the rule-set ID/version plus all matches. Matching input values are not stored, returned to blocked clients, or used as OpenMetrics labels.

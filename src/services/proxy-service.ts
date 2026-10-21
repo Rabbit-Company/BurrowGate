@@ -11,7 +11,15 @@ import { accessIdentityCookieNames, accessIdentityCookieValues } from "./access-
 import { meteredBody, recordBandwidth, type BandwidthContext } from "./bandwidth-service.ts";
 import { recordBandwidthLimitBytes } from "./bandwidth-limit-service.ts";
 import { captureBufferedBody, tapBodyForCapture, type CapturedBody } from "./body-capture-service.ts";
-import { applyCorsResponseHeaders, applyHeaderPolicy, isBodyCaptureActive, resolveHttpPolicy, type ResolvedHttpPolicy } from "./http-policy-service.ts";
+import {
+	applyCorsResponseHeaders,
+	applyHeaderPolicy,
+	isBodyCaptureActive,
+	resolveHttpPolicy,
+	type RequestLimitViolation,
+	type ResolvedHttpPolicy,
+} from "./http-policy-service.ts";
+import { FormBodyInspector } from "./request-input-inspector.ts";
 import { outboundFetchProtocolOption } from "./site-service.ts";
 import { originMtlsFetchOptions } from "./origin-mtls-service.ts";
 import { rememberOriginResponse } from "./static-cache-service.ts";
@@ -26,6 +34,14 @@ export class RequestBodyTooLargeError extends Error {
 	constructor(readonly maximumBytes: number) {
 		super(`Request body exceeds the configured limit of ${maximumBytes} bytes`);
 		this.name = "RequestBodyTooLargeError";
+	}
+}
+
+/** A form body broke a structural input limit (field count, parts, nesting, blocked field). */
+export class RequestInputRejectedError extends Error {
+	constructor(readonly violation: RequestLimitViolation) {
+		super(violation.message);
+		this.name = "RequestInputRejectedError";
 	}
 }
 
@@ -181,7 +197,7 @@ function downstreamHeaders(response: Response, target: URL, incoming: URL, trans
 interface UpstreamRequestBody {
 	body: RequestInit["body"];
 	bufferedBytes: number;
-	limitState: { exceeded: boolean };
+	limitState: { exceeded: boolean; rejection: RequestInputRejectedError | null };
 	capturedRequestBody: Promise<CapturedBody | null>;
 }
 
@@ -195,8 +211,9 @@ async function upstreamRequestBody(
 	maxBodyBytes: number,
 	captureMaxBytes: number,
 	captureContentTypes: readonly string[],
+	inspector: FormBodyInspector | null,
 ): Promise<UpstreamRequestBody> {
-	const limitState = { exceeded: false };
+	const limitState: UpstreamRequestBody["limitState"] = { exceeded: false, rejection: null };
 	if (["GET", "HEAD"].includes(request.method) || !request.body) {
 		return { body: null, bufferedBytes: 0, limitState, capturedRequestBody: Promise.resolve(null) };
 	}
@@ -211,6 +228,12 @@ async function upstreamRequestBody(
 			recordBandwidth(bandwidth, { clientReceivedBytes: body.byteLength });
 			recordBandwidthLimitBytes(bandwidthLimit, site, ip, body.byteLength);
 			throw new RequestBodyTooLargeError(maxBodyBytes);
+		}
+		const violation = inspector?.push(body);
+		if (violation) {
+			recordBandwidth(bandwidth, { clientReceivedBytes: body.byteLength });
+			recordBandwidthLimitBytes(bandwidthLimit, site, ip, body.byteLength);
+			throw new RequestInputRejectedError(violation);
 		}
 		headers.set("content-length", String(body.byteLength));
 		return {
@@ -231,6 +254,13 @@ async function upstreamRequestBody(
 				if (maxBodyBytes > 0 && receivedBytes > maxBodyBytes) {
 					limitState.exceeded = true;
 					controller.error(new RequestBodyTooLargeError(maxBodyBytes));
+					return;
+				}
+				// Inspected before enqueueing, so the chunk that breaks a limit never reaches the origin.
+				const violation = inspector?.push(chunk);
+				if (violation) {
+					limitState.rejection = new RequestInputRejectedError(violation);
+					controller.error(limitState.rejection);
 					return;
 				}
 				recordBandwidth(bandwidth, { upstreamSentBytes: chunk.byteLength });
@@ -312,6 +342,7 @@ export async function proxyRequest(
 		httpPolicy.limits.maxBodyBytes,
 		bodyCaptureActive ? httpPolicy.bodyCapture.maxRequestBytes : 0,
 		httpPolicy.bodyCapture.contentTypes,
+		FormBodyInspector.forRequest(request, httpPolicy.limits, httpPolicy.blockedMultipartFields),
 	);
 
 	let response: Response;
@@ -334,6 +365,7 @@ export async function proxyRequest(
 		});
 	} catch (error) {
 		if (requestBody.limitState.exceeded) throw new RequestBodyTooLargeError(httpPolicy.limits.maxBodyBytes);
+		if (requestBody.limitState.rejection) throw requestBody.limitState.rejection;
 		throw error;
 	}
 	if (requestBody.bufferedBytes > 0) {

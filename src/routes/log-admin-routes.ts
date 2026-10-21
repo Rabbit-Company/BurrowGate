@@ -5,6 +5,8 @@ import { dailyFileLogs, type FileLogSettings, type LogLevelName } from "../servi
 import { getAdminSession } from "../services/session-service.ts";
 import { logPage } from "../ui/log-page.ts";
 import { htmlResponse, jsonResponse } from "../utils/http.ts";
+import { searchParam } from "./search-param.ts";
+import { logSearchSchema } from "../services/search-schemas.ts";
 
 async function authenticated(request: Request): Promise<AuthenticatedAdmin | Response> {
 	const user = await resolveRequestAdmin(request);
@@ -46,17 +48,20 @@ export function registerLogAdminRoutes(app: Web<any>): void {
 		const user = await authenticated(ctx.req);
 		if (user instanceof Response) return user;
 		const query = ctx.query();
+		const search = searchParam(new URL(ctx.req.url), logSearchSchema);
+		if (search instanceof Response) return search;
 		try {
-			return jsonResponse(
-				await dailyFileLogs.query({
+			return jsonResponse({
+				searchWarnings: search.warnings,
+				...(await dailyFileLogs.query({
 					from: Number(query.get("from")),
 					to: Number(query.get("to")),
-					search: query.get("search") ?? "",
+					filter: search.node,
 					level: (query.get("level") ?? "") as LogLevelName | "",
 					page: Number(query.get("page") ?? 1),
 					pageSize: Number(query.get("pageSize") ?? 50),
-				}),
-			);
+				})),
+			});
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to read logs" }, 400);
 		}

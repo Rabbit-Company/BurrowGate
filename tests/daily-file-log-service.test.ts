@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { DailyFileLogService, type FileLogSettings } from "../src/services/daily-file-log-service.ts";
+import { parseSearch } from "../src/services/search-query.ts";
+import { logSearchSchema } from "../src/services/search-schemas.ts";
 
 const directories: string[] = [];
 const defaults: FileLogSettings = { fileEnabled: false, level: "info", compressAfterDays: 1, retentionDays: 30 };
@@ -37,7 +39,7 @@ describe("daily file logging", () => {
 		const text = await readFile(join(directory, "2026-08-31.txt"), "utf8");
 		expect(text).toContain('"msg":"Application ready"');
 		expect(text).toContain('"level":0');
-		const result = await service.query({ from: timestamp - 1_000, to: timestamp + 1_000, search: "origin", pageSize: 50 });
+		const result = await service.query({ from: timestamp - 1_000, to: timestamp + 1_000, filter: parseSearch("origin", logSearchSchema).node, pageSize: 50 });
 		expect(result.total).toBe(1);
 		expect(result.items[0]).toMatchObject({ level: "error", message: "Origin failed" });
 		expect(result.series.reduce((sum, point) => sum + point.info, 0)).toBe(1);

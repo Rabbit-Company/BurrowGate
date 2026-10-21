@@ -1,6 +1,7 @@
 import { config } from "../config.ts";
 import { isTextContentType } from "./body-capture-service.ts";
 import type { RoutePolicyRecord, SiteRecord } from "../types.ts";
+import { requestInputViolation } from "./request-input-inspector.ts";
 
 export interface HeaderAssignment {
 	name: string;
@@ -16,6 +17,10 @@ export interface RequestLimits {
 	maxBodyBytes: number;
 	maxRequestTargetBytes: number;
 	maxHeaderBytes: number;
+	maxHeaderCount: number;
+	maxInputFields: number;
+	maxMultipartParts: number;
+	maxInputNestingDepth: number;
 }
 
 export type SiteStaticCacheMode = "disabled" | "enabled";
@@ -198,6 +203,7 @@ export interface SiteHttpPolicyView {
 	requestHeaders: HeaderMutationPolicy;
 	responseHeaders: HeaderMutationPolicy;
 	limits: RequestLimits;
+	blockedMultipartFields: string[];
 	cache: SiteStaticCachePolicy;
 	protection: SiteManagedProtectionPolicy;
 	banDurations: SiteBanDurationsPolicy;
@@ -212,6 +218,7 @@ export interface RouteHttpPolicyView {
 	requestHeaders: HeaderMutationPolicy;
 	responseHeaders: HeaderMutationPolicy;
 	limits: { [K in keyof RequestLimits]: number | null };
+	blockedMultipartFields: string[] | null;
 	cache: RouteStaticCachePolicy;
 	protection: RouteManagedProtectionPolicy;
 	banDurations: RouteBanDurationsPolicy;
@@ -227,8 +234,18 @@ export interface ResolvedHttpPolicy extends Omit<SiteHttpPolicyView, "protection
 }
 
 export type RequestLimitViolation = {
-	status: 413 | 414 | 431;
-	code: "request_body_too_large" | "request_target_too_large" | "request_headers_too_large";
+	status: 400 | 403 | 413 | 414 | 415 | 431;
+	code:
+		| "request_body_too_large"
+		| "request_target_too_large"
+		| "request_headers_too_large"
+		| "request_headers_too_many"
+		| "request_input_fields_too_many"
+		| "request_multipart_parts_too_many"
+		| "request_input_nesting_too_deep"
+		| "request_form_field_blocked"
+		| "request_form_encoding_unsupported"
+		| "request_multipart_boundary_invalid";
 	message: string;
 };
 
@@ -240,11 +257,19 @@ const MAX_RULES_PER_DIRECTION = 64;
 const MAX_HEADER_NAME_LENGTH = 128;
 const MAX_HEADER_VALUE_LENGTH = 8_192;
 
+const MAX_BLOCKED_MULTIPART_FIELDS = 32;
+const BLOCKED_MULTIPART_FIELD = /^[\x21-\x7e]{1,128}$/u;
+
 const limitDefinitions = {
-	maxBodyBytes: { label: "Maximum request body", maximum: 1_099_511_627_776 },
-	maxRequestTargetBytes: { label: "Maximum request target", maximum: 1_048_576 },
-	maxHeaderBytes: { label: "Maximum request headers", maximum: 1_048_576 },
+	maxBodyBytes: { label: "Maximum request body", maximum: 1_099_511_627_776, unit: "bytes" },
+	maxRequestTargetBytes: { label: "Maximum request target", maximum: 1_048_576, unit: "bytes" },
+	maxHeaderBytes: { label: "Maximum request headers", maximum: 1_048_576, unit: "bytes" },
+	maxHeaderCount: { label: "Maximum request header count", maximum: 10_000, unit: "headers" },
+	maxInputFields: { label: "Maximum input fields", maximum: 1_000_000, unit: "fields" },
+	maxMultipartParts: { label: "Maximum multipart parts", maximum: 1_000_000, unit: "parts" },
+	maxInputNestingDepth: { label: "Maximum input nesting depth", maximum: 1_024, unit: "levels" },
 } as const;
+const limitKeys = Object.keys(limitDefinitions) as (keyof RequestLimits)[];
 const staticCacheObjectCeiling = Math.min(config.httpCache.maxObjectBytes, config.httpCache.maxBytes);
 const bodyCaptureByteCeiling = config.bodyCapture.maxBytesCeiling;
 
@@ -289,7 +314,16 @@ const protectedResponseSetHeaders = new Set([
 const defaultSitePolicy = (): StoredSitePolicy => ({
 	requestHeaders: { set: [], remove: [] },
 	responseHeaders: { set: [], remove: [] },
-	limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
+	limits: {
+		maxBodyBytes: 0,
+		maxRequestTargetBytes: 0,
+		maxHeaderBytes: 0,
+		maxHeaderCount: 0,
+		maxInputFields: 0,
+		maxMultipartParts: 0,
+		maxInputNestingDepth: 0,
+	},
+	blockedMultipartFields: [],
 	cache: {
 		mode: "disabled",
 		ttlSeconds: 3_600,
@@ -322,7 +356,16 @@ const defaultSitePolicy = (): StoredSitePolicy => ({
 const defaultRoutePolicy = (): StoredRoutePolicy => ({
 	requestHeaders: { set: [], remove: [] },
 	responseHeaders: { set: [], remove: [] },
-	limits: { maxBodyBytes: null, maxRequestTargetBytes: null, maxHeaderBytes: null },
+	limits: {
+		maxBodyBytes: null,
+		maxRequestTargetBytes: null,
+		maxHeaderBytes: null,
+		maxHeaderCount: null,
+		maxInputFields: null,
+		maxMultipartParts: null,
+		maxInputNestingDepth: null,
+	},
+	blockedMultipartFields: null,
 	cache: { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null },
 	protection: { mode: "inherit", excludedRuleIds: [] },
 	banDurations: { low: null, medium: null, high: null, critical: null },
@@ -855,22 +898,41 @@ function limitValue(key: keyof RequestLimits, value: unknown, nullable: boolean)
 	const result = Number(value ?? 0);
 	const definition = limitDefinitions[key];
 	if (!Number.isSafeInteger(result) || result < 0 || result > definition.maximum) {
-		throw new Error(`${definition.label} must be an integer from 0 to ${definition.maximum} bytes`);
+		throw new Error(`${definition.label} must be an integer from 0 to ${definition.maximum} ${definition.unit}`);
 	}
 	return result;
 }
 
+function parseLimits(value: unknown, nullable: false): RequestLimits;
+function parseLimits(value: unknown, nullable: true): RouteHttpPolicyView["limits"];
+function parseLimits(value: unknown, nullable: boolean): RequestLimits | RouteHttpPolicyView["limits"] {
+	const limits = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+	return Object.fromEntries(limitKeys.map((key) => [key, limitValue(key, limits[key], nullable)])) as RequestLimits | RouteHttpPolicyView["limits"];
+}
+
+function parseBlockedMultipartFields(value: unknown, nullable: false): string[];
+function parseBlockedMultipartFields(value: unknown, nullable: true): string[] | null;
+function parseBlockedMultipartFields(value: unknown, nullable: boolean): string[] | null {
+	if (value === undefined || value === null) return nullable ? null : [];
+	if (!Array.isArray(value)) throw new Error("Blocked multipart fields must be an array of field names");
+	if (value.length > MAX_BLOCKED_MULTIPART_FIELDS) throw new Error(`At most ${MAX_BLOCKED_MULTIPART_FIELDS} blocked multipart fields are allowed`);
+	const names = new Set<string>();
+	for (const item of value) {
+		if (typeof item !== "string" || !BLOCKED_MULTIPART_FIELD.test(item)) {
+			throw new Error("Blocked multipart field names must be 1 to 128 visible ASCII characters");
+		}
+		names.add(item);
+	}
+	return [...names];
+}
+
 function parseSitePolicy(value: unknown): StoredSitePolicy {
 	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-	const limits = input.limits && typeof input.limits === "object" && !Array.isArray(input.limits) ? (input.limits as Record<string, unknown>) : {};
 	return {
 		requestHeaders: parseHeaderPolicy(input.requestHeaders, "Request header policy", "request"),
 		responseHeaders: parseHeaderPolicy(input.responseHeaders, "Response header policy", "response"),
-		limits: {
-			maxBodyBytes: limitValue("maxBodyBytes", limits.maxBodyBytes, false)!,
-			maxRequestTargetBytes: limitValue("maxRequestTargetBytes", limits.maxRequestTargetBytes, false)!,
-			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, false)!,
-		},
+		limits: parseLimits(input.limits, false),
+		blockedMultipartFields: parseBlockedMultipartFields(input.blockedMultipartFields, false),
 		cache: parseSiteCache(input.cache),
 		protection: parseSiteProtection(input.protection),
 		banDurations: parseSiteBanDurations(input.banDurations),
@@ -884,15 +946,11 @@ function parseSitePolicy(value: unknown): StoredSitePolicy {
 
 function parseRoutePolicy(value: unknown): StoredRoutePolicy {
 	const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-	const limits = input.limits && typeof input.limits === "object" && !Array.isArray(input.limits) ? (input.limits as Record<string, unknown>) : {};
 	return {
 		requestHeaders: parseHeaderPolicy(input.requestHeaders, "Route request header policy", "request"),
 		responseHeaders: parseHeaderPolicy(input.responseHeaders, "Route response header policy", "response"),
-		limits: {
-			maxBodyBytes: limitValue("maxBodyBytes", limits.maxBodyBytes, true),
-			maxRequestTargetBytes: limitValue("maxRequestTargetBytes", limits.maxRequestTargetBytes, true),
-			maxHeaderBytes: limitValue("maxHeaderBytes", limits.maxHeaderBytes, true),
-		},
+		limits: parseLimits(input.limits, true),
+		blockedMultipartFields: parseBlockedMultipartFields(input.blockedMultipartFields, true),
 		cache: parseRouteCache(input.cache),
 		protection: parseRouteProtection(input.protection),
 		banDurations: parseRouteBanDurations(input.banDurations),
@@ -938,6 +996,7 @@ export function serializeSiteHttpPolicy(input: unknown, existing?: string | null
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
+			blockedMultipartFields: "blockedMultipartFields" in value ? value.blockedMultipartFields : current.blockedMultipartFields,
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
@@ -968,6 +1027,7 @@ export function serializeRouteHttpPolicy(input: unknown, existing?: string | nul
 			requestHeaders: "requestHeaders" in value ? value.requestHeaders : current.requestHeaders,
 			responseHeaders: "responseHeaders" in value ? value.responseHeaders : current.responseHeaders,
 			limits: { ...current.limits, ...suppliedLimits },
+			blockedMultipartFields: "blockedMultipartFields" in value ? value.blockedMultipartFields : current.blockedMultipartFields,
 			cache: { ...current.cache, ...suppliedCache },
 			protection: { ...current.protection, ...suppliedProtection },
 			banDurations: { ...current.banDurations, ...suppliedBanDurations },
@@ -1001,17 +1061,20 @@ function mergeHeaderPolicies(site: HeaderMutationPolicy, route: HeaderMutationPo
 	return result;
 }
 
+function resolveLimits(site: RequestLimits, route: RouteHttpPolicyView["limits"]): RequestLimits {
+	const limits = { ...site };
+	for (const key of limitKeys) limits[key] = route[key] ?? site[key];
+	return limits;
+}
+
 export function resolveHttpPolicy(site: SiteRecord, policy?: RoutePolicyRecord | null): ResolvedHttpPolicy {
 	const sitePolicy = storedSitePolicy(site.http_policy_json);
 	const routePolicy = policy ? storedRoutePolicy(policy.http_policy_json) : defaultRoutePolicy();
 	return {
 		requestHeaders: mergeHeaderPolicies(sitePolicy.requestHeaders, routePolicy.requestHeaders),
 		responseHeaders: mergeHeaderPolicies(sitePolicy.responseHeaders, routePolicy.responseHeaders),
-		limits: {
-			maxBodyBytes: routePolicy.limits.maxBodyBytes ?? sitePolicy.limits.maxBodyBytes,
-			maxRequestTargetBytes: routePolicy.limits.maxRequestTargetBytes ?? sitePolicy.limits.maxRequestTargetBytes,
-			maxHeaderBytes: routePolicy.limits.maxHeaderBytes ?? sitePolicy.limits.maxHeaderBytes,
-		},
+		limits: resolveLimits(sitePolicy.limits, routePolicy.limits),
+		blockedMultipartFields: routePolicy.blockedMultipartFields ?? sitePolicy.blockedMultipartFields,
 		cache: {
 			mode: routePolicy.cache.mode === "inherit" ? sitePolicy.cache.mode : routePolicy.cache.mode,
 			ttlSeconds: routePolicy.cache.ttlSeconds ?? sitePolicy.cache.ttlSeconds,
@@ -1079,7 +1142,7 @@ function byteLength(value: string): number {
 	return new TextEncoder().encode(value).byteLength;
 }
 
-export function requestLimitViolation(request: Request, limits: RequestLimits): RequestLimitViolation | null {
+export function requestLimitViolation(request: Request, limits: RequestLimits, blockedMultipartFields: readonly string[] = []): RequestLimitViolation | null {
 	const url = new URL(request.url);
 	if (limits.maxRequestTargetBytes > 0 && byteLength(`${url.pathname}${url.search}`) > limits.maxRequestTargetBytes) {
 		return { status: 414, code: "request_target_too_large", message: "The request target exceeds this route's configured limit." };
@@ -1097,7 +1160,7 @@ export function requestLimitViolation(request: Request, limits: RequestLimits): 
 			return { status: 413, code: "request_body_too_large", message: "The request body exceeds this route's configured limit." };
 		}
 	}
-	return null;
+	return requestInputViolation(request, url, limits, blockedMultipartFields);
 }
 
 export function instanceStaticCacheDefaults(): SiteStaticCachePolicy & { maxEntries: number; maxBytes: number; instanceMaxObjectBytes: number } {

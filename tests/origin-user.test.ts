@@ -40,7 +40,16 @@ function basePolicy(): ResolvedHttpPolicy {
 	return {
 		requestHeaders: { set: [], remove: [] },
 		responseHeaders: { set: [], remove: [] },
-		limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
+		limits: {
+			maxBodyBytes: 0,
+			maxRequestTargetBytes: 0,
+			maxHeaderBytes: 0,
+			maxHeaderCount: 0,
+			maxInputFields: 0,
+			maxMultipartParts: 0,
+			maxInputNestingDepth: 0,
+		},
+		blockedMultipartFields: [],
 		cache: { mode: "disabled", ttlSeconds: 3_600, maxObjectBytes: 5_242_880, extensions: [".css"] },
 		protection: { mode: "disabled", rulesetId: "default", excludedRuleIds: [] },
 		banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },

@@ -1,3 +1,4 @@
+import { enhanceSearchInput, reportSearch } from "/_burrowgate/static/admin-shared.js";
 const ADMIN_API = "/_burrowgate/api/admin";
 const mutationHeaders = { "x-burrowgate-admin": "1" };
 const DATE_TIME_FORMAT_STORAGE_KEY = "burrowgate.admin.date-time-format";
@@ -356,10 +357,20 @@ async function loadLogs(advanceAutomaticRange = false) {
 		setDateRangeInputs(to - 86_400_000, to);
 	}
 	byId("logRows").innerHTML = '<tr><td colspan="4" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>';
-	const result = await api(
-		`/logs?${queryString({ from: selectedRangeFrom, to: selectedRangeTo, search: byId("logSearch").value.trim(), level: byId("logLevelFilter").value, page: logPage, pageSize: byId("logPageSize").value })}`,
-	);
+	let result;
+	try {
+		result = await api(
+			`/logs?${queryString({ from: selectedRangeFrom, to: selectedRangeTo, search: byId("logSearch").value.trim(), level: byId("logLevelFilter").value, page: logPage, pageSize: byId("logPageSize").value })}`,
+		);
+	} catch (error) {
+		if (requestId !== logRequestId) return;
+		reportSearch("logSearch", null, error);
+		if (!error.message?.startsWith("Invalid search:")) throw error;
+		byId("logRows").innerHTML = `<tr><td colspan="4" class="empty-cell error-text">${escapeHtml(error.message)}</td></tr>`;
+		return;
+	}
 	if (requestId !== logRequestId) return;
+	reportSearch("logSearch", result);
 	if (result.page > result.totalPages) {
 		logPage = result.totalPages;
 		return await loadLogs(false);
@@ -489,6 +500,7 @@ function bindActions() {
 		logPage = 1;
 		void loadLogs(false).catch((error) => showToast(error.message, "bad"));
 	};
+	enhanceSearchInput("logSearch", "logs");
 	byId("logSearch").addEventListener("input", debounce(reloadFromFirstPage));
 	byId("logLevelFilter").addEventListener("change", reloadFromFirstPage);
 	byId("logPageSize").addEventListener("change", reloadFromFirstPage);

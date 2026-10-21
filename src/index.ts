@@ -20,7 +20,7 @@ import { geoIpStatus, initializeAsnGeoIp, initializeGeoIp, startGeoIpRetry } fro
 import { initializeRuntimeSecrets } from "./services/runtime-bootstrap-service.ts";
 import { ensureBootstrapAdministrator } from "./services/admin-user-service.ts";
 import { loadHaClusterConfigAtBoot } from "./services/ha-config-service.ts";
-import { proxyRequest, RequestBodyTooLargeError, type OriginAccessStatus } from "./services/proxy-service.ts";
+import { proxyRequest, RequestBodyTooLargeError, RequestInputRejectedError, type OriginAccessStatus } from "./services/proxy-service.ts";
 import { fullAccessTokenBoundaryResponse } from "./services/api-token-service.ts";
 import { serveStaticOrigin } from "./services/static-origin-service.ts";
 import { findAccessSession, HaSessionPublicationError, userAgentHash } from "./services/session-service.ts";
@@ -482,7 +482,7 @@ async function gateway(ctx: any): Promise<Response> {
 			reason: route.policy?.name ? `Blocked by route policy ${route.policy.name}.` : "This route is not available.",
 		});
 	}
-	const limitViolation = requestLimitViolation(request, route.http.limits);
+	const limitViolation = requestLimitViolation(request, route.http.limits, route.http.blockedMultipartFields);
 	if (limitViolation) {
 		await recordEvent({
 			...eventBase,
@@ -861,7 +861,7 @@ async function gateway(ctx: any): Promise<Response> {
 				});
 			}
 		} catch (firstError) {
-			if (firstError instanceof RequestBodyTooLargeError) throw firstError;
+			if (firstError instanceof RequestBodyTooLargeError || firstError instanceof RequestInputRejectedError) throw firstError;
 			const failedOrigin = selectedOrigin;
 			const newlyQuarantined = loadBalancer.reportPassiveFailure(failedOrigin.id);
 			if (!["GET", "HEAD"].includes(request.method)) throw firstError;
@@ -953,6 +953,28 @@ async function gateway(ctx: any): Promise<Response> {
 				clientIp: ip,
 				routePolicy: route.policy?.name,
 				reason: `The request body exceeds this route's configured limit of ${error.maximumBytes} bytes.`,
+			});
+		}
+		if (error instanceof RequestInputRejectedError) {
+			await recordEvent({
+				...eventBase,
+				sessionId: session?.id ?? null,
+				status: error.violation.status,
+				decision: "request-limited",
+				cacheStatus,
+				originId: selectedOrigin.id,
+				accessUsername: accessUser?.username ?? null,
+				latencyMs: Math.round(performance.now() - started),
+				requestHeaders: capturedErrorRequestHeaders?.json ?? null,
+				requestHeadersTruncated: capturedErrorRequestHeaders?.truncated ?? null,
+			});
+			return siteErrorResponse(site, request, {
+				status: error.violation.status,
+				code: error.violation.code,
+				error: "Request limit exceeded",
+				clientIp: ip,
+				routePolicy: route.policy?.name,
+				reason: error.violation.message,
 			});
 		}
 		loadBalancer.reportPassiveFailure(selectedOrigin.id);

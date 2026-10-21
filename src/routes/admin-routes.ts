@@ -19,6 +19,16 @@ import { addRouteAsnRule, addRouteCountryRule, addRouteIpRule, invalidateRouteNe
 import { authenticateHaRequest, isAuthorized as isHaAuthorized, withDurability } from "../services/ha-mesh-service.ts";
 import { haTlsCertificate } from "../services/ha-tls-service.ts";
 import { forwardToPrimaryIfReplica } from "./ha-forward.ts";
+import { searchParam } from "./search-param.ts";
+import {
+	auditLogSearchSchema,
+	bandwidthSearchSchema,
+	ipRuleSearchSchema,
+	notificationSearchSchema,
+	searchSchemaCatalog,
+	sessionSearchSchema,
+	trafficSearchSchema,
+} from "../services/search-schemas.ts";
 import {
 	authenticateAdminPassword,
 	beginPendingLogin,
@@ -1062,11 +1072,13 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const access = await requireSiteAccess(ctx.params.id, user, "view");
 		if ("error" in access) return access.error;
 		const url = new URL(ctx.req.url);
+		const search = searchParam(url, notificationSearchSchema);
+		if (search instanceof Response) return search;
 		const result = await repository.pagedNotificationsForSite({
 			siteId: access.site.id,
 			page: integerParam(url, "page", 1, 1, 1_000_000),
 			pageSize: integerParam(url, "pageSize", 25, 10, 200),
-			search: stringParam(url, "search"),
+			filter: search.node,
 			type: enumParam(url, "type", NOTIFICATION_EVENT_TYPES),
 			status: enumParam(url, "status", NOTIFICATION_OUTBOX_STATUSES),
 			sortBy: notificationSortBy(url),
@@ -1074,6 +1086,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		});
 		return jsonResponse({
 			...result,
+			searchWarnings: search.warnings,
 			items: result.items.map((event) => ({
 				id: event.id,
 				type: event.type,
@@ -1087,6 +1100,12 @@ export function registerAdminRoutes(app: Web<any>): void {
 				deliveredAt: event.delivered_at === null ? null : Number(event.delivered_at),
 			})),
 		});
+	});
+
+	app.get("/_burrowgate/api/admin/search-fields", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		return jsonResponse({ schemas: searchSchemaCatalog() });
 	});
 
 	app.get("/_burrowgate/api/admin/static-roots", async (ctx) => {
@@ -2911,7 +2930,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
-		const search = stringParam(url, "search");
+		const search = searchParam(url, trafficSearchSchema);
+		if (search instanceof Response) return search;
 		const decision = stringParam(url, "decision");
 		const cacheStatus = enumParam(url, "cache", ["hit", "miss", "bypass"] as const);
 		const protectionStatus = enumParam(url, "protection", ["clean", "monitored", "blocked"] as const);
@@ -2926,7 +2946,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(originId ? { originId } : {}),
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				...(search ? { search } : {}),
+				filter: search.node,
 				...(decision ? { decision } : {}),
 				...(cacheStatus ? { cacheStatus } : {}),
 				...(protectionStatus ? { protectionStatus } : {}),
@@ -2949,6 +2969,7 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const originNames = new Map(origins.map((origin) => [origin.id, origin.name]));
 		return jsonResponse({
 			...page,
+			searchWarnings: search.warnings,
 			items: page.items.map((event) => ({
 				...event,
 				protection_matches: protectionMatches(event.protection_matches_json),
@@ -3021,16 +3042,18 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
-		const search = stringParam(url, "search");
+		const search = searchParam(url, bandwidthSearchSchema);
+		if (search instanceof Response) return search;
 		const countryCode = stringParam(url, "country")?.toUpperCase();
 		const protocol = enumParam(url, "protocol", ["http", "websocket"] as const);
 		await flushBandwidthMetrics();
-		return jsonResponse(
-			await repository.pagedBandwidthIps({
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await repository.pagedBandwidthIps({
 				siteId: scopeSiteId,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				...(search ? { search } : {}),
+				filter: search.node,
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
 				...(protocol ? { protocol } : {}),
 				since: range.since,
@@ -3051,8 +3074,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 					"client_total_bytes",
 				)!,
 				sortDirection: sortDirection(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/sessions", async (ctx) => {
@@ -3064,16 +3087,18 @@ export function registerAdminRoutes(app: Web<any>): void {
 		if (selection.error) return selection.error;
 		const scopeSiteId = await metricsScopeSiteId(selection, user);
 		const range = requestedDateRange(url);
-		const search = stringParam(url, "search");
+		const search = searchParam(url, sessionSearchSchema);
+		if (search instanceof Response) return search;
 		const state = enumParam(url, "state", ["active", "expired", "revoked"] as const);
 		const countryCode = stringParam(url, "country")?.toUpperCase();
 		const asn = Number(stringParam(url, "asn"));
-		return jsonResponse(
-			await repository.pagedSessions({
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await repository.pagedSessions({
 				...(scopeSiteId ? { siteId: scopeSiteId } : {}),
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				...(search ? { search } : {}),
+				filter: search.node,
 				...(state ? { state } : {}),
 				...(countryCode && /^[A-Z]{2}$/u.test(countryCode) ? { countryCode } : {}),
 				...(Number.isInteger(asn) && asn > 0 ? { asn } : {}),
@@ -3086,8 +3111,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 					"last_seen_at",
 				)!,
 				sortDirection: sortDirection(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/network-policy", async (ctx) => {
@@ -3265,21 +3290,23 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const selection = await selectedSite(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.site) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
-		const search = stringParam(url, "search");
+		const search = searchParam(url, ipRuleSearchSchema);
+		if (search instanceof Response) return search;
 		const action = enumParam(url, "action", ["allow", "pass", "block", "challenge"] as const);
 		const state = enumParam(url, "state", ["active", "expired"] as const);
-		return jsonResponse(
-			await repository.pagedRules({
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await repository.pagedRules({
 				siteId: selection.site.id,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				...(search ? { search } : {}),
+				filter: search.node,
 				...(action ? { action } : {}),
 				...(state ? { state } : {}),
 				sortBy: enumParam(url, "sortBy", ["created_at", "expires_at", "network_cidr", "action"] as const, "created_at")!,
 				sortDirection: sortDirection(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.post("/_burrowgate/api/admin/rules", async (ctx) => {
@@ -4006,11 +4033,14 @@ export function registerAdminRoutes(app: Web<any>): void {
 		const forbidden = requireAdministrator(user);
 		if (forbidden) return forbidden;
 		const url = new URL(ctx.req.url);
-		return jsonResponse(
-			await pagedAdminAuditLog({
+		const search = searchParam(url, auditLogSearchSchema);
+		if (search instanceof Response) return search;
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await pagedAdminAuditLog({
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				...(stringParam(url, "search") ? { search: stringParam(url, "search") } : {}),
+				filter: search.node,
 				...(stringParam(url, "actorUserId") ? { actorUserId: stringParam(url, "actorUserId") } : {}),
 				...(stringParam(url, "action") ? { action: stringParam(url, "action") } : {}),
 				...(stringParam(url, "resourceType") ? { resourceType: stringParam(url, "resourceType") } : {}),
@@ -4019,8 +4049,8 @@ export function registerAdminRoutes(app: Web<any>): void {
 				...(numberParam(url, "until") !== undefined ? { until: numberParam(url, "until") } : {}),
 				sortBy: enumParam(url, "sortBy", ["created_at", "action", "actor_username", "resource_type"] as const, "created_at")!,
 				sortDirection: sortDirection(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.post("/_burrowgate/api/admin/audit-log/purge", async (ctx) => {

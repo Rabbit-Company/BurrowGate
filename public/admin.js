@@ -9,6 +9,9 @@ import {
 	setPendingDurabilityWarning,
 	createUsersController,
 	createApiTokensController,
+	enhanceSearchInput,
+	reportSearch,
+	filterButtons,
 } from "/_burrowgate/static/admin-shared.js";
 
 const ADMIN_API = "/_burrowgate/api/admin";
@@ -1001,6 +1004,35 @@ function parseHeaderCaptureRedactedHeaders(id, nullable) {
 	return nullable ? null : [];
 }
 
+function parseBlockedMultipartFields(id, nullable) {
+	const names = [
+		...new Set(
+			byId(id)
+				.value.split(/\s+/u)
+				.map((value) => value.trim())
+				.filter(Boolean),
+		),
+	];
+	if (names.length > 0) return names;
+	return nullable ? null : [];
+}
+
+const PHP_HARDENING_PRESET = {
+	MaxBodyBytes: 8 * 1024 * 1024,
+	MaxHeaderCount: 100,
+	MaxInputFields: 1000,
+	MaxMultipartParts: 1000,
+	MaxInputNestingDepth: 16,
+};
+
+function applyPhpHardeningPreset() {
+	for (const [suffix, value] of Object.entries(PHP_HARDENING_PRESET)) byId(`siteHttp${suffix}`).value = String(value);
+	const blocked = byId("siteHttpBlockedMultipartFields");
+	if (!/(^|\s)PHP_SESSION_UPLOAD_PROGRESS(\s|$)/iu.test(blocked.value))
+		blocked.value = [blocked.value.trim(), "PHP_SESSION_UPLOAD_PROGRESS"].filter(Boolean).join("\n");
+	showToast("PHP hardening limits filled in. Save the site to apply them.");
+}
+
 function parseRuleIds(id) {
 	return [
 		...new Set(
@@ -1065,7 +1097,12 @@ function readHttpPolicy(prefix, routeOverrides) {
 			maxBodyBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxBodyBytes`) : Number(byId(`${prefix}MaxBodyBytes`).value),
 			maxRequestTargetBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxRequestTargetBytes`) : Number(byId(`${prefix}MaxRequestTargetBytes`).value),
 			maxHeaderBytes: routeOverrides ? optionalNumberInput(`${prefix}MaxHeaderBytes`) : Number(byId(`${prefix}MaxHeaderBytes`).value),
+			maxHeaderCount: routeOverrides ? optionalNumberInput(`${prefix}MaxHeaderCount`) : Number(byId(`${prefix}MaxHeaderCount`).value),
+			maxInputFields: routeOverrides ? optionalNumberInput(`${prefix}MaxInputFields`) : Number(byId(`${prefix}MaxInputFields`).value),
+			maxMultipartParts: routeOverrides ? optionalNumberInput(`${prefix}MaxMultipartParts`) : Number(byId(`${prefix}MaxMultipartParts`).value),
+			maxInputNestingDepth: routeOverrides ? optionalNumberInput(`${prefix}MaxInputNestingDepth`) : Number(byId(`${prefix}MaxInputNestingDepth`).value),
 		},
+		blockedMultipartFields: parseBlockedMultipartFields(`${prefix}BlockedMultipartFields`, routeOverrides),
 		cache: routeOverrides
 			? {
 					mode: byId(`${prefix}CacheMode`).value,
@@ -1164,10 +1201,15 @@ function writeHttpPolicy(prefix, policy, routeOverrides) {
 		["MaxBodyBytes", "maxBodyBytes"],
 		["MaxRequestTargetBytes", "maxRequestTargetBytes"],
 		["MaxHeaderBytes", "maxHeaderBytes"],
+		["MaxHeaderCount", "maxHeaderCount"],
+		["MaxInputFields", "maxInputFields"],
+		["MaxMultipartParts", "maxMultipartParts"],
+		["MaxInputNestingDepth", "maxInputNestingDepth"],
 	]) {
 		const value = http.limits?.[key];
 		byId(`${prefix}${suffix}`).value = routeOverrides && (value === null || value === undefined) ? "" : String(value ?? 0);
 	}
+	byId(`${prefix}BlockedMultipartFields`).value = http.blockedMultipartFields?.join("\n") ?? "";
 	const cache = http.cache ?? (routeOverrides ? { mode: "inherit", ttlSeconds: null, maxObjectBytes: null, extensions: null } : httpCacheDefaults);
 	if (routeOverrides) byId(`${prefix}CacheMode`).value = cache.mode ?? "inherit";
 	else byId(`${prefix}CacheEnabled`).checked = cache.mode === "enabled";
@@ -1710,8 +1752,10 @@ async function loadTraffic() {
 						)
 						.join("");
 		updatePagination("events", result, loadTraffic);
+		reportSearch("eventSearch", result);
 	} catch (error) {
 		if (requestId !== trafficRequestId) return;
+		reportSearch("eventSearch", null, error);
 		setTableError("events", trafficColumnCount(), error);
 	}
 }
@@ -1820,37 +1864,48 @@ function renderEventDetail(event) {
 	const rows = [
 		["Request ID", escapeHtml(event.id)],
 		["Time", escapeHtml(formatDate(event.created_at))],
-		["Method", escapeHtml(event.method)],
-		["Path", escapeHtml(event.path)],
-		["Status", String(event.status)],
-		["Decision", escapeHtml(event.decision)],
-		["IP", escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`)],
-		["ASN", asnBadge(event.asn, event.asn_org)],
+		["Method", escapeHtml(event.method), ["method", event.method]],
+		["Path", escapeHtml(event.path), ["path", event.path]],
+		["Status", String(event.status), ["status", event.status]],
+		["Decision", escapeHtml(event.decision), ["decision", event.decision]],
+		["IP", escapeHtml(`${event.ip} (${countryDisplayName(event.country_code || "ZZ")})`), ["ip", event.ip]],
+		["Country", escapeHtml(countryDisplayName(event.country_code || "ZZ")), ["country", event.country_code || "ZZ"]],
+		["ASN", asnBadge(event.asn, event.asn_org), event.asn ? ["asn", event.asn] : null],
 		[
 			"Bot",
 			event.bot_id
 				? `${escapeHtml(event.bot_name ?? event.bot_id)} <span class="badge ${event.bot_verified ? "ok" : "info"}">${event.bot_verified ? "User-Agent + verified IP" : "User-Agent only"}</span>`
 				: "-",
+			["bot", event.bot_name ?? event.bot_id],
 		],
 		["Network type", networkPrivacyBadge(event.network_privacy)],
-		["Session", event.session_id ? escapeHtml(event.session_id) : "-"],
-		["User", event.access_username ? escapeHtml(event.access_username) : "-"],
-		["Origin user", event.origin_username ? escapeHtml(event.origin_username) : "-"],
-		["Origin", event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-"],
-		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-"],
-		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-"],
+		["Session", event.session_id ? escapeHtml(event.session_id) : "-", ["session", event.session_id]],
+		["User", event.access_username ? escapeHtml(event.access_username) : "-", ["access_user", event.access_username]],
+		["Origin user", event.origin_username ? escapeHtml(event.origin_username) : "-", ["origin_user", event.origin_username]],
+		[
+			"Origin",
+			event.origin_name ? escapeHtml(event.origin_name) : event.origin_id ? escapeHtml(event.origin_id) : "-",
+			event.origin_id ? ["origin", event.origin_id] : null,
+		],
+		["Cache", event.cache_status ? escapeHtml(event.cache_status) : "-", ["cache", event.cache_status]],
+		["Protection", event.protection_status ? escapeHtml(event.protection_status) : "-", ["protection", event.protection_status]],
 		["CrowdSec decision", crowdSecBadge(event.crowdsec) || "-"],
 		["CrowdSec scenario", event.crowdsec?.scenario ? escapeHtml(event.crowdsec.scenario) : "-"],
 		["AppSec", appSecBadge(event.crowdsec) || "-"],
-		["Protection rule", event.protection_rule_id ? escapeHtml(event.protection_rule_id) : "-"],
+		["Protection rule", event.protection_rule_id ? escapeHtml(event.protection_rule_id) : "-", ["rule", event.protection_rule_id]],
 		["Protection category", event.protection_category ? escapeHtml(event.protection_category) : "-"],
 		["Protection severity", event.protection_severity ? escapeHtml(event.protection_severity) : "-"],
 		["Protection ruleset", event.protection_ruleset_id ? escapeHtml(`${event.protection_ruleset_id} ${event.protection_ruleset_version ?? ""}`.trim()) : "-"],
-		["Referrer", event.referer ? escapeHtml(event.referer) : "-"],
+		["Referrer", event.referer ? escapeHtml(event.referer) : "-", ["referer", event.referer_host]],
 		["Latency", escapeHtml(formatDuration(event.latency_ms))],
 	];
 	return `
-    <div class="event-detail-grid">${rows.map(([label, value]) => `<div><span class="muted">${label}</span><div>${value}</div></div>`).join("")}</div>
+    <div class="event-detail-grid">${rows
+			.map(
+				([label, value, filter]) =>
+					`<div><span class="muted">${label}</span><div class="event-detail-value"><span>${value}</span>${filter ? filterButtons("eventSearch", filter[0], filter[1]) : ""}</div></div>`,
+			)
+			.join("")}</div>
     ${protectionMatchesSection(event.protection_matches)}
     ${bodySection("Request body", event.request_body, event.request_body_truncated === 1, event.request_content_type)}
     ${bodySection("Response body", event.response_body, event.response_body_truncated === 1, event.response_content_type)}
@@ -1950,7 +2005,9 @@ async function loadBandwidth() {
 						)
 						.join("");
 		updatePagination("bandwidth", result, loadBandwidth);
+		reportSearch("bandwidthSearch", result);
 	} catch (error) {
+		reportSearch("bandwidthSearch", null, error);
 		setTableError("bandwidthIps", bandwidthColumnCount(), error);
 	}
 }
@@ -2008,7 +2065,9 @@ async function loadSessions() {
 						})
 						.join("");
 		updatePagination("sessions", result, loadSessions);
+		reportSearch("sessionSearch", result);
 	} catch (error) {
+		reportSearch("sessionSearch", null, error);
 		setTableError("sessions", sessionsColumnCount(), error);
 	}
 }
@@ -2088,7 +2147,9 @@ async function loadRules() {
 						})
 						.join("");
 		updatePagination("rules", result, loadRules);
+		reportSearch("ruleSearch", result);
 	} catch (error) {
+		reportSearch("ruleSearch", null, error);
 		setTableError("rules", rulesColumnCount(), error);
 		setTableError("countryRules", 7, error);
 		setTableError("asnRules", 7, error);
@@ -5336,6 +5397,18 @@ function bindFilters() {
 		tableState.traffic.page = 1;
 		void loadTraffic();
 	});
+	for (const [inputId, schemaId] of [
+		["eventSearch", "traffic"],
+		["bandwidthSearch", "bandwidth"],
+		["sessionSearch", "sessions"],
+		["ruleSearch", "ip-rules"],
+		["auditSearch", "audit-log"],
+	])
+		enhanceSearchInput(inputId, schemaId);
+	byId("eventDetailBody").addEventListener("search-clause-added", (event) => {
+		closeModal("event");
+		showToast(`Search updated: ${event.detail.clause}`);
+	});
 	byId("eventSearch").addEventListener("input", trafficSearch);
 	byId("eventAsn").addEventListener("input", trafficSearch);
 	for (const id of ["eventDecision", "eventCacheStatus", "eventProtectionStatus", "eventMethod", "eventStatus", "eventOrigin", "eventCountry"]) {
@@ -5563,7 +5636,9 @@ async function loadAuditLog() {
 		const result = await api(`/audit-log?${params}`, {}, false);
 		renderAuditLog(result.items);
 		updatePagination("auditLog", result, loadAuditLog);
+		reportSearch("auditSearch", result);
 	} catch (error) {
+		reportSearch("auditSearch", null, error);
 		setTableError("auditLog", 6, error);
 	}
 }
@@ -6263,6 +6338,7 @@ function bindActions() {
 	byId("siteHttpHstsMaxAge").addEventListener("input", updateSiteHttpHstsControls);
 	byId("siteHttpProtectionMode").addEventListener("change", updateSiteProtectionControls);
 	byId("siteHttpProtectionRuleset").addEventListener("change", updateSiteProtectionControls);
+	byId("siteHttpApplyPhpPreset").addEventListener("click", applyPhpHardeningPreset);
 	byId("openCacheDashboard").addEventListener("click", () => setActiveTab("cache"));
 	byId("openProtectionDashboard").addEventListener("click", () => setActiveTab("protection"));
 	byId("configureCache").addEventListener("click", openSelectedSiteCacheSettings);

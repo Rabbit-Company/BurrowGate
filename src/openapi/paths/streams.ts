@@ -1,3 +1,4 @@
+import { SEARCH_PARAMETER_DESCRIPTION } from "./search.ts";
 import { errorResponse, jsonBody, jsonResponse, ref, type ParameterObject, type PathItemObject } from "../types.ts";
 
 const pendingChange = ref("PendingChange");
@@ -36,7 +37,7 @@ function pageParams(pageSizeDefault?: number): ParameterObject[] {
 			in: "query",
 			schema: { type: "integer", minimum: 10, maximum: 200, ...(pageSizeDefault ? { default: pageSizeDefault } : {}) },
 		},
-		{ name: "search", in: "query", schema: { type: "string" } },
+		{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 	];
 }
 

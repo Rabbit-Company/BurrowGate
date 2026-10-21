@@ -1,6 +1,8 @@
 import type { Web } from "@rabbit-company/web";
 import { getClientIp } from "@rabbit-company/web-middleware/ip-extract";
 import { repository } from "../db/repository.ts";
+import { searchParam } from "./search-param.ts";
+import { notificationSearchSchema, streamBandwidthSearchSchema, streamEventSearchSchema, streamRuleSearchSchema } from "../services/search-schemas.ts";
 import { config } from "../config.ts";
 import { withDurability } from "../services/ha-mesh-service.ts";
 import { getAdminSession } from "../services/session-service.ts";
@@ -660,11 +662,13 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const scopeStreamId = await streamsScopeId(selection, user);
 		const selectedRange = range(url);
 		const asn = Number(stringParam(url, "asn"));
+		const search = searchParam(url, streamEventSearchSchema);
+		if (search instanceof Response) return search;
 		const result = await repository.pagedStreamEvents({
 			streamId: scopeStreamId,
 			page: integerParam(url, "page", 1, 1, 1_000_000),
 			pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-			search: stringParam(url, "search"),
+			filter: search.node,
 			protocol: protocolParam(url),
 			eventType: eventTypeParam(url),
 			countryCode: stringParam(url, "country")?.toUpperCase(),
@@ -675,6 +679,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		});
 		return jsonResponse({
 			...result,
+			searchWarnings: search.warnings,
 			items: result.items.map((event) => ({ ...event, network_privacy: stringArray(event.network_privacy_json) })),
 		});
 	});
@@ -688,19 +693,22 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
 		const scopeStreamId = await streamsScopeId(selection, user);
-		return jsonResponse(
-			await repository.pagedStreamBandwidth({
+		const search = searchParam(url, streamBandwidthSearchSchema);
+		if (search instanceof Response) return search;
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await repository.pagedStreamBandwidth({
 				streamId: scopeStreamId,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				search: stringParam(url, "search"),
+				filter: search.node,
 				protocol: protocolParam(url),
 				countryCode: stringParam(url, "country")?.toUpperCase(),
 				sortBy: bandwidthSortBy(url),
 				sortDirection: sortDirection(url),
 				...range(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.get("/_burrowgate/api/admin/streams/network-policy", async (ctx) => {
@@ -918,18 +926,21 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ items: [], page: 1, pageSize: config.adminPageSize, total: 0, totalPages: 1 });
-		return jsonResponse(
-			await repository.pagedStreamRules({
+		const search = searchParam(url, streamRuleSearchSchema);
+		if (search instanceof Response) return search;
+		return jsonResponse({
+			searchWarnings: search.warnings,
+			...(await repository.pagedStreamRules({
 				streamId: selection.stream.id,
 				page: integerParam(url, "page", 1, 1, 1_000_000),
 				pageSize: integerParam(url, "pageSize", config.adminPageSize, 10, 200),
-				search: stringParam(url, "search"),
+				filter: search.node,
 				action: streamRuleActionParam(url),
 				state: ruleStateParam(url),
 				sortBy: ruleSortBy(url),
 				sortDirection: sortDirection(url),
-			}),
-		);
+			})),
+		});
 	});
 
 	app.post("/_burrowgate/api/admin/streams/ip-rules", async (ctx) => {
@@ -1178,11 +1189,13 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		const selection = await selectedStream(url, user);
 		if (selection.error) return selection.error;
 		if (!selection.stream) return jsonResponse({ error: "No stream configured" }, 400);
+		const search = searchParam(url, notificationSearchSchema);
+		if (search instanceof Response) return search;
 		const result = await repository.pagedNotificationsForStream({
 			streamId: selection.stream.id,
 			page: integerParam(url, "page", 1, 1, 1_000_000),
 			pageSize: integerParam(url, "pageSize", 25, 10, 200),
-			search: stringParam(url, "search"),
+			filter: search.node,
 			type: notificationTypeParam(url),
 			status: notificationStatusParam(url),
 			sortBy: notificationSortBy(url),
@@ -1190,6 +1203,7 @@ export function registerStreamAdminRoutes(app: Web<any>): void {
 		});
 		return jsonResponse({
 			...result,
+			searchWarnings: search.warnings,
 			items: result.items.map((event) => ({
 				id: event.id,
 				type: event.type,

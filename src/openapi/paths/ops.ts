@@ -1,3 +1,4 @@
+import { SEARCH_PARAMETER_DESCRIPTION } from "./search.ts";
 import { errorResponse, jsonBody, jsonResponse, ref, type OperationObject, type PathItemObject, type ResponseObject } from "../types.ts";
 
 const gzipResponse = (description: string): ResponseObject => ({
@@ -187,7 +188,7 @@ const logQueryOperation: OperationObject = {
 	parameters: [
 		{ name: "from", in: "query", required: true, description: "Unix milliseconds, range start.", schema: { type: "integer" } },
 		{ name: "to", in: "query", required: true, description: "Unix milliseconds, range end. The range cannot exceed 366 days.", schema: { type: "integer" } },
-		{ name: "search", in: "query", description: "Case-insensitive substring match against each entry's serialized JSON.", schema: { type: "string" } },
+		{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 		{
 			name: "level",
 			in: "query",

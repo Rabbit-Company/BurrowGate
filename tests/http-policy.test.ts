@@ -18,6 +18,16 @@ import {
 	isHeaderCaptureActive,
 } from "../src/services/http-policy-service.ts";
 
+const unlimited = {
+	maxBodyBytes: 0,
+	maxRequestTargetBytes: 0,
+	maxHeaderBytes: 0,
+	maxHeaderCount: 0,
+	maxInputFields: 0,
+	maxMultipartParts: 0,
+	maxInputNestingDepth: 0,
+};
+
 function site(httpPolicy?: string | null): SiteRecord {
 	return {
 		id: "site_http_policy",
@@ -81,7 +91,8 @@ describe("HTTP header and request-limit policies", () => {
 		expect(siteHttpPolicyView(site(null))).toEqual({
 			requestHeaders: { set: [], remove: [] },
 			responseHeaders: { set: [], remove: [] },
-			limits: { maxBodyBytes: 0, maxRequestTargetBytes: 0, maxHeaderBytes: 0 },
+			limits: unlimited,
+			blockedMultipartFields: [],
 			cache,
 			protection: { mode: "monitor", rulesetId: "default", excludedRuleIds: [] },
 			banDurations: { low: 0, medium: 600, high: 3_600, critical: 86_400 },
@@ -145,12 +156,20 @@ describe("HTTP header and request-limit policies", () => {
 
 		expect(resolved.requestHeaders).toEqual({ set: [{ name: "x-application", value: "route" }], remove: ["x-remove"] });
 		expect(resolved.responseHeaders).toEqual({ set: [], remove: ["x-frame-options"] });
-		expect(resolved.limits).toEqual({ maxBodyBytes: 2_000, maxRequestTargetBytes: 2_048, maxHeaderBytes: 4_096 });
+		expect(resolved.limits).toEqual({ ...unlimited, maxBodyBytes: 2_000, maxRequestTargetBytes: 2_048, maxHeaderBytes: 4_096 });
 	});
 
 	test("keeps route limits nullable and supports an explicit unlimited override", () => {
 		const policy = routeHttpPolicyView(route(serializeRouteHttpPolicy({ limits: { maxBodyBytes: 0 } })));
-		expect(policy.limits).toEqual({ maxBodyBytes: 0, maxRequestTargetBytes: null, maxHeaderBytes: null });
+		expect(policy.limits).toEqual({
+			maxBodyBytes: 0,
+			maxRequestTargetBytes: null,
+			maxHeaderBytes: null,
+			maxHeaderCount: null,
+			maxInputFields: null,
+			maxMultipartParts: null,
+			maxInputNestingDepth: null,
+		});
 	});
 
 	test("preserves omitted fields during partial updates", () => {
@@ -161,7 +180,7 @@ describe("HTTP header and request-limit policies", () => {
 		const updated = serializeSiteHttpPolicy({ limits: { maxHeaderBytes: 200 } }, existing);
 		const view = siteHttpPolicyView(site(updated));
 		expect(view.requestHeaders.set).toEqual([{ name: "x-existing", value: "yes" }]);
-		expect(view.limits).toEqual({ maxBodyBytes: 100, maxRequestTargetBytes: 0, maxHeaderBytes: 200 });
+		expect(view.limits).toEqual({ ...unlimited, maxBodyBytes: 100, maxHeaderBytes: 200 });
 	});
 
 	test("rejects changes to proxy-owned request headers", () => {
@@ -182,21 +201,14 @@ describe("HTTP header and request-limit policies", () => {
 	});
 
 	test("reports target, header, and declared body violations", () => {
-		expect(requestLimitViolation(new Request("https://example.test/too-long"), { maxBodyBytes: 0, maxRequestTargetBytes: 4, maxHeaderBytes: 0 })?.status).toBe(
-			414,
-		);
+		expect(requestLimitViolation(new Request("https://example.test/too-long"), { ...unlimited, maxRequestTargetBytes: 4 })?.status).toBe(414);
 		expect(
-			requestLimitViolation(new Request("https://example.test/", { headers: { "x-large": "1234567890" } }), {
-				maxBodyBytes: 0,
-				maxRequestTargetBytes: 0,
-				maxHeaderBytes: 8,
-			})?.status,
+			requestLimitViolation(new Request("https://example.test/", { headers: { "x-large": "1234567890" } }), { ...unlimited, maxHeaderBytes: 8 })?.status,
 		).toBe(431);
 		expect(
 			requestLimitViolation(new Request("https://example.test/upload", { method: "POST", headers: { "content-length": "101" } }), {
+				...unlimited,
 				maxBodyBytes: 100,
-				maxRequestTargetBytes: 0,
-				maxHeaderBytes: 0,
 			})?.status,
 		).toBe(413);
 	});

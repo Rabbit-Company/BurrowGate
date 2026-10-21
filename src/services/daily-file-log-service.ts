@@ -1,4 +1,6 @@
 import { Levels, NDJsonTransport, type LogEntry, type Transport } from "@rabbit-company/web-middleware/logger";
+import { evaluateSearch, type SearchNode } from "./search-query.ts";
+import { logSearchSchema } from "./search-schemas.ts";
 import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -33,7 +35,7 @@ export interface LogArchive {
 export interface LogQuery {
 	from: number;
 	to: number;
-	search?: string;
+	filter?: SearchNode | null;
 	level?: LogLevelName | "";
 	page?: number;
 	pageSize?: number;
@@ -267,7 +269,6 @@ export class DailyFileLogService implements Transport {
 		if (to - from > 366 * 86_400_000) throw new Error("The log date range cannot exceed 366 days");
 		const page = Math.max(1, Math.min(200, Math.floor(Number(input.page ?? 1)) || 1));
 		const pageSize = Math.max(10, Math.min(200, Math.floor(Number(input.pageSize ?? 50)) || 50));
-		const search = input.search?.trim().toLowerCase() ?? "";
 		const filterLevel = input.level && validLevel(input.level) ? input.level : "";
 		const bucketMs = bucketSize(to - from);
 		const firstBucket = Math.floor(from / bucketMs) * bucketMs;
@@ -285,7 +286,7 @@ export class DailyFileLogService implements Transport {
 				const point = points.get(Math.floor(entry.timestamp / bucketMs) * bucketMs);
 				if (point) point[entry.level] += 1;
 				if (filterLevel && entry.level !== filterLevel) continue;
-				if (search && !(safeJson(entry) ?? "").toLowerCase().includes(search)) continue;
+				if (input.filter && !evaluateSearch(input.filter, logSearchSchema, entry)) continue;
 				total += 1;
 				matched.push(entry);
 				if (matched.length > keep) matched.shift();

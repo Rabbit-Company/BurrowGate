@@ -1,3 +1,4 @@
+import { SEARCH_PARAMETER_DESCRIPTION } from "./search.ts";
 import { errorResponse, jsonBody, jsonResponse, ref, type JsonSchema, type ParameterObject, type PathItemObject, type RequestBodyObject } from "../types.ts";
 
 const site = ref("Site");
@@ -315,7 +316,7 @@ export const metricsPaths: Record<string, PathItemObject> = {
 				siteIdParam("Omit to scope to every site the caller can view."),
 				...rangeParams,
 				...pageParams,
-				{ name: "search", in: "query", description: "Free-text match against IP, path, and similar fields.", schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{ name: "decision", in: "query", description: "Exact decision label, e.g. verified, blocked, route-blocked.", schema: { type: "string" } },
 				{ name: "cache", in: "query", schema: { type: "string", enum: ["hit", "miss", "bypass"] } },
 				{ name: "protection", in: "query", schema: { type: "string", enum: ["clean", "monitored", "blocked"] } },
@@ -418,7 +419,7 @@ export const metricsPaths: Record<string, PathItemObject> = {
 				siteIdParam("Omit to scope to every site the caller can view."),
 				...rangeParams,
 				...pageParams,
-				{ name: "search", in: "query", description: "Free-text match against the IP address.", schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{ name: "country", in: "query", description: "Two-letter country code.", schema: { type: "string", minLength: 2, maxLength: 2 } },
 				{ name: "protocol", in: "query", schema: { type: "string", enum: ["http", "websocket"] } },
 				{
@@ -458,7 +459,7 @@ export const metricsPaths: Record<string, PathItemObject> = {
 				siteIdParam("Omit to scope to every site the caller can view."),
 				...rangeParams,
 				...pageParams,
-				{ name: "search", in: "query", description: "Free-text match against IP and similar fields.", schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{ name: "state", in: "query", schema: { type: "string", enum: ["active", "expired", "revoked"] } },
 				{ name: "country", in: "query", schema: { type: "string", minLength: 2, maxLength: 2 } },
 				{ name: "asn", in: "query", schema: { type: "integer", minimum: 1 } },
@@ -660,7 +661,7 @@ export const metricsPaths: Record<string, PathItemObject> = {
 			parameters: [
 				siteIdParam("Without it, an empty page is returned."),
 				...pageParams,
-				{ name: "search", in: "query", description: "Free-text match against the CIDR and reason.", schema: { type: "string" } },
+				{ name: "search", in: "query", description: SEARCH_PARAMETER_DESCRIPTION, schema: { type: "string" } },
 				{ name: "action", in: "query", schema: { type: "string", enum: ["allow", "pass", "block", "challenge"] } },
 				{ name: "state", in: "query", schema: { type: "string", enum: ["active", "expired"] } },
 				{ name: "sortBy", in: "query", schema: { type: "string", default: "created_at", enum: ["created_at", "expires_at", "network_cidr", "action"] } },

@@ -213,3 +213,132 @@ export function createApiTokensController({ api }) {
 
 	return { loadApiTokens, createApiToken, clearApiTokenSecret };
 }
+
+let searchCatalog = null;
+
+function loadSearchCatalog() {
+	searchCatalog ??= fetch("/_burrowgate/api/admin/search-fields", { headers: { accept: "application/json" } })
+		.then((response) => (response.ok ? response.json() : { schemas: [] }))
+		.then((data) => new Map((data.schemas ?? []).map((schema) => [schema.id, schema])))
+		.catch(() => new Map());
+	return searchCatalog;
+}
+
+const SEARCH_SYNTAX = [
+	["health", "Free text, matched anywhere in the main columns"],
+	["path:/api/login", "Field equals a value (ignores case)"],
+	["path:/health*", "Wildcards: * any characters, ? one character"],
+	["-path:/health*", "Exclude matches (same as NOT path:/health*)"],
+	["user:*  /  -user:*", "Field has a value / field is empty"],
+	["status:>=500  status:4xx", "Number comparisons and ranges such as 400..499"],
+	["path:(/a OR /b)", "Several values for one field"],
+	["a OR (b AND NOT c)", "Boolean logic; terms side by side are ANDed"],
+	['path:"/a b"', "Quotes keep spaces and turn wildcards off"],
+];
+
+function searchHelpHtml(schema) {
+	const syntax = SEARCH_SYNTAX.map(([example, meaning]) => `<tr><td><code>${escapeHtml(example)}</code></td><td>${escapeHtml(meaning)}</td></tr>`).join("");
+	const fields = (schema?.fields ?? [])
+		.map(
+			(field) =>
+				`<tr><td><code>${escapeHtml(field.name)}</code>${field.aliases.length ? `<span class="muted"> ${field.aliases.map(escapeHtml).join(", ")}</span>` : ""}</td><td>${escapeHtml(field.description)}${
+					field.values ? `<span class="muted"> ${field.values.map(escapeHtml).join(", ")}</span>` : ""
+				}</td></tr>`,
+		)
+		.join("");
+	return `<div class="search-help-section"><h4>Syntax</h4><table class="search-help-table"><tbody>${syntax}</tbody></table></div>
+		<div class="search-help-section"><h4>Fields</h4>${
+			fields ? `<table class="search-help-table"><tbody>${fields}</tbody></table>` : '<p class="muted">Field list unavailable.</p>'
+		}${schema?.dynamicFields ? '<p class="muted">Any other name is looked up in the entry\'s metadata, for example <code>siteId:abc</code> or <code>error.code:*</code>.</p>' : ""}</div>`;
+}
+
+export function enhanceSearchInput(inputId, schemaId) {
+	const input = byId(inputId);
+	if (!input || input.dataset.searchEnhanced) return;
+	input.dataset.searchEnhanced = "1";
+	input.dataset.searchSchema = schemaId;
+	input.spellcheck = false;
+	input.autocomplete = "off";
+	const label = input.closest("label") ?? input.parentElement;
+	label.classList.add("search-query-field");
+	const caption = label.querySelector("span");
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "search-help-button";
+	button.textContent = "?";
+	button.title = "Search syntax and fields";
+	button.setAttribute("aria-expanded", "false");
+	const panel = document.createElement("div");
+	panel.className = "search-help hidden";
+	panel.setAttribute("role", "dialog");
+	panel.setAttribute("aria-label", "Search syntax and fields");
+	const feedback = document.createElement("small");
+	feedback.className = "search-feedback hidden";
+	feedback.id = `${inputId}Feedback`;
+	(caption ?? label).append(button);
+	label.after(panel);
+	input.after(feedback);
+	button.addEventListener("click", async (event) => {
+		event.preventDefault();
+		const open = panel.classList.toggle("hidden") === false;
+		button.setAttribute("aria-expanded", String(open));
+		if (open && !panel.dataset.loaded) {
+			panel.innerHTML = '<p class="muted"><span class="spinner"></span> Loading...</p>';
+			panel.innerHTML = searchHelpHtml((await loadSearchCatalog()).get(schemaId));
+			panel.dataset.loaded = "1";
+		}
+	});
+	document.addEventListener("click", (event) => {
+		if (panel.classList.contains("hidden") || panel.contains(event.target) || button.contains(event.target)) return;
+		panel.classList.add("hidden");
+		button.setAttribute("aria-expanded", "false");
+	});
+}
+
+export function reportSearch(inputId, result, error) {
+	const input = byId(inputId);
+	const feedback = byId(`${inputId}Feedback`);
+	if (!input || !feedback) return;
+	const invalid = Boolean(error?.message?.startsWith("Invalid search:"));
+	const warnings = invalid ? [] : (result?.searchWarnings ?? []);
+	input.classList.toggle("input-invalid", invalid);
+	input.setAttribute("aria-invalid", String(invalid));
+	feedback.textContent = invalid ? error.message.slice("Invalid search: ".length) : warnings.join(" ");
+	feedback.className = `search-feedback${invalid ? " error-text" : warnings.length ? " warn-text" : " hidden"}`;
+}
+
+function quoteSearchValue(value) {
+	return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+export function searchClause(field, value, exclude) {
+	const empty = value === null || value === undefined || value === "";
+	if (empty) return exclude ? `${field}:*` : `-${field}:*`;
+	return `${exclude ? "-" : ""}${field}:${quoteSearchValue(value)}`;
+}
+
+export function addSearchClause(inputId, clause) {
+	const input = byId(inputId);
+	if (!input) return;
+	const opposite = clause.startsWith("-") ? clause.slice(1) : `-${clause}`;
+	const terms = input.value.trim() ? input.value.trim().split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/u) : [];
+	const kept = terms.filter((term) => term !== clause && term !== opposite);
+	input.value = [...kept, clause].join(" ");
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+export function filterButtons(inputId, field, value) {
+	const data = `data-search-target="${escapeHtml(inputId)}" data-search-field="${escapeHtml(field)}" data-search-value="${escapeHtml(value ?? "")}"`;
+	const shown = value === null || value === undefined || value === "" ? "no value" : String(value);
+	return `<span class="filter-buttons"><button type="button" class="filter-button" ${data} data-search-exclude="0" title="Show only ${escapeHtml(shown)}" aria-label="Filter for ${escapeHtml(shown)}">+</button><button type="button" class="filter-button" ${data} data-search-exclude="1" title="Hide ${escapeHtml(shown)}" aria-label="Filter out ${escapeHtml(shown)}">−</button></span>`;
+}
+
+document.addEventListener("click", (event) => {
+	const button = event.target instanceof Element ? event.target.closest("[data-search-field]") : null;
+	if (!button) return;
+	event.preventDefault();
+	event.stopPropagation();
+	const clause = searchClause(button.dataset.searchField, button.dataset.searchValue, button.dataset.searchExclude === "1");
+	addSearchClause(button.dataset.searchTarget, clause);
+	button.dispatchEvent(new CustomEvent("search-clause-added", { bubbles: true, detail: { clause } }));
+});

@@ -8,6 +8,8 @@ import {
 	setPendingDurabilityWarning,
 	createUsersController,
 	createApiTokensController,
+	enhanceSearchInput,
+	reportSearch,
 } from "/_burrowgate/static/admin-shared.js";
 
 const ADMIN_API = "/_burrowgate/api/admin";
@@ -1190,7 +1192,9 @@ async function loadAuditLog() {
 		const result = await api(`/audit-log?${params}`);
 		renderAuditLog(result.items);
 		updatePagination("auditLog", result, loadAuditLog);
+		reportSearch("auditSearch", result);
 	} catch (error) {
+		reportSearch("auditSearch", null, error);
 		setTableError("auditLog", 6, error);
 	}
 }
@@ -1730,9 +1734,17 @@ async function loadEvents() {
 	const state = tableState.events;
 	applyColumnVisibility("events");
 	byId("streamEvents").innerHTML = `<tr><td colspan="${eventsColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
-	const result = await api(
-		`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), asn: byId("eventAsn").value, ...rangeQuery() })}`,
-	);
+	let result;
+	try {
+		result = await api(
+			`/streams/events?${queryString({ streamId: selectedStreamId, page: eventPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("eventSearch").value.trim(), protocol: byId("eventProtocol").value, eventType: byId("eventType").value, country: byId("eventCountry").value.trim().toUpperCase(), asn: byId("eventAsn").value, ...rangeQuery() })}`,
+		);
+	} catch (error) {
+		reportSearch("eventSearch", null, error);
+		setTableError("streamEvents", eventsColumnCount(), error);
+		return;
+	}
+	reportSearch("eventSearch", result);
 	updateSortIndicators("panel-events", state);
 	byId("streamEvents").innerHTML = result.items.length
 		? result.items
@@ -1778,9 +1790,17 @@ async function loadBandwidth() {
 	const state = tableState.bandwidth;
 	byId("streamBandwidth").innerHTML =
 		`<tr><td colspan="${streamsBandwidthColumnCount()}" class="empty-cell"><span class="spinner"></span> Loading...</td></tr>`;
-	const result = await api(
-		`/streams/bandwidth?${queryString({ streamId: selectedStreamId, page: bandwidthPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("bandwidthSearch").value.trim(), protocol: byId("bandwidthProtocol").value, country: byId("bandwidthCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
-	);
+	let result;
+	try {
+		result = await api(
+			`/streams/bandwidth?${queryString({ streamId: selectedStreamId, page: bandwidthPage, pageSize, sortBy: state.sortBy, sortDirection: state.sortDirection, search: byId("bandwidthSearch").value.trim(), protocol: byId("bandwidthProtocol").value, country: byId("bandwidthCountry").value.trim().toUpperCase(), ...rangeQuery() })}`,
+		);
+	} catch (error) {
+		reportSearch("bandwidthSearch", null, error);
+		setTableError("streamBandwidth", streamsBandwidthColumnCount(), error);
+		return;
+	}
+	reportSearch("bandwidthSearch", result);
 	updateSortIndicators("panel-bandwidth", state);
 	byId("streamBandwidth").innerHTML = result.items.length
 		? result.items
@@ -1966,7 +1986,9 @@ async function loadStreamRules() {
 					.join("")
 			: `<tr><td colspan="${streamRulesColumnCount()}" class="empty-cell">No IP rules match these filters.</td></tr>`;
 		updatePagination("streamRules", result, loadStreamRules);
+		reportSearch("streamRuleSearch", result);
 	} catch (error) {
+		reportSearch("streamRuleSearch", null, error);
 		setTableError("streamRules", streamRulesColumnCount(), error);
 		setTableError("streamCountryRules", 7, error);
 		setTableError("streamAsnRules", 7, error);
@@ -2584,6 +2606,13 @@ byId("streamsList").addEventListener("click", (event) => {
 	if (edit) editStream(edit.dataset.editStream);
 	if (remove) void deleteStream(remove.dataset.deleteStream);
 });
+for (const [inputId, schemaId] of [
+	["eventSearch", "stream-events"],
+	["bandwidthSearch", "stream-bandwidth"],
+	["streamRuleSearch", "stream-rules"],
+	["auditSearch", "audit-log"],
+])
+	enhanceSearchInput(inputId, schemaId);
 for (const [id, load] of [
 	["eventSearch", loadEvents],
 	["eventAsn", loadEvents],

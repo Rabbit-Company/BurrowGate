@@ -13,6 +13,8 @@ BurrowGate is a self-hosted reverse proxy and access gateway built with Bun. It 
 - SNI certificate selection for multiple domains
 - Transparent HTTP, HTTPS, WebSocket, and secure WebSocket proxying
 - Managed request protection with monitor/block modes, per-route overrides, rule exclusions, and auditable outcomes
+- [Request and form input limits](docs/REQUEST_LIMITS.md) for body size, headers, query and form field counts, multipart parts, field nesting depth, and blocked multipart fields, enforced while the body streams, with a one-click PHP hardening preset
+- [Field search](docs/SEARCH.md) on every dashboard list that can exclude values (`-path:/health*`), find empty fields (`-user:*`), compare numbers (`status:>=500`) and combine terms with AND, OR and NOT, with filters addable from a request in one click
 - Native TCP and UDP stream proxying, including optional incoming TCP TLS termination
 - Scheduled application of listener-affecting Site and Stream changes (hostname, port, forward target, certificate, protocol mode), so an edit doesn't land in the middle of active connections
 - Per-site and per-route access policies

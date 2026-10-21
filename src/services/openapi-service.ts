@@ -10,6 +10,7 @@ import { sitePaths } from "../openapi/paths/sites.ts";
 import { streamPaths } from "../openapi/paths/streams.ts";
 import { integrationPaths } from "../openapi/paths/integrations.ts";
 import { opsPaths } from "../openapi/paths/ops.ts";
+import { searchPaths } from "../openapi/paths/search.ts";
 import { siteAdminPaths } from "../openapi/paths/site-admin.ts";
 import { metricsPaths } from "../openapi/paths/metrics.ts";
 import { identityPaths } from "../openapi/paths/identity.ts";
@@ -34,6 +35,7 @@ const PATH_FRAGMENTS: Array<Record<string, PathItemObject>> = [
 	streamPaths,
 	integrationPaths,
 	opsPaths,
+	searchPaths,
 	siteAdminPaths,
 	metricsPaths,
 	identityPaths,
