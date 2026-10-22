@@ -1953,9 +1953,11 @@ class HaMeshService {
 				Logger.info("HA: connected to primary");
 			});
 
+			let tlsHandshakeFailed = false;
 			socket.addEventListener("message", (event) => this.handleIncomingMessage(event));
-			socket.addEventListener("close", (event) => this.handleReplicaClose(event));
+			socket.addEventListener("close", (event) => this.handleReplicaClose(event, tlsHandshakeFailed));
 			socket.addEventListener("error", (event) => {
+				if (event instanceof ErrorEvent && event.message.includes("TLS handshake failed")) tlsHandshakeFailed = true;
 				Logger.warn("HA: connection to primary errored", { error: event });
 			});
 		} catch (error) {
@@ -1964,7 +1966,7 @@ class HaMeshService {
 		}
 	}
 
-	private handleReplicaClose(event: Pick<CloseEvent, "code" | "reason">): void {
+	private handleReplicaClose(event: Pick<CloseEvent, "code" | "reason">, tlsHandshakeFailed = false): void {
 		this.relayInFlightId = null;
 		this.relayInFlightSentAt = 0;
 
@@ -1989,7 +1991,7 @@ class HaMeshService {
 			}
 		}
 
-		if (event.code === 1015 && this.caCertificate) {
+		if ((event.code === 1015 || (event.code === 1006 && tlsHandshakeFailed)) && this.caCertificate) {
 			Logger.warn("HA: TLS handshake with the primary failed while a certificate was pinned - clearing the pin so the next attempt fetches a fresh one");
 			this.caCertificate = null;
 			void deletePinnedHaCa();

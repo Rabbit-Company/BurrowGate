@@ -89,7 +89,10 @@ describe("HA certificate recovery before first mesh activation", () => {
 test("a replica connects over WSS after the primary restarts and regenerates its certificate for the saved address", async () => {
 	const mesh = haMeshService as unknown as { caCertificate: string | null; tlsOptions(): { ca: string } | undefined };
 	const originalCa = mesh.caCertificate;
-	const connect = async (certificate: { cert: string; key: string }, trustedCertificate = certificate.cert): Promise<{ opened: boolean; code: number }> => {
+	const connect = async (
+		certificate: { cert: string; key: string },
+		trustedCertificate = certificate.cert,
+	): Promise<{ opened: boolean; tlsHandshakeFailed: boolean }> => {
 		const server = Bun.serve({
 			hostname: "127.0.0.2",
 			port: 0,
@@ -105,14 +108,18 @@ test("a replica connects over WSS after the primary restarts and regenerates its
 		try {
 			return await new Promise((resolve, reject) => {
 				let opened = false;
+				let tlsHandshakeFailed = false;
 				const timeout = setTimeout(() => reject(new Error("WSS connection timed out")), 3_000);
 				socket.addEventListener("open", () => {
 					opened = true;
 					socket.close();
 				});
+				socket.addEventListener("error", (event) => {
+					if (event instanceof ErrorEvent && event.message.includes("TLS handshake failed")) tlsHandshakeFailed = true;
+				});
 				socket.addEventListener("close", (event) => {
 					clearTimeout(timeout);
-					resolve({ opened, code: event.code });
+					resolve({ opened, tlsHandshakeFailed: tlsHandshakeFailed || event.code === 1015 });
 				});
 			});
 		} finally {
@@ -122,12 +129,12 @@ test("a replica connects over WSS after the primary restarts and regenerates its
 	};
 	try {
 		const initial = await haTlsCertificate();
-		expect(await connect(initial)).toMatchObject({ opened: false, code: 1015 });
+		expect(await connect(initial)).toMatchObject({ opened: false, tlsHandshakeFailed: true });
 		config.ha.selfAdminUrl = "https://127.0.0.2";
 		resetHaTlsCertificateCache();
 		const regenerated = await haTlsCertificate();
 		expect(await connect(regenerated)).toMatchObject({ opened: true });
-		expect(await connect(regenerated, initial.cert)).toMatchObject({ opened: false, code: 1015 });
+		expect(await connect(regenerated, initial.cert)).toMatchObject({ opened: false, tlsHandshakeFailed: true });
 	} finally {
 		mesh.caCertificate = originalCa;
 	}

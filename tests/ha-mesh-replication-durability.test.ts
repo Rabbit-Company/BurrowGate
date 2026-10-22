@@ -51,7 +51,7 @@ const mesh = haMeshService as unknown as {
 	handlePreparePromote(message: { type: "prepare_promote"; barrierSeq: number; promotionId: string }): Promise<void>;
 	handleEnrollRequest(request: Request): Promise<Response>;
 	handlePrimaryClose(ws: unknown): void;
-	handleReplicaClose(event: { code: number; reason: string }): void;
+	handleReplicaClose(event: { code: number; reason: string }, tlsHandshakeFailed?: boolean): void;
 	checkHeartbeatWatchdog(): void;
 	promoteNode(targetNodeId: string): Promise<void>;
 	drainSessionRelayOutbox(): Promise<void>;
@@ -1876,11 +1876,6 @@ describe("HA mesh service: replica readiness", () => {
 		expect(mesh.ready()).toBe(false);
 	});
 
-	// Found in production: a primary that regenerates its own certificate independently of any role
-	// change (e.g. self-healing a stale SAN on a later restart) leaves an already-pinned replica
-	// stuck retrying forever against a CA that no longer matches anything the primary serves, since
-	// resolveCaCertificate only ever re-fetches when NOTHING is pinned yet. A 1015 close (Bun's code
-	// for a failed TLS handshake) is the exact symptom this produces.
 	test("a TLS handshake failure while a certificate is pinned clears the pin so the next attempt re-fetches", () => {
 		config.ha.enabled = true;
 		config.ha.role = "replica";
@@ -1888,6 +1883,17 @@ describe("HA mesh service: replica readiness", () => {
 		mesh.stopped = true;
 		mesh.caCertificate = "stale-primary-certificate";
 		mesh.handleReplicaClose({ code: 1015, reason: "TLS handshake failed" });
+		mesh.stopped = false;
+		expect(mesh.caCertificate).toBeNull();
+	});
+
+	test("an abnormal close preceded by a TLS handshake error while a certificate is pinned clears the pin", () => {
+		config.ha.enabled = true;
+		config.ha.role = "replica";
+		mesh.hasBootstrapped = true;
+		mesh.stopped = true;
+		mesh.caCertificate = "stale-primary-certificate";
+		mesh.handleReplicaClose({ code: 1006, reason: "" }, true);
 		mesh.stopped = false;
 		expect(mesh.caCertificate).toBeNull();
 	});
