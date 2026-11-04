@@ -852,7 +852,8 @@ The project uses `.editorconfig` and `.prettierrc.json` with tabs and a width of
 
 ## Current Limitations
 
-- ACME supports HTTP-01 only. Wildcard certificates require DNS-01 support.
+- ACME issues single-hostname certificates through HTTP-01 or DNS-01. Wildcard certificates such as `*.example.com` are not supported, even with DNS-01. You can still upload a wildcard certificate as a PEM.
+- DNS-01 only works through RFC 2136 dynamic updates to a nameserver you run yourself. There is no built-in Cloudflare, Route53 or other cloud DNS API integration.
 - Route rate-limit counters are stored in memory and reset when the process restarts.
 - Multiple gateway nodes do not share rate-limit counters, even with [High Availability](docs/HIGH_AVAILABILITY.md) enabled - each node enforces rate limits against only the traffic it personally sees.
 - Detailed request events are stored in SQL. Very high traffic deployments should use an external log store.
