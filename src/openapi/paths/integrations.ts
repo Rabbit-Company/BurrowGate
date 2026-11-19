@@ -112,6 +112,32 @@ export const integrationPaths: Record<string, PathItemObject> = {
 			},
 		},
 	},
+	"/firewall-sync/providers/cloudflare/accounts": {
+		post: {
+			summary: "Probe a Cloudflare API token and list its accounts",
+			description:
+				"Administrator only. Used by the admin UI's \"Load accounts\" button; works against unsaved form values, falling back to providerId's stored API token when apiToken is left blank.",
+			tags: ["Firewall sync"],
+			operationId: "probeCloudflareAccounts",
+			requestBody: jsonBody({
+				type: "object",
+				properties: {
+					apiToken: { type: "string", description: "Plaintext. Omitted to fall back to providerId's stored value." },
+					providerId: { type: "string" },
+				},
+			}),
+			responses: {
+				"200": jsonResponse("", {
+					type: "object",
+					required: ["items"],
+					properties: { items: { type: "array", items: ref("FirewallSyncCloudflareAccountOption") } },
+				}),
+				"400": errorResponse("Unable to connect or list accounts (missing token, or the token cannot list any accounts)."),
+				"401": errorResponse("Not signed in."),
+				"403": errorResponse("Administrator access required, or CSRF validation failed."),
+			},
+		},
+	},
 	"/firewall-sync/preview": {
 		get: {
 			summary: "Preview the aggregated, filtered ban list",

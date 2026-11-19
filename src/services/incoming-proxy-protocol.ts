@@ -110,7 +110,7 @@ export function parseIncomingProxyHeader(input: Uint8Array): ParsedProxyHeader |
 	const addressBlockLength = addressLength * 2 + 4;
 	if (length < addressBlockLength) invalid();
 	// Check TLV lengths before skipping extensions.
-	for (let offset = 16 + addressBlockLength; offset < bytes; ) {
+	for (let offset = 16 + addressBlockLength; offset < bytes;) {
 		if (offset + 3 > bytes) invalid();
 		offset += 3 + data.readUInt16BE(offset + 1);
 		if (offset > bytes) invalid();

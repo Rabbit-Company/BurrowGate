@@ -30,7 +30,7 @@ export function canonicalIpv6(value: bigint): string {
 	for (let shift = 112n; shift >= 0n; shift -= 16n) groups.push(Number((value >> shift) & 0xffffn));
 	let bestStart = -1;
 	let bestLength = 0;
-	for (let index = 0; index < groups.length; ) {
+	for (let index = 0; index < groups.length;) {
 		if (groups[index] !== 0) {
 			index += 1;
 			continue;

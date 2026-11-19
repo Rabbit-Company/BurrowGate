@@ -147,6 +147,7 @@ function providerTypeLabel(type) {
 	if (type === "unifi") return "UniFi Controller";
 	if (type === "ovh") return "OVH Edge Firewall";
 	if (type === "aws-nacl") return "AWS VPC Network ACL";
+	if (type === "cloudflare") return "Cloudflare IP List";
 	return "Local nftables";
 }
 
@@ -218,6 +219,7 @@ function updateProviderTypeFields() {
 	byId("nftablesFields").classList.toggle("hidden", type !== "nftables");
 	byId("ovhFields").classList.toggle("hidden", type !== "ovh");
 	byId("awsFields").classList.toggle("hidden", type !== "aws-nacl");
+	byId("cloudflareFields").classList.toggle("hidden", type !== "cloudflare");
 	byId("providerMaxEntries").max = type === "ovh" || type === "aws-nacl" ? "20" : "";
 }
 
@@ -273,6 +275,14 @@ function openProviderForm(provider) {
 		: `<option value="">Click "Load Network ACLs" first</option>`;
 	byId("awsNaclsStatus").textContent = "";
 	byId("awsRuleNumberStart").value = config.ruleNumberStart ?? 1;
+
+	byId("cfApiToken").value = "";
+	byId("cfApiToken").placeholder = config.apiTokenConfigured ? "Leave blank to keep the current token" : "Required";
+	byId("cfAccountId").value = config.accountId ?? "";
+	byId("cfAccounts").innerHTML = "";
+	byId("cfAccountsStatus").textContent = "";
+	byId("cfListName").value = config.listName ?? "burrowgate_banned_ips";
+	updateCloudflareRuleExpression();
 
 	updateProviderTypeFields();
 	updateAckRow();
@@ -364,6 +374,31 @@ async function loadAwsNacls() {
 	}
 }
 
+function updateCloudflareRuleExpression() {
+	byId("cfRuleExpression").textContent = `(ip.src in $${byId("cfListName").value.trim() || "burrowgate_banned_ips"})`;
+}
+
+async function loadCloudflareAccounts() {
+	const status = byId("cfAccountsStatus");
+	status.textContent = "Loading...";
+	status.className = "muted";
+	try {
+		const result = await api("/providers/cloudflare/accounts", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ apiToken: byId("cfApiToken").value.trim(), providerId: byId("providerId").value || undefined }),
+		});
+		byId("cfAccounts").innerHTML = result.items
+			.map((account) => `<option value="${escapeHtml(account.id)}" label="${escapeHtml(account.name)}"></option>`)
+			.join("");
+		if (!byId("cfAccountId").value.trim() && result.items.length === 1) byId("cfAccountId").value = result.items[0].id;
+		status.textContent = `Loaded ${result.items.length} account${result.items.length === 1 ? "" : "s"}: ${result.items.map((account) => account.name).join(", ")}.`;
+	} catch (error) {
+		status.textContent = error.message;
+		status.className = "muted error-text";
+	}
+}
+
 async function requestOvhCredential() {
 	const status = byId("ovhCredentialStatus");
 	status.textContent = "Requesting...";
@@ -411,6 +446,13 @@ function providerConfigFromForm() {
 			sessionToken: byId("awsSessionToken").value.trim(),
 			networkAclId: byId("awsNetworkAcl").value.trim(),
 			ruleNumberStart: Number(byId("awsRuleNumberStart").value) || 1,
+		};
+	}
+	if (type === "cloudflare") {
+		return {
+			apiToken: byId("cfApiToken").value.trim(),
+			accountId: byId("cfAccountId").value.trim(),
+			listName: byId("cfListName").value.trim(),
 		};
 	}
 	return { nftBinaryPath: byId("nftBinaryPath").value.trim(), useSudo: byId("nftUseSudo").checked };
@@ -477,6 +519,8 @@ byId("providerType").addEventListener("change", updateProviderTypeFields);
 byId("unifiLoadSites").addEventListener("click", () => void loadUnifiSites());
 byId("ovhLoadIps").addEventListener("click", () => void loadOvhIps());
 byId("awsLoadNacls").addEventListener("click", () => void loadAwsNacls());
+byId("cfLoadAccounts").addEventListener("click", () => void loadCloudflareAccounts());
+byId("cfListName").addEventListener("input", updateCloudflareRuleExpression);
 byId("ovhRequestCredential").addEventListener("click", () => void requestOvhCredential());
 byId("providerEnabled").addEventListener("change", updateAckRow);
 byId("providerTest").addEventListener("click", () => void testProviderConnection());

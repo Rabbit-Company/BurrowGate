@@ -14,6 +14,7 @@ import {
 	updateFirewallSyncProvider,
 } from "../services/firewall-sync-service.ts";
 import { awsListNacls } from "../services/firewall-sync/aws-nacl-adapter.ts";
+import { cloudflareListAccounts } from "../services/firewall-sync/cloudflare-adapter.ts";
 import { ovhListIps, ovhRequestCredential } from "../services/firewall-sync/ovh-adapter.ts";
 import { unifiListSites } from "../services/firewall-sync/unifi-adapter.ts";
 import { withDurability } from "../services/ha-mesh-service.ts";
@@ -151,6 +152,26 @@ export function registerFirewallSyncAdminRoutes(app: Web<any>): void {
 			return jsonResponse({ items });
 		} catch (error) {
 			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list Network ACLs" }, 400);
+		}
+	});
+
+	app.post("/_burrowgate/api/admin/firewall-sync/providers/cloudflare/accounts", async (ctx) => {
+		const guarded = await guard(ctx.req);
+		if (guarded instanceof Response) return guarded;
+		const csrf = mutationGuard(ctx.req);
+		if (csrf) return csrf;
+		const forbidden = requireAdministrator(guarded.user);
+		if (forbidden) return forbidden;
+		try {
+			const body = (await ctx.req.json()) as { apiToken?: string; providerId?: string };
+			const existing = body.providerId ? await repository.firewallSyncProviderById(body.providerId) : null;
+			const items = await cloudflareListAccounts({
+				apiToken: body.apiToken,
+				existingConfigJson: existing?.type === "cloudflare" ? existing.config_json : null,
+			});
+			return jsonResponse({ items });
+		} catch (error) {
+			return jsonResponse({ error: error instanceof Error ? error.message : "Unable to list accounts" }, 400);
 		}
 	});
 

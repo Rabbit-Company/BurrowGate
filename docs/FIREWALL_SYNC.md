@@ -113,15 +113,62 @@ BurrowGate manages rules as `{ruleAction: "deny", protocol: "-1", egress: false,
 
 Because rules are addressed by a specific rule number rather than a replaceable list, reconciliation diffs against the 20 reserved slots (keeping already-correct rules, freeing slots whose ban expired, filling free slots with new bans) instead of a full flush-and-recreate, so an unchanged ban list produces no API calls at all.
 
+### Cloudflare IP List
+
+For sites proxied through Cloudflare (orange cloud). The other providers can't help here, because proxied traffic reaches your host from Cloudflare's own IPs and never from the visitor. Blocking at Cloudflare's edge stops a banned visitor before any request is forwarded to your origin, so a bandwidth abuser stops costing you bandwidth.
+
+BurrowGate keeps one account-level [IP list](https://developers.cloudflare.com/waf/tools/lists/custom-lists/) in sync with the ban list. It does not create or change any WAF rule. You add one custom rule per zone yourself, and that rule does the blocking. Both IPv4 and IPv6 are supported.
+
+Before you enable this provider, set each Cloudflare-proxied site's **Client IP source** to **Cloudflare**. Otherwise BurrowGate sees Cloudflare's edge addresses as the client, and the bans it pushes would never match a real visitor.
+
+Configure:
+
+- **API token**. Go to **My Profile > API Tokens > Create Token > Start from scratch** and choose **Start with an account policy**. Search for **Account Filter Lists**, give it **Read** and **Edit**, and limit the policy to the one account. The token can manage lists in that account and nothing else.
+- **Account ID**. Click **Load accounts** to fetch the accounts the token can see, or paste the 32-character ID shown on any zone's **Overview** page in the Cloudflare dashboard. Some tokens are not allowed to list accounts. Pasting the ID works in that case.
+- **List name**. Defaults to `burrowgate_banned_ips`. Cloudflare allows only lowercase letters, digits and underscores, up to 50 characters. BurrowGate creates the list on its first sync if it doesn't exist yet.
+
+The list is account-level. It appears under **Settings > Configurations > Lists** in the account's dashboard, and **Edit** next to it shows its items with the comment that names the instance that added each one.
+
+Then add the blocking rule in each zone you want protected. Open the zone, go to **Security > Security rules**, and select **Create rule > Custom rules**. Under **When incoming requests match**, either pick the field **IP Source Address**, the operator **is in list** and the list `burrowgate_banned_ips`, or switch to the Expression Editor and enter:
+
+```
+(ip.src in $burrowgate_banned_ips)
+```
+
+Set the action to **Block** and deploy the rule. **Test connection** checks the token and account and repeats the expression to use.
+
+Each item BurrowGate adds carries the comment `Managed by BurrowGate (<owner ID>)`. The owner ID is generated when the provider is created and never changes. **Test connection** shows it. BurrowGate only removes items with its own comment. Items added by hand and items added by other BurrowGate instances are left alone, and an IP that is already in the list is not added a second time.
+
+Each sync reads the current items and sends only the difference, as one bulk delete and one bulk add. Only one bulk operation can run per account at a time, so BurrowGate waits for each one to finish (up to 60 seconds) before it continues. When another instance's operation is still running, BurrowGate retries the request a few times with a short random delay. Cloudflare limits list changes to 1,000,000 item changes and 30,000 write requests per account every 12 hours, and sending only the difference keeps BurrowGate well under both.
+
+Other writers can change the list, so BurrowGate checks it on every sync interval even when the local ban list is unchanged. That check is one request for the list's item count and modification time. The items are only read again when either has changed, when the local ban list has changed, or every 5 minutes as a safety net. **Sync now** always reads them.
+
+#### Several instances sharing one list
+
+Free accounts allow only one custom list, so every instance should use the same account and the same list name, with one WAF rule per zone. Create a separate provider on each instance. Each provider gets its own owner ID, and each instance only adds and removes its own bans. A visitor banned by any instance is blocked on every zone that has the rule. If two instances ban the same IP, the list holds it once. When the instance that added it lifts its ban, the other instance adds it back on its next sync, so the IP can be unblocked for a few seconds in between.
+
+Nodes of one [HA cluster](HIGH_AVAILABILITY.md) share the provider and its owner ID, so the whole cluster acts as one instance.
+
+The 10,000-item limit covers the whole account. Set **Max entries** on each instance so that the total across all instances, plus anything else in the account's lists, stays within it. Otherwise adds start failing once the account is full.
+
+Delete the provider before you retire an instance. Its items are otherwise left in the list, because no other instance removes them. You can also delete them by their comment under **Settings > Configurations > Lists**.
+
+Cloudflare rejects IPv4 ranges wider than `/8` and IPv6 ranges wider than `/12`, so BurrowGate skips bans that size. Single addresses are sent without a prefix, and a range's host bits are cleared before it is sent.
+
+New providers default to a cap of 10,000 entries. That is the total item limit across all lists in an account on the Free, Pro and Business plans. Free accounts are also limited to one custom list, so if you already use your only list for something else, creating the BurrowGate list fails with an error from Cloudflare. Enterprise accounts can raise **Max entries** up to their own limit.
+
+Deleting the provider removes its own items from the list. If the list is empty after that, BurrowGate also tries to delete the list. Cloudflare refuses to delete a list while a rule still references it. In that case the provider is still removed from BurrowGate, and the error asks you to remove the custom rules that reference the list. You can then delete the list under **Settings > Configurations > Lists** in the dashboard. The list is kept while items from other instances or manual entries remain in it.
+
 ## Configuration
 
 - `BG_FIREWALL_SYNC_ENABLED` (default `true`) - instance-wide kill switch, independent of each provider's own enabled state.
 - `BG_FIREWALL_SYNC_INTERVAL_MS` (default `10000`) - automatic reconciliation interval.
-- `BG_FIREWALL_SYNC_REQUEST_TIMEOUT_MS` (default `10000`) - timeout for UniFi and OVH API requests.
+- `BG_FIREWALL_SYNC_REQUEST_TIMEOUT_MS` (default `10000`) - timeout for each UniFi, OVH, AWS and Cloudflare API request.
 - `BG_FIREWALL_SYNC_NFT_TIMEOUT_MS` (default `5000`) - timeout for each `nft` invocation.
 - `BG_FIREWALL_SYNC_UNIFI_DEFAULT_MAX_ENTRIES` (default `2000`) - default cap for new UniFi providers.
 - `BG_FIREWALL_SYNC_NFTABLES_DEFAULT_MAX_ENTRIES` (default `100000`) - default cap for new nftables providers.
 - OVH providers are always capped at 20 entries - the API's own hard limit, not configurable.
 - AWS VPC Network ACL providers are always capped at 20 entries - the number of rule slots BurrowGate reserves, not configurable.
+- Cloudflare providers default to 10,000 entries, the item limit on non-Enterprise plans. You can change it per provider.
 
 See [`docs/NETWORK_POLICIES.md`](NETWORK_POLICIES.md) for how block rules are created in the first place, and [`docs/BANDWIDTH.md`](BANDWIDTH.md) / [`docs/STREAMS.md`](STREAMS.md) for the bandwidth-limit auto-bans that most commonly feed this feature.

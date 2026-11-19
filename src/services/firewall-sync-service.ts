@@ -6,6 +6,17 @@ import { randomId, sha256Hex } from "../utils/crypto.ts";
 import { isPrivateIp, parseCidr, type ParsedCidr } from "../utils/ip.ts";
 import { encryptSecret } from "./secret-encryption-service.ts";
 import { AWS_NACL_MAX_RULES, awsNaclReconcile, awsNaclTeardown, awsNaclTestConnection, parseAwsNaclProviderConfig } from "./firewall-sync/aws-nacl-adapter.ts";
+import {
+	CLOUDFLARE_DEFAULT_MAX_ENTRIES,
+	cloudflareReconcile,
+	cloudflareTeardown,
+	cloudflareTestConnection,
+	isValidCloudflareAccountId,
+	isValidCloudflareListName,
+	isValidCloudflareOwnerId,
+	newCloudflareOwnerId,
+	parseCloudflareProviderConfig,
+} from "./firewall-sync/cloudflare-adapter.ts";
 import { nftablesReconcile, nftablesTeardown, nftablesTestConnection, parseNftablesProviderConfig } from "./firewall-sync/nftables-adapter.ts";
 import { OVH_MAX_RULES, ovhReconcile, ovhTeardown, ovhTestConnection, parseOvhProviderConfig } from "./firewall-sync/ovh-adapter.ts";
 import { parseUnifiProviderConfig, unifiReconcile, unifiTeardown, unifiTestConnection } from "./firewall-sync/unifi-adapter.ts";
@@ -81,7 +92,9 @@ export async function aggregateBannedCidrsDetailed(now = Date.now()): Promise<Ag
 }
 
 export interface FirewallSyncAdapter {
-	reconcile(configJson: string, cidrs: string[]): Promise<void>;
+	reconcile(configJson: string, cidrs: string[], options?: { force?: boolean }): Promise<void>;
+	/** Set for targets other writers can change (a Cloudflare list shared by several instances), so an unchanged local ban list still re-checks the remote side. The adapter does its own cheap change detection. */
+	alwaysReconcile?: boolean;
 	testConnection(configJson: string): Promise<{ ok: boolean; message: string }>;
 	/** Best-effort remote cleanup (e.g. drop the nftables table, delete the UniFi traffic matching lists) run when a provider is deleted. */
 	teardown(configJson: string): Promise<void>;
@@ -92,6 +105,7 @@ const defaultAdapters: Record<FirewallSyncProviderType, FirewallSyncAdapter> = {
 	nftables: { reconcile: nftablesReconcile, testConnection: nftablesTestConnection, teardown: nftablesTeardown },
 	ovh: { reconcile: ovhReconcile, testConnection: ovhTestConnection, teardown: ovhTeardown },
 	"aws-nacl": { reconcile: awsNaclReconcile, testConnection: awsNaclTestConnection, teardown: awsNaclTeardown },
+	cloudflare: { reconcile: cloudflareReconcile, testConnection: cloudflareTestConnection, teardown: cloudflareTeardown, alwaysReconcile: true },
 };
 
 export interface FirewallSyncProviderView {
@@ -130,6 +144,10 @@ function redactConfig(type: FirewallSyncProviderType, configJson: string): Recor
 			secretAccessKeyConfigured: typeof secretAccessKeyEncrypted === "string" && secretAccessKeyEncrypted.length > 0,
 			sessionTokenConfigured: typeof sessionTokenEncrypted === "string" && sessionTokenEncrypted.length > 0,
 		};
+	}
+	if (type === "cloudflare") {
+		const { apiTokenEncrypted, ...rest } = parsed;
+		return { ...rest, apiTokenConfigured: typeof apiTokenEncrypted === "string" && apiTokenEncrypted.length > 0 };
 	}
 	return parsed;
 }
@@ -198,6 +216,18 @@ async function buildConfigJson(type: FirewallSyncProviderType, input: unknown, e
 		if (!parsed.accessKeyId) throw new Error("Access key ID is required");
 		return JSON.stringify(parsed);
 	}
+	if (type === "cloudflare") {
+		const existing = existingConfigJson ? parseCloudflareProviderConfig(JSON.parse(existingConfigJson)) : null;
+		const apiTokenInput = typeof raw.apiToken === "string" ? raw.apiToken.trim() : "";
+		const apiTokenEncrypted = apiTokenInput ? await encryptSecret(apiTokenInput) : (existing?.apiTokenEncrypted ?? "");
+		const ownerId = existing && isValidCloudflareOwnerId(existing.ownerId) ? existing.ownerId : newCloudflareOwnerId();
+		const parsed = parseCloudflareProviderConfig({ ...existing, ...raw, apiTokenEncrypted, ownerId });
+		if (!parsed.apiTokenEncrypted) throw new Error("API token is required");
+		if (parsed.accountId && !isValidCloudflareAccountId(parsed.accountId))
+			throw new Error("Account ID must be the 32-character hex ID from the Cloudflare dashboard");
+		if (!isValidCloudflareListName(parsed.listName)) throw new Error("List name may only contain lowercase letters, digits and underscores (max 50)");
+		return JSON.stringify(parsed);
+	}
 	const existing = existingConfigJson ? parseNftablesProviderConfig(JSON.parse(existingConfigJson)) : null;
 	return JSON.stringify(parseNftablesProviderConfig({ ...existing, ...raw }));
 }
@@ -206,6 +236,7 @@ function defaultMaxEntries(type: FirewallSyncProviderType): number {
 	if (type === "unifi") return config.firewallSync.defaultUnifiMaxEntries;
 	if (type === "ovh") return OVH_MAX_RULES;
 	if (type === "aws-nacl") return AWS_NACL_MAX_RULES;
+	if (type === "cloudflare") return CLOUDFLARE_DEFAULT_MAX_ENTRIES;
 	return config.firewallSync.defaultNftablesMaxEntries;
 }
 
@@ -218,7 +249,7 @@ function clampMaxEntries(type: FirewallSyncProviderType, requested: number): num
 
 export async function createFirewallSyncProvider(input: FirewallSyncProviderInput): Promise<FirewallSyncProviderRecord> {
 	const type = input.type as FirewallSyncProviderType;
-	if (type !== "unifi" && type !== "nftables" && type !== "ovh" && type !== "aws-nacl") throw new Error("Unsupported provider type");
+	if (type !== "unifi" && type !== "nftables" && type !== "ovh" && type !== "aws-nacl" && type !== "cloudflare") throw new Error("Unsupported provider type");
 	const name = String(input.name ?? "").trim();
 	if (!name) throw new Error("Name is required");
 	const now = Date.now();
@@ -330,7 +361,8 @@ class FirewallSyncService {
 		const capped = desiredAll.slice(0, Math.max(0, provider.max_entries));
 		const hash = await sha256Hex(capped.join(","));
 		const checkedAt = Date.now();
-		if (!force && hash === provider.last_applied_hash) {
+		const adapter = this.adapters[provider.type];
+		if (!force && !adapter.alwaysReconcile && hash === provider.last_applied_hash) {
 			await repository.updateFirewallSyncProviderResult(
 				provider.id,
 				checkedAt,
@@ -343,7 +375,7 @@ class FirewallSyncService {
 			return;
 		}
 		try {
-			await this.adapters[provider.type].reconcile(provider.config_json, capped);
+			await adapter.reconcile(provider.config_json, capped, { force });
 			await repository.updateFirewallSyncProviderResult(provider.id, checkedAt, checkedAt, "ok", null, capped.length, hash);
 			const metadata = {
 				providerId: provider.id,

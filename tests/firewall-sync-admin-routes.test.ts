@@ -132,6 +132,47 @@ describe("firewall sync provider routes", () => {
 		expect(createdBody.config.applicationSecretEncrypted).toBeUndefined();
 		expect(createdBody.config.consumerKeyEncrypted).toBeUndefined();
 	});
+
+	test("creates a Cloudflare provider with the 10,000 item default, redacts its token, and rejects an invalid list name", async () => {
+		const cookie = await administratorCookie();
+		const created = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "Cloudflare", type: "cloudflare", config: { apiToken: "cf-token", accountId: "0123456789ABCDEF0123456789abcdef" } }),
+			}),
+		);
+		expect(created.status).toBe(201);
+		const createdBody = (await created.json()) as { id: string; maxEntries: number; config: Record<string, unknown> };
+		expect(createdBody.maxEntries).toBe(10_000);
+		expect(createdBody.config.apiTokenConfigured).toBe(true);
+		expect(createdBody.config.apiTokenEncrypted).toBeUndefined();
+		expect(createdBody.config.accountId).toBe("0123456789abcdef0123456789abcdef");
+		expect(createdBody.config.listName).toBe("burrowgate_banned_ips");
+		const ownerId = createdBody.config.ownerId;
+		expect(ownerId).toMatch(/^[0-9a-f]{16}$/u);
+
+		const updated = await app.handle(
+			req(`/providers/${createdBody.id}`, cookie, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ config: { ownerId: "hijacked", listName: "renamed_list" } }),
+			}),
+		);
+		expect(updated.status).toBe(200);
+		const updatedBody = (await updated.json()) as { config: Record<string, unknown> };
+		expect(updatedBody.config.ownerId).toBe(ownerId);
+		expect(updatedBody.config.listName).toBe("renamed_list");
+
+		const invalid = await app.handle(
+			req("/providers", cookie, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "Bad list", type: "cloudflare", config: { apiToken: "cf-token", listName: "Banned-IPs" } }),
+			}),
+		);
+		expect(invalid.status).toBe(400);
+	});
 });
 
 describe("firewall sync unifi sites route", () => {

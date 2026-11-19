@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.4
+FROM oven/bun:1.4.5
 
 USER root
 RUN apt-get update \

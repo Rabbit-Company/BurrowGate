@@ -927,13 +927,7 @@ class HaMeshService {
 
 	private async handlePrimaryMessage(ws: HaServerWebSocket, data: string | Buffer): Promise<void> {
 		let message:
-			| RelayMessage
-			| AnnounceMessage
-			| RequestMasterKeyMessage
-			| CursorMessage
-			| PreparePromoteAckMessage
-			| PromotionFenceAckMessage
-			| PromoteAppliedAckMessage;
+			RelayMessage | AnnounceMessage | RequestMasterKeyMessage | CursorMessage | PreparePromoteAckMessage | PromotionFenceAckMessage | PromoteAppliedAckMessage;
 		try {
 			message = JSON.parse(String(data)) as
 				| RelayMessage

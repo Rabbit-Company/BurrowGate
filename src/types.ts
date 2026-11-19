@@ -854,7 +854,7 @@ export interface DnsProviderRecord {
 	updated_at: number;
 }
 
-export type FirewallSyncProviderType = "unifi" | "nftables" | "ovh" | "aws-nacl";
+export type FirewallSyncProviderType = "unifi" | "nftables" | "ovh" | "aws-nacl" | "cloudflare";
 export type FirewallSyncStatus = "ok" | "error";
 
 export interface FirewallSyncProviderRecord {

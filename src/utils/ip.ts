@@ -76,6 +76,29 @@ export function parseCidr(input: string): ParsedCidr | null {
 	return { version: parsed.version, network, prefix, bits: parsed.bits };
 }
 
+export function formatIp(version: 4 | 6, value: bigint): string {
+	if (version === 4) return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 0xffn)).join(".");
+	const groups = Array.from({ length: 8 }, (_, index) => Number((value >> BigInt((7 - index) * 16)) & 0xffffn));
+	let bestStart = -1;
+	let bestLength = 0;
+	for (let index = 0; index < 8;) {
+		if (groups[index] !== 0) {
+			index += 1;
+			continue;
+		}
+		let end = index;
+		while (end < 8 && groups[end] === 0) end += 1;
+		if (end - index > bestLength) {
+			bestStart = index;
+			bestLength = end - index;
+		}
+		index = end;
+	}
+	const hex = groups.map((group) => group.toString(16));
+	if (bestLength < 2) return hex.join(":");
+	return `${hex.slice(0, bestStart).join(":")}::${hex.slice(bestStart + bestLength).join(":")}`;
+}
+
 export function cidrContains(cidr: ParsedCidr | string, ip: string): boolean {
 	const parsedCidr = typeof cidr === "string" ? parseCidr(cidr) : cidr;
 	const parsedIp = parseIp(ip);

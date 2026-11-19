@@ -39,7 +39,7 @@ export function firewallSyncPage(): string {
       <input type="hidden" id="providerId">
       <div class="site-form-grid">
         <label><span>Name</span><input id="providerName" class="input" required></label>
-        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option><option value="ovh">OVH Edge Firewall</option><option value="aws-nacl">AWS VPC Network ACL</option></select></label>
+        <label><span>Type</span><select id="providerType" class="select"><option value="unifi">UniFi Controller</option><option value="nftables">Local nftables</option><option value="ovh">OVH Edge Firewall</option><option value="aws-nacl">AWS VPC Network ACL</option><option value="cloudflare">Cloudflare IP List</option></select></label>
         <label><span>Max entries</span><input id="providerMaxEntries" class="input" type="number" min="1"></label>
       </div>
 
@@ -86,6 +86,17 @@ export function firewallSyncPage(): string {
           BurrowGate manages this Network ACL scoped to just the 20 reserved inbound rule numbers above - it never touches ALLOW rules or any other rule number range.
           It has a hard limit of 20 rule slots and is IPv4-only. Requires <code>ec2:DescribeNetworkAcls</code>, <code>ec2:CreateNetworkAclEntry</code>, and
           <code>ec2:DeleteNetworkAclEntry</code> IAM permissions.
+        </p>
+      </div>
+
+      <div id="cloudflareFields" class="site-form-grid hidden">
+        <label><span>API token</span><input id="cfApiToken" class="input" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current token"><small class="muted">My Profile &rarr; API Tokens &rarr; Create Token &rarr; Start from scratch &rarr; Start with an account policy. Give Account Filter Lists Read and Edit, limited to one account.</small></label>
+        <label><span>Account ID</span><div class="row"><input id="cfAccountId" class="input" list="cfAccounts" placeholder="32-character account ID"><datalist id="cfAccounts"></datalist><button id="cfLoadAccounts" class="button secondary compact" type="button">Load accounts</button></div><small id="cfAccountsStatus" class="muted"></small></label>
+        <label><span>List name</span><input id="cfListName" class="input" placeholder="burrowgate_banned_ips"><small class="muted">Lowercase letters, digits and underscores only. BurrowGate creates this account-level IP list and keeps its items in sync.</small></label>
+        <p class="muted">
+          BurrowGate only manages the list's items. It never creates or changes WAF rules. In each zone, add one custom rule yourself (Security &rarr; Security rules &rarr; Create rule &rarr; Custom rules) with the expression
+          <code id="cfRuleExpression">(ip.src in $burrowgate_banned_ips)</code> and action Block. Banned visitors are then stopped at Cloudflare's edge and never reach this host.
+          Free, Pro and Business plans allow 10,000 list items in total across all lists in the account.
         </p>
       </div>
 

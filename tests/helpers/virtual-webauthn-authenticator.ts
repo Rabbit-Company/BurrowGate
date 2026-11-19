@@ -84,7 +84,13 @@ export async function createVirtualAuthenticator(): Promise<VirtualAuthenticator
 			new DataView(credIdLen.buffer).setUint16(0, credentialIdBytes.length, false);
 			const attestedCredentialData = concatBytes(aaguid, credIdLen, credentialIdBytes, publicKeyCbor);
 			const authData = concatBytes(await rpIdHash(rpID), flagsByte(true, true), signCountBytes(0), attestedCredentialData);
-			const attestationObject = encodeCBOR(new Map<string, unknown>([["fmt", "none"], ["attStmt", new Map()], ["authData", authData]]) as any);
+			const attestationObject = encodeCBOR(
+				new Map<string, unknown>([
+					["fmt", "none"],
+					["attStmt", new Map()],
+					["authData", authData],
+				]) as any,
+			);
 			const clientDataJSON = new TextEncoder().encode(JSON.stringify({ type: "webauthn.create", challenge, origin, crossOrigin: false }));
 			return {
 				id: credentialId,

@@ -34,6 +34,7 @@ function serviceWithFakeAdapters(adapters: Partial<Record<FirewallSyncProviderTy
 		nftables: adapters.nftables ?? noop,
 		ovh: adapters.ovh ?? noop,
 		"aws-nacl": adapters["aws-nacl"] ?? noop,
+		cloudflare: adapters.cloudflare ?? noop,
 	});
 }
 
@@ -140,6 +141,28 @@ describe("FirewallSyncService tick", () => {
 		expect(state.calls.length).toBe(1);
 	});
 
+	test("still calls an alwaysReconcile adapter on every tick, passing force only for manual syncs", async () => {
+		const s = await site();
+		await addIpRule(s.id, "203.0.113.12", "block", "a", null);
+		const provider = await insertProvider({ type: "cloudflare" });
+		const forces: Array<boolean | undefined> = [];
+		const service = serviceWithFakeAdapters({
+			cloudflare: {
+				async reconcile(_configJson, _cidrs, options) {
+					forces.push(options?.force);
+				},
+				testConnection: noopTestConnection,
+				teardown: noopTeardown,
+				alwaysReconcile: true,
+			},
+		});
+
+		await tick(service);
+		await tick(service);
+		await service.syncNow(provider.id);
+		expect(forces).toEqual([false, false, true]);
+	});
+
 	test("a failure in one provider does not prevent another enabled provider from reconciling", async () => {
 		const s = await site();
 		await addIpRule(s.id, "203.0.113.30", "block", "a", null);
@@ -151,6 +174,7 @@ describe("FirewallSyncService tick", () => {
 			unifi: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			ovh: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			"aws-nacl": { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
+			cloudflare: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			nftables: {
 				async reconcile(configJson, cidrs) {
 					const isFailing = configJson === failing.config_json;
@@ -183,6 +207,7 @@ describe("FirewallSyncService tick", () => {
 			unifi: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			ovh: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			"aws-nacl": { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
+			cloudflare: { async reconcile() {}, testConnection: noopTestConnection, teardown: noopTeardown },
 			nftables: {
 				async reconcile() {
 					callCount += 1;
