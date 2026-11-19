@@ -129,7 +129,6 @@ export const integrationSchemas: Record<string, JsonSchema> = {
 			},
 			ownerId: {
 				type: "string",
-				readOnly: true,
 				description:
 					"Generated on create and never changed. Items this provider adds carry the comment `Managed by BurrowGate (<ownerId>)`, and it only ever removes items with that comment, so several instances can share one list.",
 			},
